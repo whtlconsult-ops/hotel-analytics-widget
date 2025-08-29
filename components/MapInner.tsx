@@ -10,8 +10,9 @@ import {
 } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 
-// Cast per evitare i problemi di tipi in CI
+// Cast per evitare problemi di tipi in CI/TS
 const MapContainerAny = RLMapContainer as unknown as React.ComponentType<any>;
+const CircleAny = Circle as unknown as React.ComponentType<any>;
 
 export default function MapInner({
   center,
@@ -32,20 +33,20 @@ export default function MapInner({
         style={{ height: 280, width: "100%", borderRadius: 12 }}
       >
         <TileLayer
-          // rimuoviamo il prop "attribution" per evitare l'errore di tipo
+          // niente 'attribution' qui per evitare errori di tipi
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <Marker position={position}>
           <Popup>{label}</Popup>
         </Marker>
-        <Circle
+        <CircleAny
           center={position}
           radius={radius}
           pathOptions={{ color: "#0ea5e9", fillOpacity: 0.08 }}
         />
       </MapContainerAny>
 
-      {/* Overlay di attribuzione OSM (richiesto) */}
+      {/* Overlay attribuzione OSM */}
       <div
         style={{
           position: "absolute",
