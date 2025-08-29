@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import Map from "../../components/Map";
+import LocationMap from "../../components/Map";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend } from "recharts";
 import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
@@ -270,7 +270,7 @@ export default function App(){
   const calendarData = useMemo(()=> {
     if(normalized.isBlocked) return [];
     if(rawRows.length>0){
-      const byDate = new Map<string, {date: Date; adrVals:number[]; pressVals:number[]}>();
+      const byDate = new globalThis.Map<string, {date: Date; adrVals:number[]; pressVals:number[]}>();
       for(const d of normalized.safeDays){
         byDate.set(d.toDateString(), { date: d, adrVals: [], pressVals: [] });
       }
