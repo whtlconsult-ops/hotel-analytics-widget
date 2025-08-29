@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import Map from "/Users/luigipellegrini/Desktop/hotel-analytics-widget/components/Map.tsx";
+import Map from "../../components/Map";
 import { PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend } from "recharts";
 import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
