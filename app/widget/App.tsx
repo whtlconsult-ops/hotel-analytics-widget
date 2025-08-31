@@ -217,61 +217,6 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
   return valid;
 }
 
-// ---------- Calendario Heatmap ----------
-function CalendarHeatmap({
-  monthDate,
-  data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
-  const start = startOfMonth(monthDate);
-  const end = endOfMonth(monthDate);
-  const days = eachDayOfInterval({start, end});
-  const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
-  const pmin = Math.min(...(pvals.length? pvals : [0]));
-  const pmax = Math.max(...(pvals.length? pvals : [1]));
-
-  const firstDow = (getDay(start)+6)%7; // Mon=0
-  const totalCells = firstDow + days.length;
-  const rows = Math.ceil(totalCells/7);
-
-  return (
-    <div className="w-full overflow-x-auto">
-      <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
-        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
-      </div>
-      <div className="grid grid-cols-7 gap-2">
-        {Array.from({length: rows*7}).map((_,i)=>{
-          const dayIndex = i - firstDow;
-          const d = days[dayIndex];
-          const dayData = data.find(x=> x.date.toDateString()===d?.toDateString());
-          if(dayIndex<0 || !d){
-            return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>;
-          }
-          const isSat = ((getDay(d))===6);
-          const pressure = dayData?.pressure ?? 0;
-          const adr = dayData?.adr ?? 0;
-          const fill = colorForPressure(pressure,pmin,pmax);
-          const txtColor = contrastColor(fill);
-          return (
-            <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center">
-                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d EEE",{locale:it})}</span>
-              </div>
-              <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
-                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-2 flex items-center justify-center gap-4">
-        <span className="text-xs">Bassa domanda</span>
-        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
-        <span className="text-xs">Alta domanda</span>
-      </div>
-    </div>
-  );
-}
-
 // ---------- App ----------
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
@@ -285,6 +230,8 @@ export default function App(){
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
   const [gsSheet, setGsSheet] = useState("Sheet1");
+  const [gsGid, setGsGid] = useState("");               // <-- nuovo
+  const [strictSheet, setStrictSheet] = useState(true); // <-- nuovo (modalità rigida ON)
 
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -307,13 +254,24 @@ export default function App(){
   const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
   useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
 
-  // CSV helpers
-  function buildGSheetsCsvUrl(sheetId: string, sheetName: string){
+  // URL builder (rigido vs non rigido)
+  function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
+    if(!id) return { url: "", error: "" };
+
+    if(strict){
+      if(!gid || !gid.trim()){
+        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (lo trovi nell'URL dopo #gid=...)." };
+      }
+      // endpoint export + gid (se gid errato → errore reale)
+      return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
+    }
+
+    // modalità NON rigida: Google potrebbe ignorare &sheet e restituire il primo foglio
     const name = encodeURIComponent(sheetName||"Sheet1");
-    if(!id) return "";
-    return `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`;
+    return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
+
   async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
     const res = await fetch(url, { signal });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -325,13 +283,31 @@ export default function App(){
     setLoadError(null);
     setRawRows([]);
     if(dataSource === "none") return;
+
     const warnings: string[] = [];
     const controller = new AbortController();
     const run = async ()=>{
       try{
         setLoading(true);
-        const url = dataSource === "csv" ? csvUrl : buildGSheetsCsvUrl(gsId, gsSheet);
-        if(!url){ setLoadError("Sorgente dati mancante: specifica URL CSV o Google Sheet ID"); return; }
+
+        let url = "";
+        if(dataSource === "csv"){
+          url = csvUrl.trim();
+        } else {
+          const built = buildGSheetsCsvUrl(gsId, gsSheet, gsGid, strictSheet);
+          if(built.error){
+            setLoadError(built.error);
+            setNotices(prev=> Array.from(new Set([...prev, built.error])));
+            return;
+          }
+          url = built.url;
+          if(!strictSheet){
+            const w = "Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.";
+            setNotices(prev=> Array.from(new Set([...prev, w])));
+          }
+        }
+        if(!url){ setLoadError("Sorgente dati mancante: specifica URL CSV o Google Sheet"); return; }
+
         const text = await fetchCsv(url, controller.signal);
         const parsed = parseCsv(text);
         const normalizedRows = normalizeRows(parsed, warnings);
@@ -345,7 +321,7 @@ export default function App(){
     };
     run();
     return ()=> controller.abort();
-  }, [dataSource, csvUrl, gsId, gsSheet]);
+  }, [dataSource, csvUrl, gsId, gsSheet, gsGid, strictSheet]);
 
   // Mese scelto
   const monthDate = useMemo(()=> {
@@ -469,12 +445,14 @@ export default function App(){
               <option value="gsheet">Google Sheet</option>
             </select>
           </div>
+
           {dataSource === "csv" && (
             <div className="flex items-center gap-2">
               <label className="w-32 text-sm text-neutral-700">CSV URL</label>
               <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/.../gviz/tq?tqx=out:csv&sheet=Foglio1" />
             </div>
           )}
+
           {dataSource === "gsheet" && (
             <>
               <div className="flex items-center gap-2">
@@ -485,8 +463,25 @@ export default function App(){
                 <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
                 <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
               </div>
+              <div className="flex items-center gap-2">
+                <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
+                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0, 123456789 (da #gid=...)" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="w-32 text-sm text-neutral-700">Modalità</label>
+                <div className="flex items-center gap-2">
+                  <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                  <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                </div>
+              </div>
+              {!strictSheet && (
+                <div className="text-xs text-amber-700">
+                  Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
+                </div>
+              )}
             </>
           )}
+
           {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
           {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
           {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
