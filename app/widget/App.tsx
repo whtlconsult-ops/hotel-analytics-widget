@@ -118,6 +118,105 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
 
+// ---------- Parser CSV ROBUSTO (+ helpers) ----------
+
+// split CSV rispettando virgolette
+function smartSplit(line:string, d:string) {
+  const out:string[] = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === d && !inQuotes) { out.push(cur); cur = ""; }
+    else { cur += ch; }
+  }
+  out.push(cur);
+  return out
+    .map(s => s.replace(/^\uFEFF/, ""))    // BOM
+    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+    .map(s => s.trim());
+}
+
+// CSV robusto: BOM, delimitatore , o ;, virgolette
+function parseCsv(text: string){
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return [];
+
+  const headerLine = lines[0].replace(/^\uFEFF/, "");
+  const count = (s:string, ch:string) => (s.match(new RegExp(`\\${ch}`, "g")) || []).length;
+  const delim = count(headerLine, ";") > count(headerLine, ",") ? ";" : ",";
+
+  const headersRaw = smartSplit(headerLine, delim);
+  const headers = headersRaw.map(h => h.toLowerCase().trim());
+
+  return lines.slice(1).map(line => {
+    const cells = smartSplit(line, delim);
+    const row:any = {};
+    headers.forEach((h, i) => { row[h] = (cells[i] ?? "").trim(); });
+    return row;
+  });
+}
+
+// numeri robusti: supporta "43,12" e "43.12"
+function toNumber(v: string, def=0){
+  if (v == null) return def;
+  const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : def;
+}
+
+// date robuste: ISO nativo o dd/mm/yyyy
+function toDate(v: string){
+  if (!v) return null;
+  const s = String(v).trim();
+
+  const d1 = new Date(s);
+  if (!Number.isNaN(d1.getTime())) return d1;
+
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
+    const d2 = new Date(yy, mm, dd);
+    if (!Number.isNaN(d2.getTime())) return d2;
+  }
+  return null;
+}
+
+// helper: legge un valore tramite alias (case-insensitive, BOM safe)
+function getVal(row:any, keys:string[]){
+  const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
+  const map = new Map<string,any>();
+  Object.keys(row||{}).forEach(k => map.set(norm(k), row[k]));
+  for (const k of keys) {
+    const v = map.get(norm(k));
+    if (v != null && v !== "") return v;
+  }
+  return null;
+}
+
+// normalizzazione righe (usa getVal per tollerare intestazioni varianti)
+function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
+  const out: DataRow[] = rows.map((r:any)=>{
+    const date = toDate(String(getVal(r, ["date","data","giorno"]) ?? ""));
+    const adr = toNumber(String(getVal(r, ["adr","adr_medio","prezzo_medio"]) ?? ""));
+    const occ = toNumber(String(getVal(r, ["occ","occupazione","occ_rate"]) ?? ""));
+    const los = toNumber(String(getVal(r, ["los","notti","soggiorno"]) ?? ""));
+    const channel = String(getVal(r, ["channel","canale"]) ?? "");
+    const provenance = String(getVal(r, ["provenance","country","nazione"]) ?? "");
+    const type = String(getVal(r, ["type","tipo"]) ?? "");
+    const lat = toNumber(String(getVal(r, ["lat","latitude"]) ?? ""));
+    const lng = toNumber(String(getVal(r, ["lng","longitude"]) ?? ""));
+
+    return { date, adr, occ, los, channel, provenance, type, lat, lng };
+  });
+
+  const valid = out.filter(r=> !!r.date);
+  if (valid.length === 0) {
+    warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
+  }
+  return valid;
+}
+
 // ---------- Calendario Heatmap ----------
 function CalendarHeatmap({
   monthDate,
@@ -219,36 +318,6 @@ export default function App(){
     const res = await fetch(url, { signal });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.text();
-  }
-  function parseCsv(text: string){
-    const lines = text.split(/\r?\n/).filter(l=> l.trim().length>0);
-    if(lines.length===0) return [];
-    const headers = lines[0].split(",").map(h=> h.trim());
-    return lines.slice(1).map(line=>{
-      const cells = line.split(",");
-      const row: any = {};
-      headers.forEach((h,i)=> row[h] = (cells[i]??"").trim());
-      return row;
-    });
-  }
-  function toNumber(v: string, def=0){ const n = Number(v); return Number.isFinite(n)? n : def; }
-  function toDate(v: string){ const d = new Date(v); return isNaN(d as any)? null : d; }
-  function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
-    const out: DataRow[] = rows.map((r:any)=>{
-      const date = toDate(r.date || r.Date || r.giorno || r.Giorno || r.data || r.Data || "");
-      const adr = toNumber(r.adr || r.ADR || r.adr_medio || r.prezzo_medio);
-      const occ = toNumber(r.occ || r.OCC || r.occupazione || r.occ_rate);
-      const los = toNumber(r.los || r.LOS || r.notti || r.soggiorno);
-      const channel = r.channel || r.canale || r.Channel || "";
-      const provenance = r.provenance || r.country || r.nazione || "";
-      const type = r.type || r.tipo || r.Tipo || "";
-      const lat = toNumber(r.lat || r.latitude);
-      const lng = toNumber(r.lng || r.longitude);
-      return { date, adr, occ, los, channel, provenance, type, lat, lng };
-    });
-    const valid = out.filter(r=> !!r.date);
-    if(valid.length===0) warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
-    return valid;
   }
 
   // Caricamento dati (CSV / Google Sheet)
@@ -403,7 +472,7 @@ export default function App(){
           {dataSource === "csv" && (
             <div className="flex items-center gap-2">
               <label className="w-32 text-sm text-neutral-700">CSV URL</label>
-              <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://drive.google.com/uc?export=download&id=..." />
+              <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/.../gviz/tq?tqx=out:csv&sheet=Foglio1" />
             </div>
           )}
           {dataSource === "gsheet" && (
@@ -414,7 +483,7 @@ export default function App(){
               </div>
               <div className="flex items-center gap-2">
                 <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Sheet1" />
+                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
               </div>
             </>
           )}
