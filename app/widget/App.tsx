@@ -10,7 +10,9 @@ import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 
-// ---------- Tipi ----------
+/* =========================
+   Tipi & Costanti
+========================= */
 type LatLng = { lat: number; lng: number };
 type DataRow = {
   date: Date|null; adr: number; occ: number; los: number;
@@ -26,7 +28,6 @@ type Normalized = {
   isBlocked: boolean;
 };
 
-// ---------- Costanti ----------
 const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
 const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
 const RADIUS_OPTIONS = [10,20,30] as const;
@@ -35,7 +36,9 @@ const typeLabels: Record<string,string> = {
   villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
-// ---------- Geocoding demo (blocca se invalida) ----------
+/* =========================
+   Geocoding demo
+========================= */
 const knownPlaces: Record<string,LatLng> = {
   "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
   "arezzo": { lat: 43.4633, lng: 11.8797 },
@@ -53,7 +56,9 @@ function geocode(query: string, warnings: string[]): LatLng | null {
   return null;
 }
 
-// ---------- Util ----------
+/* =========================
+   Util
+========================= */
 function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
 function pressureFor(date: Date){
   const dow = getDay(date); // 0 Dom
@@ -118,7 +123,9 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
 
-// ---------- Parser CSV ROBUSTO (+ helpers) ----------
+/* =========================
+   CSV Parser Robusto
+========================= */
 function smartSplit(line:string, d:string) {
   const out:string[] = [];
   let cur = "", inQuotes = false;
@@ -134,18 +141,14 @@ function smartSplit(line:string, d:string) {
     .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
     .map(s => s.trim());
 }
-
 function parseCsv(text: string){
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length === 0) return [];
-
   const headerLine = lines[0].replace(/^\uFEFF/, "");
   const count = (s:string, ch:string) => (s.match(new RegExp(`\\${ch}`, "g")) || []).length;
   const delim = count(headerLine, ";") > count(headerLine, ",") ? ";" : ",";
-
   const headersRaw = smartSplit(headerLine, delim);
   const headers = headersRaw.map(h => h.toLowerCase().trim());
-
   return lines.slice(1).map(line => {
     const cells = smartSplit(line, delim);
     const row:any = {};
@@ -153,21 +156,17 @@ function parseCsv(text: string){
     return row;
   });
 }
-
 function toNumber(v: string, def=0){
   if (v == null) return def;
   const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
   const n = Number(s);
   return Number.isFinite(n) ? n : def;
 }
-
 function toDate(v: string){
   if (!v) return null;
   const s = String(v).trim();
-
   const d1 = new Date(s);
   if (!Number.isNaN(d1.getTime())) return d1;
-
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
@@ -176,7 +175,6 @@ function toDate(v: string){
   }
   return null;
 }
-
 function getVal(row:any, keys:string[]){
   const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
   const map = new Map<string,any>();
@@ -187,7 +185,6 @@ function getVal(row:any, keys:string[]){
   }
   return null;
 }
-
 function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
   const out: DataRow[] = rows.map((r:any)=>{
     const date = toDate(String(getVal(r, ["date","data","giorno"]) ?? ""));
@@ -199,10 +196,8 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
     const type = String(getVal(r, ["type","tipo"]) ?? "");
     const lat = toNumber(String(getVal(r, ["lat","latitude"]) ?? ""));
     const lng = toNumber(String(getVal(r, ["lng","longitude"]) ?? ""));
-
     return { date, adr, occ, los, channel, provenance, type, lat, lng };
   });
-
   const valid = out.filter(r=> !!r.date);
   if (valid.length === 0) {
     warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
@@ -210,7 +205,9 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
   return valid;
 }
 
-// ---------- Calendario Heatmap (✓ reinserito) ----------
+/* =========================
+   Calendario Heatmap
+========================= */
 function CalendarHeatmap({
   monthDate,
   data
@@ -221,17 +218,17 @@ function CalendarHeatmap({
   const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
   const pmin = Math.min(...(pvals.length? pvals : [0]));
   const pmax = Math.max(...(pvals.length? pvals : [1]));
-
   const firstDow = (getDay(start)+6)%7; // Mon=0
   const totalCells = firstDow + days.length;
   const rows = Math.ceil(totalCells/7);
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full">
+      {/* Head days */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
       </div>
-      <div className="grid grid-cols-7 gap-2">
+      <div className="grid grid-cols-7 gap-3">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
           const d = days[dayIndex];
@@ -246,9 +243,12 @@ function CalendarHeatmap({
           const txtColor = contrastColor(fill);
           return (
             <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center">
-                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d EEE",{locale:it})}</span>
+              {/* Top half: day + weekday */}
+              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
+                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
+                <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
               </div>
+              {/* Bottom half: ADR medio competitor con sfondo domanda */}
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
@@ -256,7 +256,8 @@ function CalendarHeatmap({
           )
         })}
       </div>
-      <div className="mt-2 flex items-center justify-center gap-4">
+      {/* Legend */}
+      <div className="mt-3 flex items-center justify-center gap-4">
         <span className="text-xs">Bassa domanda</span>
         <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
         <span className="text-xs">Alta domanda</span>
@@ -265,7 +266,9 @@ function CalendarHeatmap({
   );
 }
 
-// ---------- App ----------
+/* =========================
+   App (UI riorganizzata)
+========================= */
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
   const [mode, setMode] = useState<"zone"|"competitor">("zone");
@@ -278,13 +281,14 @@ export default function App(){
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
   const [gsSheet, setGsSheet] = useState("Sheet1");
-  const [gsGid, setGsGid] = useState("");               // GID del foglio (es. 0)
-  const [strictSheet, setStrictSheet] = useState(true); // Modalità rigida ON
+  const [gsGid, setGsGid] = useState("");
+  const [strictSheet, setStrictSheet] = useState(true);
 
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Normalizzazione
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = geocode(query, warnings);
@@ -302,22 +306,19 @@ export default function App(){
   const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
   useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
 
-  // URL builder (rigida vs non rigida)
+  // Build URL Google Sheet (rigida/non rigida)
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
-
     if(strict){
       if(!gid || !gid.trim()){
         return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (lo trovi nell'URL dopo #gid=...)." };
       }
       return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
     }
-
     const name = encodeURIComponent(sheetName||"Sheet1");
     return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
-
   async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
     const res = await fetch(url, { signal });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -335,7 +336,6 @@ export default function App(){
     const run = async ()=>{
       try{
         setLoading(true);
-
         let url = "";
         if(dataSource === "csv"){
           url = csvUrl.trim();
@@ -402,7 +402,7 @@ export default function App(){
     return normalized.safeDays.map(d=>({ date:d, pressure: pressureFor(d), adr: adrFromCompetitors(d, mode) }));
   }, [normalized.safeDays, normalized.isBlocked, mode, rawRows]);
 
-  // Grafici: Provenienza / LOS / Canali (con fallback demo se niente CSV)
+  // Provenienze / LOS / Canali
   const provenance = useMemo(()=> {
     if(rawRows.length>0){
       const counts: Record<string, number> = {};
@@ -417,7 +417,6 @@ export default function App(){
       { name:"UK", value: 12 },
     ];
   }, [rawRows]);
-
   const los = useMemo(()=> {
     if(rawRows.length>0){
       const buckets: Record<string, number> = {"1 notte":0, "2-3 notti":0, "4-6 notti":0, "7+ notti":0};
@@ -437,7 +436,6 @@ export default function App(){
       { bucket:"7+ notti", value: 10 },
     ];
   }, [rawRows]);
-
   const channels = useMemo(()=> {
     if(rawRows.length>0){
       const counts: Record<string, number> = {};
@@ -453,7 +451,7 @@ export default function App(){
     ];
   }, [rawRows]);
 
-  // Curva domanda
+  // Curva domanda (linea)
   const demand = useMemo(()=> (
     normalized.isBlocked ? [] : (rawRows.length>0
       ? calendarData.map(d=> ({ date: format(d.date, "d MMM", {locale:it}), value: d.pressure }))
@@ -461,213 +459,230 @@ export default function App(){
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
-  // ---------- UI ----------
+  /* =========== UI =========== */
+
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {notices.length>0 && (
-        <div className="rounded-xl border p-3 bg-amber-50 text-amber-900 text-sm">
-          <div className="font-medium mb-1">Avvisi</div>
-          <ul className="list-disc ml-5">{notices.map((n,i)=> <li key={i}>{n}</li>)}</ul>
-        </div>
-      )}
-
-      {normalized.isBlocked && (
-        <div className="rounded-xl border p-3 bg-blue-50 text-blue-900 text-sm">
-          <div className="font-medium">Inserisci una località valida per generare l'analisi</div>
-          <div className="text-xs">Esempi: "Castiglion Fiorentino", "Arezzo", "Firenze", "Siena"</div>
-        </div>
-      )}
-
-      {/* Pannello controlli */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Sorgente dati */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-          <div className="text-sm font-semibold">Sorgente Dati</div>
-          <div className="flex items-center gap-2">
-            <label className="w-32 text-sm text-neutral-700">Tipo</label>
-            <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
-              <option value="none">Nessuna (demo)</option>
-              <option value="csv">CSV URL</option>
-              <option value="gsheet">Google Sheet</option>
-            </select>
+    <div className="min-h-screen bg-slate-50">
+      {/* Topbar */}
+      <div className="sticky top-0 z-40 w-full border-b bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 md:px-6 py-3 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
+            <p className="text-xs md:text-sm text-slate-500">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
           </div>
+          <button
+            className="px-3 py-2 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-800"
+            onClick={()=> location.reload()}
+          >
+            <RefreshCw className="w-4 h-4 inline mr-2" />Reset
+          </button>
+        </div>
+      </div>
 
-          {dataSource === "csv" && (
+      {/* Body */}
+      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+        {/* SIDEBAR CONTROLLI */}
+        <aside className="space-y-6">
+          {/* Sorgente dati */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="text-sm font-semibold">Sorgente Dati</div>
             <div className="flex items-center gap-2">
-              <label className="w-32 text-sm text-neutral-700">CSV URL</label>
-              <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/.../gviz/tq?tqx=out:csv&sheet=Foglio1" />
+              <label className="w-32 text-sm text-neutral-700">Tipo</label>
+              <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+                <option value="none">Nessuna (demo)</option>
+                <option value="csv">CSV URL</option>
+                <option value="gsheet">Google Sheet</option>
+              </select>
             </div>
-          )}
-
-          {dataSource === "gsheet" && (
-            <>
+            {dataSource === "csv" && (
               <div className="flex items-center gap-2">
-                <label className="w-32 text-sm text-neutral-700">Sheet ID</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                <label className="w-32 text-sm text-neutral-700">CSV URL</label>
+                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
               </div>
-              <div className="flex items-center gap-2">
-                <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0, 123456789 (da #gid=...)" />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="w-32 text-sm text-neutral-700">Modalità</label>
+            )}
+            {dataSource === "gsheet" && (
+              <>
                 <div className="flex items-center gap-2">
-                  <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
-                  <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  <label className="w-32 text-sm text-neutral-700">Sheet ID</label>
+                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
                 </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
+                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
+                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (da #gid=...)" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-32 text-sm text-neutral-700">Modalità</label>
+                  <div className="flex items-center gap-2">
+                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  </div>
+                </div>
+                {!strictSheet && (
+                  <div className="text-xs text-amber-700">
+                    Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
+                  </div>
+                )}
+              </>
+            )}
+            {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
+            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+          </section>
+
+          {/* Località / Raggio / Mese / Tipologie / Modalità */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5"/>
+              <label className="w-32 text-sm text-neutral-700">Località</label>
+              <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
+            </div>
+            <div className="flex items-center gap-2">
+              <Route className="h-5 w-5"/>
+              <label className="w-32 text-sm text-neutral-700">Raggio</label>
+              <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5"/>
+              <label className="w-32 text-sm text-neutral-700">Mese</label>
+              <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-neutral-300 px-2 text-sm"/>
+            </div>
+            <div className="flex items-start gap-2">
+              <label className="w-32 mt-1 text-sm text-neutral-700">Tipologie</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {STRUCTURE_TYPES.map(t=> (
+                  <label key={t} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
+                      const c = ev.currentTarget.checked;
+                      setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
+                    }}/>
+                    <span>{typeLabels[t]}</span>
+                  </label>
+                ))}
               </div>
-              {!strictSheet && (
-                <div className="text-xs text-amber-700">
-                  Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-32 text-sm text-neutral-700">Modalità</label>
+              <div className="inline-flex rounded-xl border overflow-hidden">
+                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+              </div>
+              <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
+                <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
+              </button>
+            </div>
+          </section>
+
+          {/* Avvisi */}
+          {notices.length>0 && (
+            <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+              <div className="text-sm font-semibold text-amber-900">Avvisi</div>
+              <ul className="list-disc ml-5 text-sm text-amber-900">
+                {notices.map((n,i)=> <li key={i}>{n}</li>)}
+              </ul>
+            </section>
+          )}
+        </aside>
+
+        {/* MAIN */}
+        <main className="space-y-6">
+          {/* Mappa + Calendario */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2">
+              {normalized.center ? (
+                <LocationMap center={[normalized.center.lat, normalized.center.lng]} radius={normalized.safeR*1000} label={query || "Località"} />
+              ) : (
+                <div style={{height: 280}} className="flex items-center justify-center text-sm text-neutral-500">
+                  Inserisci una località valida per visualizzare la mappa e generare l'analisi
                 </div>
               )}
-            </>
-          )}
-
-          {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
-          {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-          {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
-        </div>
-
-        {/* Località / Raggio / Mese / Tipologie */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3 lg:col-span-2">
-          <div className="flex items-center gap-2">
-            <MapPin className="h-5 w-5"/>
-            <label className="w-32 text-sm text-neutral-700">Località</label>
-            <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
-          </div>
-          <div className="flex items-center gap-2">
-            <Route className="h-5 w-5"/>
-            <label className="w-32 text-sm text-neutral-700">Raggio</label>
-            <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-              {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-5 w-5"/>
-            <label className="w-32 text-sm text-neutral-700">Mese</label>
-            <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-neutral-300 px-2 text-sm"/>
-          </div>
-          <div className="flex items-start gap-2">
-            <label className="w-32 mt-1 text-sm text-neutral-700">Tipologie</label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {STRUCTURE_TYPES.map(t=> (
-                <label key={t} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
-                    const c = ev.currentTarget.checked;
-                    setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
-                  }}/>
-                  <span>{typeLabels[t]}</span>
-                </label>
-              ))}
+            </div>
+            <div className="bg-white rounded-2xl border shadow-sm p-6">
+              <div className="text-lg font-semibold mb-2">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
+              {normalized.isBlocked ? (
+                <div className="text-sm text-neutral-500">Nessuna analisi disponibile: inserisci una località valida.</div>
+              ) : (
+                <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="w-32 text-sm text-neutral-700">Modalità</label>
-            <div className="inline-flex rounded-xl border overflow-hidden">
-              <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-              <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+
+          {/* Grafici */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+              {Array.isArray(provenance) && provenance.length>0 ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
+                      {provenance.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6"][index % 5]} />
+                      ))}
+                    </Pie>
+                    <RTooltip /><Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
             </div>
-            <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
-              <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
-            </button>
+
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+              {Array.isArray(los) && los.length>0 ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={los}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value">
+                      {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
+            </div>
+
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+              {Array.isArray(channels) && channels.length>0 ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={channels}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="channel" />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value">
+                      {channels.map((_,i)=> <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Mappa + Calendario */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2">
-          {normalized.center ? (
-            <LocationMap center={[normalized.center.lat, normalized.center.lng]} radius={normalized.safeR*1000} label={query || "Località"} />
-          ) : (
-            <div style={{height: 280}} className="flex items-center justify-center text-sm text-neutral-500">
-              Inserisci una località valida per visualizzare la mappa e generare l'analisi
-            </div>
-          )}
-        </div>
-        <div className="bg-white rounded-2xl border shadow-sm p-6">
-          <div className="text-lg font-semibold mb-2">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
-          {normalized.isBlocked ? (
-            <div className="text-sm text-neutral-500">Nessuna analisi disponibile: inserisci una località valida.</div>
-          ) : (
-            <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-          )}
-        </div>
-      </div>
-
-      {/* Grafici */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-          {Array.isArray(provenance) && provenance.length>0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <PieChart>
-                <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
-                  {provenance.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6"][index % 5]} />
-                  ))}
-                </Pie>
-                <RTooltip /><Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
-        </div>
-
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-          {Array.isArray(los) && los.length>0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={los}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="bucket" />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value">
-                  {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
-        </div>
-
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-          {Array.isArray(channels) && channels.length>0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={channels}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="channel" />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value">
-                  {channels.map((_,i)=> <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border shadow-sm p-4">
-        <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
-        {normalized.isBlocked ? (
-          <div className="text-sm text-neutral-500">In attesa di località valida…</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={demand}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
-              <YAxis />
-              <RTooltip />
-              <Line type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={2} dot={{r:2}} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
+          {/* Curva domanda */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
+            {normalized.isBlocked ? (
+              <div className="text-sm text-neutral-500">In attesa di località valida…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={demand}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
+                  <YAxis />
+                  <RTooltip />
+                  <Line type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={2} dot={{r:2}} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </main>
       </div>
     </div>
   );
