@@ -119,8 +119,6 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
 }
 
 // ---------- Parser CSV ROBUSTO (+ helpers) ----------
-
-// split CSV rispettando virgolette
 function smartSplit(line:string, d:string) {
   const out:string[] = [];
   let cur = "", inQuotes = false;
@@ -137,7 +135,6 @@ function smartSplit(line:string, d:string) {
     .map(s => s.trim());
 }
 
-// CSV robusto: BOM, delimitatore , o ;, virgolette
 function parseCsv(text: string){
   const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length === 0) return [];
@@ -157,7 +154,6 @@ function parseCsv(text: string){
   });
 }
 
-// numeri robusti: supporta "43,12" e "43.12"
 function toNumber(v: string, def=0){
   if (v == null) return def;
   const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
@@ -165,7 +161,6 @@ function toNumber(v: string, def=0){
   return Number.isFinite(n) ? n : def;
 }
 
-// date robuste: ISO nativo o dd/mm/yyyy
 function toDate(v: string){
   if (!v) return null;
   const s = String(v).trim();
@@ -182,7 +177,6 @@ function toDate(v: string){
   return null;
 }
 
-// helper: legge un valore tramite alias (case-insensitive, BOM safe)
 function getVal(row:any, keys:string[]){
   const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
   const map = new Map<string,any>();
@@ -194,7 +188,6 @@ function getVal(row:any, keys:string[]){
   return null;
 }
 
-// normalizzazione righe (usa getVal per tollerare intestazioni varianti)
 function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
   const out: DataRow[] = rows.map((r:any)=>{
     const date = toDate(String(getVal(r, ["date","data","giorno"]) ?? ""));
@@ -217,6 +210,61 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
   return valid;
 }
 
+// ---------- Calendario Heatmap (✓ reinserito) ----------
+function CalendarHeatmap({
+  monthDate,
+  data
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
+  const start = startOfMonth(monthDate);
+  const end = endOfMonth(monthDate);
+  const days = eachDayOfInterval({start, end});
+  const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
+  const pmin = Math.min(...(pvals.length? pvals : [0]));
+  const pmax = Math.max(...(pvals.length? pvals : [1]));
+
+  const firstDow = (getDay(start)+6)%7; // Mon=0
+  const totalCells = firstDow + days.length;
+  const rows = Math.ceil(totalCells/7);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
+        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-2">
+        {Array.from({length: rows*7}).map((_,i)=>{
+          const dayIndex = i - firstDow;
+          const d = days[dayIndex];
+          const dayData = data.find(x=> x.date.toDateString()===d?.toDateString());
+          if(dayIndex<0 || !d){
+            return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>;
+          }
+          const isSat = ((getDay(d))===6);
+          const pressure = dayData?.pressure ?? 0;
+          const adr = dayData?.adr ?? 0;
+          const fill = colorForPressure(pressure,pmin,pmax);
+          const txtColor = contrastColor(fill);
+          return (
+            <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center">
+                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d EEE",{locale:it})}</span>
+              </div>
+              <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
+                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-2 flex items-center justify-center gap-4">
+        <span className="text-xs">Bassa domanda</span>
+        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
+        <span className="text-xs">Alta domanda</span>
+      </div>
+    </div>
+  );
+}
+
 // ---------- App ----------
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
@@ -230,8 +278,8 @@ export default function App(){
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
   const [gsSheet, setGsSheet] = useState("Sheet1");
-  const [gsGid, setGsGid] = useState("");               // <-- nuovo
-  const [strictSheet, setStrictSheet] = useState(true); // <-- nuovo (modalità rigida ON)
+  const [gsGid, setGsGid] = useState("");               // GID del foglio (es. 0)
+  const [strictSheet, setStrictSheet] = useState(true); // Modalità rigida ON
 
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -254,7 +302,7 @@ export default function App(){
   const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
   useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
 
-  // URL builder (rigido vs non rigido)
+  // URL builder (rigida vs non rigida)
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
@@ -263,11 +311,9 @@ export default function App(){
       if(!gid || !gid.trim()){
         return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (lo trovi nell'URL dopo #gid=...)." };
       }
-      // endpoint export + gid (se gid errato → errore reale)
       return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
     }
 
-    // modalità NON rigida: Google potrebbe ignorare &sheet e restituire il primo foglio
     const name = encodeURIComponent(sheetName||"Sheet1");
     return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
