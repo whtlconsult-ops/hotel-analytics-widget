@@ -224,6 +224,7 @@ function CalendarHeatmap({
 
   return (
     <div className="w-full">
+    <div className="h-8 bg-red-500"></div>
       {/* Head days */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
