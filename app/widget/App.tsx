@@ -206,62 +206,115 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
 }
 
 /* =========================
-   Calendario Heatmap
+   Calendario Heatmap (griglia inline)
 ========================= */
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
   const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
   const pmin = Math.min(...(pvals.length? pvals : [0]));
   const pmax = Math.max(...(pvals.length? pvals : [1]));
-  const firstDow = (getDay(start)+6)%7; // Mon=0
+  const firstDow = (getDay(start)+6)%7; // Lun=0
   const totalCells = firstDow + days.length;
   const rows = Math.ceil(totalCells/7);
 
   return (
-    <div className="w-full">
-    <div className="h-8 bg-red-500"></div>
-      {/* Head days */}
-      <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
-        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
+    <div style={{ width: "100%" }}>
+      {/* Intestazione giorni */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 6,
+          marginBottom: 8,
+          textAlign: "center",
+          fontSize: 12,
+          color: "#64748b",
+          fontWeight: 600
+        }}
+      >
+        {["Lun","Mar","Mer","Gio","Ven","Sab","Dom"].map((w) => (
+          <div key={w} style={{ padding: "2px 0" }}>{w}</div>
+        ))}
       </div>
-      <div className="grid grid-cols-7 gap-3">
+
+      {/* Griglia calendario */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 10
+        }}
+      >
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
           const d = days[dayIndex];
           const dayData = data.find(x=> x.date.toDateString()===d?.toDateString());
+
           if(dayIndex<0 || !d){
-            return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>;
+            return <div key={i} style={{
+              height: 96, background: "#fff",
+              border: "1px solid rgba(0,0,0,0.15)", borderRadius: 12
+            }} />;
           }
-          const isSat = ((getDay(d))===6);
+
+          const isSat = (getDay(d)===6);
           const pressure = dayData?.pressure ?? 0;
           const adr = dayData?.adr ?? 0;
-          const fill = colorForPressure(pressure,pmin,pmax);
-          const txtColor = contrastColor(fill);
+
+          // colore domanda
+          const spread = Math.max(1,(pmax-pmin));
+          const t = (pressure - pmin) / spread;
+          const stops = [
+            [255,255,204], [255,237,160], [254,217,118], [254,178,76],
+            [253,141,60], [252,78,42], [227,26,28]
+          ];
+          const idx = Math.min(stops.length-1, Math.max(0, Math.floor(t*(stops.length-1))));
+          const [r,g,b] = stops[idx];
+          const fill = `rgb(${r},${g},${b})`;
+          const txtColor = (0.299*r + 0.587*g + 0.114*b) < 150 ? "#fff" : "#000";
+
           return (
-            <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              {/* Top half: day + weekday */}
-              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
-                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
-                <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
+            <div key={i} style={{
+              height: 96, position: "relative", overflow: "hidden",
+              background: "#fff", borderRadius: 12, border: "2px solid #111827"
+            }}>
+              {/* riga superiore: giorno + weekday */}
+              <div style={{
+                position: "absolute", insetInline: 0, top: 0, height: "46%",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "6px 10px", background: "#fff"
+              }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: isSat ? "#dc2626" : "#0f172a" }}>
+                  {format(d,"d",{locale:it})}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: isSat ? "#dc2626" : "#475569" }}>
+                  {format(d,"EEE",{locale:it})}
+                </span>
               </div>
-              {/* Bottom half: ADR medio competitor con sfondo domanda */}
-              <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
-                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
+
+              {/* riga inferiore: ADR con colore domanda */}
+              <div style={{
+                position: "absolute", insetInline: 0, bottom: 0, height: "54%",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: fill
+              }}>
+                <span style={{ fontWeight: 800, color: txtColor }}>€{adr}</span>
               </div>
             </div>
-          )
+          );
         })}
       </div>
-      {/* Legend */}
-      <div className="mt-3 flex items-center justify-center gap-4">
-        <span className="text-xs">Bassa domanda</span>
-        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
-        <span className="text-xs">Alta domanda</span>
+
+      {/* Legenda */}
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+        <span style={{ fontSize: 12, color: "#334155" }}>Bassa domanda</span>
+        <div style={{ height: 8, width: 192, borderRadius: 9999, background: "linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))" }} />
+        <span style={{ fontSize: 12, color: "#334155" }}>Alta domanda</span>
       </div>
     </div>
   );
@@ -484,98 +537,110 @@ export default function App(){
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
         {/* SIDEBAR CONTROLLI */}
         <aside className="space-y-6">
-          {/* Sorgente dati */}
-          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <div className="text-sm font-semibold">Sorgente Dati</div>
-            <div className="flex items-center gap-2">
-              <label className="w-32 text-sm text-neutral-700">Tipo</label>
-              <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
-                <option value="none">Nessuna (demo)</option>
-                <option value="csv">CSV URL</option>
-                <option value="gsheet">Google Sheet</option>
-              </select>
-            </div>
-            {dataSource === "csv" && (
-              <div className="flex items-center gap-2">
-                <label className="w-32 text-sm text-neutral-700">CSV URL</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+          {/* Sorgente Dati */}
+          <section className="bg-white rounded-2xl border shadow-sm p-5">
+            <div className="text-sm font-semibold mb-3">Sorgente Dati</div>
+            <div className="grid gap-3">
+              <div className="flex items-center gap-3">
+                <label className="w-32 text-sm text-neutral-700">Tipo</label>
+                <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+                  <option value="none">Nessuna (demo)</option>
+                  <option value="csv">CSV URL</option>
+                  <option value="gsheet">Google Sheet</option>
+                </select>
               </div>
-            )}
-            {dataSource === "gsheet" && (
-              <>
-                <div className="flex items-center gap-2">
-                  <label className="w-32 text-sm text-neutral-700">Sheet ID</label>
-                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+
+              {dataSource === "csv" && (
+                <div className="flex items-center gap-3">
+                  <label className="w-32 text-sm text-neutral-700">CSV URL</label>
+                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
-                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
-                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (da #gid=...)" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-32 text-sm text-neutral-700">Modalità</label>
-                  <div className="flex items-center gap-2">
-                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
-                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+              )}
+
+              {dataSource === "gsheet" && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <label className="w-32 text-sm text-neutral-700">Sheet ID</label>
+                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
                   </div>
-                </div>
-                {!strictSheet && (
-                  <div className="text-xs text-amber-700">
-                    Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
+                  <div className="flex items-center gap-3">
+                    <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
+                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
                   </div>
-                )}
-              </>
-            )}
-            {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
-            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+                  <div className="flex items-center gap-3">
+                    <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
+                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (da #gid=...)" />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="w-32 text-sm text-neutral-700">Modalità</label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                      <span>Rigida (consigliata)</span>
+                    </label>
+                  </div>
+                  {!strictSheet && (
+                    <div className="text-xs text-amber-700">
+                      Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
+              {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+              {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+            </div>
           </section>
 
           {/* Località / Raggio / Mese / Tipologie / Modalità */}
-          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <MapPin className="h-5 w-5"/>
-              <label className="w-32 text-sm text-neutral-700">Località</label>
-              <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
-            </div>
-            <div className="flex items-center gap-2">
-              <Route className="h-5 w-5"/>
-              <label className="w-32 text-sm text-neutral-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5"/>
-              <label className="w-32 text-sm text-neutral-700">Mese</label>
-              <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-neutral-300 px-2 text-sm"/>
-            </div>
-            <div className="flex items-start gap-2">
-              <label className="w-32 mt-1 text-sm text-neutral-700">Tipologie</label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {STRUCTURE_TYPES.map(t=> (
-                  <label key={t} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
-                      const c = ev.currentTarget.checked;
-                      setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
-                    }}/>
-                    <span>{typeLabels[t]}</span>
-                  </label>
-                ))}
+          <section className="bg-white rounded-2xl border shadow-sm p-5">
+            <div className="grid gap-3">
+              <div className="flex items-center gap-3">
+                <MapPin className="h-5 w-5"/>
+                <label className="w-32 text-sm text-neutral-700">Località</label>
+                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
               </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="w-32 text-sm text-neutral-700">Modalità</label>
-              <div className="inline-flex rounded-xl border overflow-hidden">
-                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+
+              <div className="flex items-center gap-3">
+                <Route className="h-5 w-5"/>
+                <label className="w-32 text-sm text-neutral-700">Raggio</label>
+                <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+                  {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+                </select>
               </div>
-              <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
-                <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
-              </button>
+
+              <div className="flex items-center gap-3">
+                <CalendarDays className="h-5 w-5"/>
+                <label className="w-32 text-sm text-neutral-700">Mese</label>
+                <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-neutral-300 px-2 text-sm"/>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <label className="w-32 mt-1 text-sm text-neutral-700">Tipologie</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2">
+                  {STRUCTURE_TYPES.map(t=> (
+                    <label key={t} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
+                        const c = ev.currentTarget.checked;
+                        setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
+                      }}/>
+                      <span>{typeLabels[t]}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="w-32 text-sm text-neutral-700">Modalità</label>
+                <div className="inline-flex rounded-xl border overflow-hidden">
+                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+                </div>
+
+                <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
+                  <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
+                </button>
+              </div>
             </div>
           </section>
 
@@ -594,17 +659,28 @@ export default function App(){
         <main className="space-y-6">
           {/* Mappa + Calendario */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* MAPPA (2 colonne) */}
             <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2">
-              {normalized.center ? (
-                <LocationMap center={[normalized.center.lat, normalized.center.lng]} radius={normalized.safeR*1000} label={query || "Località"} />
-              ) : (
-                <div style={{height: 280}} className="flex items-center justify-center text-sm text-neutral-500">
-                  Inserisci una località valida per visualizzare la mappa e generare l'analisi
-                </div>
-              )}
+              <div className="h-[360px] overflow-hidden rounded-2xl">
+                {normalized.center ? (
+                  <LocationMap
+                    center={[normalized.center.lat, normalized.center.lng]}
+                    radius={normalized.safeR * 1000}
+                    label={query || "Località"}
+                  />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-sm text-neutral-500">
+                    Inserisci una località valida per visualizzare la mappa e generare l'analisi
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* CALENDARIO */}
             <div className="bg-white rounded-2xl border shadow-sm p-6">
-              <div className="text-lg font-semibold mb-2">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
+              <div className="text-lg font-semibold mb-2">
+                Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
+              </div>
               {normalized.isBlocked ? (
                 <div className="text-sm text-neutral-500">Nessuna analisi disponibile: inserisci una località valida.</div>
               ) : (
