@@ -621,58 +621,67 @@ export default function App(){
     <CalendarHeatmap monthDate={monthDate} data={calendarData} />
   )}
 </div>
+
           {/* Grafici */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-              {Array.isArray(provenance) && provenance.length>0 ? (
-                <ResponsiveContainer width="100%" height={240}>
-                  <PieChart>
-                    <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
-                      {provenance.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6"][index % 5]} />
-                      ))}
-                    </Pie>
-                    <RTooltip /><Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-            </div>
+          {/* Grafici — riga 1: 2 card larghe */}
+<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  {/* Provenienza */}
+  <div className="bg-white rounded-2xl border shadow-sm p-4">
+    <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+    {Array.isArray(provenance) && provenance.length>0 ? (
+      <ResponsiveContainer width="100%" height={320}>
+        <PieChart>
+          <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100}>
+            {provenance.map((_, index) => (
+              <Cell key={`cell-${index}`} fill={["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6"][index % 5]} />
+            ))}
+          </Pie>
+          <RTooltip /><Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+  </div>
 
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-              {Array.isArray(los) && los.length>0 ? (
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={los}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" />
-                    <YAxis />
-                    <RTooltip />
-                    <Bar dataKey="value">
-                      {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-            </div>
+  {/* LOS */}
+  <div className="bg-white rounded-2xl border shadow-sm p-4">
+    <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+    {Array.isArray(los) && los.length>0 ? (
+      <ResponsiveContainer width="100%" height={320}>
+        <BarChart data={los} margin={{ left: 8, right: 8, top: 8, bottom: 24 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="bucket" tick={{fontSize: 12}} />
+          <YAxis />
+          <RTooltip />
+          <Bar dataKey="value">
+            {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+  </div>
+</div>
 
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-              {Array.isArray(channels) && channels.length>0 ? (
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={channels}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="channel" />
-                    <YAxis />
-                    <RTooltip />
-                    <Bar dataKey="value">
-                      {channels.map((_,i)=> <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-            </div>
-          </div>
+
+{/* Canali di Vendita — riga intera a capo */}
+<div className="bg-white rounded-2xl border shadow-sm p-4">
+  <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+  {Array.isArray(channels) && channels.length>0 ? (
+    <ResponsiveContainer width="100%" height={340}>
+      <BarChart data={channels} margin={{ left: 8, right: 8, top: 8, bottom: 32 }}>
+        <CartesianGrid strokeDasharray="3 3" />
+        {/* interval={0} forza tutte le etichette, height + bottom margin evitano il taglio */}
+        <XAxis dataKey="channel" interval={0} tick={{fontSize: 12}} height={36} />
+        <YAxis />
+        <RTooltip />
+        <Bar dataKey="value">
+          {channels.map((_,i)=> (
+            <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+</div>
 
           {/* Curva domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
