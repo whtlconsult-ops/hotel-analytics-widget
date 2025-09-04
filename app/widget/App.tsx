@@ -12,7 +12,7 @@ import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 
-// ⬇️ Tema & varianti
+// Tema & varianti
 import { THEME, type ChartVariant, solidColor } from "../theme";
 
 /* =========================
@@ -41,8 +41,24 @@ const typeLabels: Record<string,string> = {
   villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
-// 👉 Se vuoi “3D-lite” e ombre sui grafici, cambia qui in "pro"
+// ✅ Variante attiva: “pro” (ombre + gradienti)
+//   Cambia in "flat" per stile piatto
 const CHART_VARIANT: ChartVariant = "pro";
+
+/* =========================
+   Helpers estetici
+========================= */
+function lighten(hex: string, amount = 0.25) {
+  // hex "#rrggbb" → schiarito verso bianco (amount 0..1)
+  const m = hex.replace("#", "");
+  const r = parseInt(m.slice(0, 2), 16);
+  const g = parseInt(m.slice(2, 4), 16);
+  const b = parseInt(m.slice(4, 6), 16);
+  const nr = Math.round(r + (255 - r) * amount);
+  const ng = Math.round(g + (255 - g) * amount);
+  const nb = Math.round(b + (255 - b) * amount);
+  return `rgb(${nr}, ${ng}, ${nb})`;
+}
 
 /* =========================
    Geocoding demo
@@ -430,7 +446,7 @@ export default function App(){
   ], [rawRows]);
 
   const channels = useMemo(()=> rawRows.length>0 ? (
-    Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.channel||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
+    Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.channel||"Altro"; acc[k]=(acc[k)||0]+1; return acc; }, {}))
       .map(([channel,value])=>({channel,value}))
   ) : [
     { channel:"Booking", value: 36 },{ channel:"Airbnb", value: 26 },{ channel:"Diretto", value: 22 },{ channel:"Expedia", value: 11 },{ channel:"Altro", value: 5 },
@@ -562,12 +578,6 @@ export default function App(){
             </div>
 
             {/* Modalità + Pulsante su riga propria */}
-            {/* 
-              Toggle Modalità:
-              - Zona       = analisi media sull’area geografica selezionata
-              - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
-              Nota: in DEMO non cambia dataset; pronto per logiche future.
-            */}
             <div className="grid grid-cols-1 gap-3 mt-2">
               <div className="flex items-center gap-3">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
@@ -634,13 +644,12 @@ export default function App(){
 
           {/* Grafici — riga 1: 2 card larghe */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Provenienza (colori netti + percentuali; supporto variante "pro") */}
+            {/* Provenienza (Pie con “pro”) */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               {Array.isArray(provenance) && provenance.length>0 ? (
                 <ResponsiveContainer width="100%" height={340}>
                   <PieChart margin={{ bottom: 24 }}>
-                    {/* Defs per modalità "pro" (ombra + gradienti): se flat, non servono */}
                     {CHART_VARIANT === "pro" ? (
                       <defs>
                         <filter id="pie-shadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -685,17 +694,13 @@ export default function App(){
                         return [`${props?.value} (${pct}%)`, name];
                       }}
                     />
-                    <Legend
-                      verticalAlign="bottom"
-                      iconType="circle"
-                      wrapperStyle={{ color: THEME.chart.pie.legendColor, fontWeight: 500 }}
-                    />
+                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 500 }} />
                   </PieChart>
                 </ResponsiveContainer>
               ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
 
-            {/* LOS */}
+            {/* LOS (Bar con “pro”) */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
               {Array.isArray(los) && los.length>0 ? (
@@ -705,8 +710,29 @@ export default function App(){
                     <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
                     <YAxis />
                     <RTooltip />
-                    <Bar dataKey="value">
-                      {los.map((_,i)=> <Cell key={i} fill={THEME.palette.barBlue[i % THEME.palette.barBlue.length]} />)}
+                    {CHART_VARIANT === "pro" ? (
+                      <defs>
+                        <filter id="bar-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
+                        </filter>
+                        {los.map((_, i) => {
+                          const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                          return (
+                            <linearGradient id={`bar-grad-los-${i}`} key={i} x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={lighten(base, 0.35)} />
+                              <stop offset="100%" stopColor={base} />
+                            </linearGradient>
+                          );
+                        })}
+                      </defs>
+                    ) : null}
+                    <Bar dataKey="value" {...(CHART_VARIANT === "pro" ? { style: { filter: "url(#bar-shadow)" } } : {})}>
+                      {los.map((_,i)=> (
+                        <Cell
+                          key={i}
+                          fill={CHART_VARIANT === "pro" ? `url(#bar-grad-los-${i})` : THEME.palette.barBlue[i % THEME.palette.barBlue.length]}
+                        />
+                      ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -714,7 +740,7 @@ export default function App(){
             </div>
           </div>
 
-          {/* Canali di Vendita — riga intera a capo */}
+          {/* Canali di Vendita — riga intera (Bar con “pro”) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
@@ -724,9 +750,28 @@ export default function App(){
                   <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={36} />
                   <YAxis />
                   <RTooltip />
-                  <Bar dataKey="value">
+                  {CHART_VARIANT === "pro" ? (
+                    <defs>
+                      <filter id="bar-shadow-2" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
+                      </filter>
+                      {channels.map((_, i) => {
+                        const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                        return (
+                          <linearGradient id={`bar-grad-ch-${i}`} key={i} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={lighten(base, 0.35)} />
+                            <stop offset="100%" stopColor={base} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                  ) : null}
+                  <Bar dataKey="value" {...(CHART_VARIANT === "pro" ? { style: { filter: "url(#bar-shadow-2)" } } : {})}>
                     {channels.map((_,i)=> (
-                      <Cell key={i} fill={THEME.palette.barOrange[i % THEME.palette.barOrange.length]} />
+                      <Cell
+                        key={i}
+                        fill={CHART_VARIANT === "pro" ? `url(#bar-grad-ch-${i})` : THEME.palette.barOrange[i % THEME.palette.barOrange.length]}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
@@ -734,7 +779,7 @@ export default function App(){
             ) : <div className="text-xs text-slate-500">Nessun dato</div>}
           </div>
 
-          {/* Curva domanda */}
+          {/* Curva domanda (Line con “pro”) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
             {normalized.isBlocked ? (
@@ -746,7 +791,25 @@ export default function App(){
                   <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
                   <YAxis />
                   <RTooltip />
-                  <Line type="monotone" dataKey="value" stroke={THEME.chart.line.stroke} strokeWidth={THEME.chart.line.strokeWidth} dot={{r: THEME.chart.line.dotRadius}} />
+                  {CHART_VARIANT === "pro" ? (
+                    <defs>
+                      <filter id="line-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="1.25" stdDeviation="1.5" floodOpacity="0.35" />
+                      </filter>
+                      <linearGradient id="line-grad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor={lighten(THEME.chart.line.stroke, 0.3)} />
+                        <stop offset="100%" stopColor={THEME.chart.line.stroke} />
+                      </linearGradient>
+                    </defs>
+                  ) : null}
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke={CHART_VARIANT === "pro" ? "url(#line-grad)" : THEME.chart.line.stroke}
+                    strokeWidth={THEME.chart.line.strokeWidth}
+                    dot={{ r: THEME.chart.line.dotRadius }}
+                    {...(CHART_VARIANT === "pro" ? { style: { filter: "url(#line-shadow)" } } : {})}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             )}
