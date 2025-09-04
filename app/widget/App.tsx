@@ -445,13 +445,25 @@ export default function App(){
     { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
   ], [rawRows]);
 
-  const channels = useMemo(()=> rawRows.length>0 ? (
-    Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.channel||"Altro"; acc[k]=(acc[k)||0]+1; return acc; }, {}))
-      .map(([channel,value])=>({channel,value}))
-  ) : [
-    { channel:"Booking", value: 36 },{ channel:"Airbnb", value: 26 },{ channel:"Diretto", value: 22 },{ channel:"Expedia", value: 11 },{ channel:"Altro", value: 5 },
-  ], [rawRows]);
-
+  const channels = useMemo(() => (
+  rawRows.length > 0
+    ? Object
+        .entries(
+          rawRows.reduce((acc: Record<string, number>, r) => {
+            const k = r.channel || "Altro";
+            acc[k] = (acc[k] || 0) + 1; // ← parentesi a posto qui
+            return acc;
+          }, {})
+        )
+        .map(([channel, value]) => ({ channel, value }))
+    : [
+        { channel: "Booking", value: 36 },
+        { channel: "Airbnb", value: 26 },
+        { channel: "Diretto", value: 22 },
+        { channel: "Expedia", value: 11 },
+        { channel: "Altro", value: 5 },
+      ]
+), [rawRows]);
   const demand = useMemo(()=> (
     normalized.isBlocked ? [] : (rawRows.length>0
       ? calendarData.map(d=> ({ date: format(d.date, "d MMM", {locale:it}), value: d.pressure }))
