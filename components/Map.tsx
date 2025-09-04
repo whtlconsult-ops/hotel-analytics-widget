@@ -1,14 +1,13 @@
 "use client";
 
 import { MapContainer, TileLayer, Circle, Tooltip, useMap } from "react-leaflet";
-import type { Map as LeafletMap } from "leaflet";
 import { useEffect } from "react";
 import "leaflet/dist/leaflet.css";
 
 function ResizeFix({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    // Ridisegna e riallinea la vista dopo il mount
+    // Riallinea la vista e forza il ridisegno dopo il mount
     setTimeout(() => {
       map.setView(center, map.getZoom() || 12);
       map.invalidateSize();
@@ -34,11 +33,10 @@ export default function LocationMap({
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        // ❗ Non passiamo più center/zoom/scrollWheelZoom come props
-        //   per evitare incompatibilità di typings durante la build
+        // ❗ Niente center/zoom/scrollWheel nel JSX per evitare problemi di typings
         style={{ height: "100%", width: "100%" }}
-        whenCreated={(map: LeafletMap) => {
-          // Vista iniziale e interazioni configurate via codice
+        whenReady={(event) => {
+          const map = event.target; // Leaflet Map
           map.setView(center, 12);
           map.scrollWheelZoom.enable();
           setTimeout(() => map.invalidateSize(), 0);
