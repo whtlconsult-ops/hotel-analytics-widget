@@ -557,21 +557,43 @@ export default function App(){
   </div>
 </div>
 
+
             {/* Modalità + Pulsante su riga propria */}
 {/* 
   Toggle Modalità:
   - Zona       = analisi media sull’area geografica selezionata
   - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
-  Al momento in DEMO non cambia nulla, ma è pronto per logiche future.
+  ⚠️ Nota: al momento in DEMO non cambia nulla, ma è pronto per logiche future.
 */}
-            <div className="grid grid-cols-1 gap-3">
-              <div className="flex items-center gap-3">
-                <label className="w-28 text-sm text-slate-700">Modalità</label>
-                <div className="inline-flex rounded-xl border overflow-hidden">
-                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
-                </div>
-              </div>
+
+<div className="mt-4">
+  <span className="block text-sm font-medium text-neutral-700 mb-1">Modalità</span>
+  <div className="flex items-center gap-2">
+    <div className="flex rounded-xl border border-neutral-300 overflow-hidden">
+      <button
+        className={`px-4 py-1 text-sm font-medium ${
+          mode === "zona"
+            ? "bg-neutral-900 text-white"
+            : "bg-white text-neutral-700"
+        }`}
+        onClick={() => setMode("zona")}
+      >
+        Zona
+      </button>
+      <button
+        className={`px-4 py-1 text-sm font-medium ${
+          mode === "competitor"
+            ? "bg-neutral-900 text-white"
+            : "bg-white text-neutral-700"
+        }`}
+        onClick={() => setMode("competitor")}
+      >
+        Competitor
+      </button>
+    </div>
+  </div>
+</div>
+
               <div>
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
