@@ -558,6 +558,12 @@ export default function App(){
 </div>
 
             {/* Modalità + Pulsante su riga propria */}
+{/* 
+  Toggle Modalità:
+  - Zona       = analisi media sull’area geografica selezionata
+  - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
+  Al momento in DEMO non cambia nulla, ma è pronto per logiche future.
+*/}
             <div className="grid grid-cols-1 gap-3">
               <div className="flex items-center gap-3">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
