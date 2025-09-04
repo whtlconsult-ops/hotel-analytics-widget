@@ -164,10 +164,8 @@ function toNumber(v: string, def=0){
 function toDate(v: string){
   if (!v) return null;
   const s = String(v).trim();
-
   const d1 = new Date(s);
   if (!Number.isNaN(d1.getTime())) return d1;
-
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
@@ -207,7 +205,7 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
 }
 
 /* =========================
-   Calendario a riquadri
+   Calendario a riquadri (pulito)
 ========================= */
 function CalendarHeatmap({
   monthDate,
@@ -516,7 +514,7 @@ export default function App(){
             {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
 
-          {/* Località / Raggio / Mese / Tipologie / Modalità */}
+          {/* Località / Raggio / Mese / Tipologie */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-slate-700"/>
@@ -549,15 +547,25 @@ export default function App(){
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <label className="w-28 text-sm text-slate-700">Modalità</label>
-              <div className="inline-flex rounded-xl border overflow-hidden">
-                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+
+            {/* Modalità + Pulsante su riga propria */}
+            <div className="grid grid-cols-1 gap-3">
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-slate-700">Modalità</label>
+                <div className="inline-flex rounded-xl border overflow-hidden">
+                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+                </div>
               </div>
-              <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
-                <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
-              </button>
+              <div>
+                <button
+                  className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
+                  disabled={normalized.isBlocked}
+                  title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
+                </button>
+              </div>
             </div>
           </section>
 
@@ -576,9 +584,9 @@ export default function App(){
         <main className="space-y-6">
           {/* Mappa + Calendario */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* MAPPA */}
+            {/* MAPPA (un po’ più piccola) */}
             <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2 self-start">
-              <div className="h-80 md:h-[420px] lg:h-[560px] overflow-hidden rounded-2xl">
+              <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
                 {normalized.center ? (
                   <LocationMap
                     center={[normalized.center.lat, normalized.center.lng]}
@@ -593,7 +601,7 @@ export default function App(){
               </div>
             </div>
 
-            {/* CALENDARIO */}
+            {/* CALENDARIO a riquadri */}
             <div className="bg-white rounded-2xl border shadow-sm p-6">
               <div className="text-lg font-semibold mb-3">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
               {normalized.isBlocked ? (
