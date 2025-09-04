@@ -582,36 +582,36 @@ export default function App(){
 
         {/* MAIN */}
         <main className="space-y-6">
-          {/* Mappa + Calendario */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* MAPPA (un po’ più piccola) */}
-            <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2 self-start">
-              <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
-                {normalized.center ? (
-                  <LocationMap
-                    center={[normalized.center.lat, normalized.center.lng]}
-                    radius={normalized.safeR*1000}
-                    label={query || "Località"}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-sm text-slate-500">
-                    Inserisci una località valida per visualizzare la mappa e generare l'analisi
-                  </div>
-                )}
-              </div>
-            </div>
+         {/* MAPPA – riga intera */}
+<div className="bg-white rounded-2xl border shadow-sm p-0">
+  <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
+    {normalized.center ? (
+      <LocationMap
+        center={[normalized.center.lat, normalized.center.lng]}
+        radius={normalized.safeR*1000}
+        label={query || "Località"}
+      />
+    ) : (
+      <div className="h-full flex items-center justify-center text-sm text-slate-500">
+        Inserisci una località valida per visualizzare la mappa e generare l'analisi
+      </div>
+    )}
+  </div>
+</div>
 
-            {/* CALENDARIO a riquadri */}
-            <div className="bg-white rounded-2xl border shadow-sm p-6">
-              <div className="text-lg font-semibold mb-3">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
-              {normalized.isBlocked ? (
-                <div className="text-sm text-slate-500">Nessuna analisi disponibile: inserisci una località valida.</div>
-              ) : (
-                <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-              )}
-            </div>
-          </div>
-
+{/* CALENDARIO – riga intera (niente compressione a “pillola”) */}
+<div className="bg-white rounded-2xl border shadow-sm p-6">
+  <div className="text-lg font-semibold mb-3">
+    Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
+  </div>
+  {normalized.isBlocked ? (
+    <div className="text-sm text-slate-500">
+      Nessuna analisi disponibile: inserisci una località valida.
+    </div>
+  ) : (
+    <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+  )}
+</div>
           {/* Grafici */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white rounded-2xl border shadow-sm p-4">
