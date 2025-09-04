@@ -42,7 +42,7 @@ const typeLabels: Record<string,string> = {
 };
 
 // 👉 Se vuoi “3D-lite” e ombre sui grafici, cambia qui in "pro"
-const CHART_VARIANT: ChartVariant = "flat";
+const CHART_VARIANT: ChartVariant = "pro";
 
 /* =========================
    Geocoding demo
