@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-// import LocationMap from "../../components/Map";
 import dynamic from "next/dynamic";
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
+
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend
@@ -140,7 +140,7 @@ function smartSplit(line:string, d:string) {
   out.push(cur);
   return out
     .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette
     .map(s => s.trim());
 }
 function parseCsv(text: string){
@@ -208,122 +208,64 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
 }
 
 /* =========================
-   Calendario Heatmap (griglia inline)
+   Calendario Heatmap
 ========================= */
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}) {
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
   const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
   const pmin = Math.min(...(pvals.length? pvals : [0]));
   const pmax = Math.max(...(pvals.length? pvals : [1]));
-  const firstDow = (getDay(start)+6)%7; // Lun=0
+  const firstDow = (getDay(start)+6)%7; // Mon=0
   const totalCells = firstDow + days.length;
   const rows = Math.ceil(totalCells/7);
 
   return (
-    <div style={{ width: "100%" }}>
-      {/* Intestazione giorni */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 6,
-          marginBottom: 8,
-          textAlign: "center",
-          fontSize: 12,
-          color: "#64748b",
-          fontWeight: 600
-        }}
-      >
-        {["Lun","Mar","Mer","Gio","Ven","Sab","Dom"].map((w) => (
-          <div key={w} style={{ padding: "2px 0" }}>{w}</div>
-        ))}
+    <div className="w-full">
+      <div className="text-sm mb-2 grid grid-cols-7 gap-3 text-center text-slate-600">
+        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-semibold">{w}</div>)}
       </div>
-
-      {/* Griglia calendario */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 10
-        }}
-      >
+      <div className="grid grid-cols-7 gap-4">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
           const d = days[dayIndex];
           const dayData = data.find(x=> x.date.toDateString()===d?.toDateString());
-
           if(dayIndex<0 || !d){
-            return <div key={i} style={{
-              height: 96, background: "#fff",
-              border: "1px solid rgba(0,0,0,0.15)", borderRadius: 12
-            }} />;
+            return <div key={i} className="h-28 bg-white border rounded-2xl"/>;
           }
-
-          const isSat = (getDay(d)===6);
+          const isSat = ((getDay(d))===6);
           const pressure = dayData?.pressure ?? 0;
           const adr = dayData?.adr ?? 0;
-
-          // colore domanda
-          const spread = Math.max(1,(pmax-pmin));
-          const t = (pressure - pmin) / spread;
-          const stops = [
-            [255,255,204], [255,237,160], [254,217,118], [254,178,76],
-            [253,141,60], [252,78,42], [227,26,28]
-          ];
-          const idx = Math.min(stops.length-1, Math.max(0, Math.floor(t*(stops.length-1))));
-          const [r,g,b] = stops[idx];
-          const fill = `rgb(${r},${g},${b})`;
-          const txtColor = (0.299*r + 0.587*g + 0.114*b) < 150 ? "#fff" : "#000";
-
+          const fill = colorForPressure(pressure,pmin,pmax);
+          const txtColor = contrastColor(fill);
           return (
-            <div key={i} style={{
-              height: 96, position: "relative", overflow: "hidden",
-              background: "#fff", borderRadius: 12, border: "2px solid #111827"
-            }}>
-              {/* riga superiore: giorno + weekday */}
-              <div style={{
-                position: "absolute", insetInline: 0, top: 0, height: "46%",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                padding: "6px 10px", background: "#fff"
-              }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: isSat ? "#dc2626" : "#0f172a" }}>
-                  {format(d,"d",{locale:it})}
-                </span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: isSat ? "#dc2626" : "#475569" }}>
-                  {format(d,"EEE",{locale:it})}
-                </span>
+            <div key={i} className="h-28 rounded-2xl border-2 border-slate-700 relative overflow-hidden bg-white">
+              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-3 flex items-center justify-between">
+                <span className={`text-sm font-semibold ${isSat?"text-red-600":"text-slate-800"}`}>{format(d,"d",{locale:it})}</span>
+                <span className={`text-xs ${isSat?"text-red-600":"text-slate-500"}`}>{format(d,"eee",{locale:it})}</span>
               </div>
-
-              {/* riga inferiore: ADR con colore domanda */}
-              <div style={{
-                position: "absolute", insetInline: 0, bottom: 0, height: "54%",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: fill
-              }}>
-                <span style={{ fontWeight: 800, color: txtColor }}>€{adr}</span>
+              <div className="absolute inset-x-0 bottom-0 h-1/2 px-3 flex items-center justify-center" style={{background: fill}}>
+                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
             </div>
-          );
+          )
         })}
       </div>
-
-      {/* Legenda */}
-      <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
-        <span style={{ fontSize: 12, color: "#334155" }}>Bassa domanda</span>
-        <div style={{ height: 8, width: 192, borderRadius: 9999, background: "linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))" }} />
-        <span style={{ fontSize: 12, color: "#334155" }}>Alta domanda</span>
+      <div className="mt-4 flex items-center justify-center gap-4 text-slate-600">
+        <span className="text-xs">Bassa domanda</span>
+        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
+        <span className="text-xs">Alta domanda</span>
       </div>
     </div>
   );
 }
 
 /* =========================
-   App (UI riorganizzata)
+   App (UI pulita)
 ========================= */
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
@@ -362,13 +304,13 @@ export default function App(){
   const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
   useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
 
-  // Build URL Google Sheet (rigida/non rigida)
+  // Google Sheet URL
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
     if(strict){
       if(!gid || !gid.trim()){
-        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (lo trovi nell'URL dopo #gid=...)." };
+        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (#gid=...)." };
       }
       return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
     }
@@ -381,7 +323,7 @@ export default function App(){
     return await res.text();
   }
 
-  // Caricamento dati (CSV / Google Sheet)
+  // Caricamento dati
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
@@ -404,7 +346,7 @@ export default function App(){
           }
           url = built.url;
           if(!strictSheet){
-            const w = "Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.";
+            const w = "Modalità non rigida: Google può ignorare il nome foglio. Per selezione certa usa il GID.";
             setNotices(prev=> Array.from(new Set([...prev, w])));
           }
         }
@@ -431,7 +373,7 @@ export default function App(){
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // Dati calendario + ADR medio competitor
+  // Dati calendario
   const calendarData = useMemo(()=> {
     if(normalized.isBlocked) return [];
     if(rawRows.length>0){
@@ -458,56 +400,32 @@ export default function App(){
     return normalized.safeDays.map(d=>({ date:d, pressure: pressureFor(d), adr: adrFromCompetitors(d, mode) }));
   }, [normalized.safeDays, normalized.isBlocked, mode, rawRows]);
 
-  // Provenienze / LOS / Canali
-  const provenance = useMemo(()=> {
-    if(rawRows.length>0){
-      const counts: Record<string, number> = {};
-      rawRows.forEach(r=>{ const k=(r.provenance||"Altro")||"Altro"; counts[k]=(counts[k]||0)+1; });
-      return Object.entries(counts).map(([name,value])=>({name,value}));
-    }
-    return [
-      { name:"Italia", value: 42 },
-      { name:"Germania", value: 22 },
-      { name:"Francia", value: 14 },
-      { name:"USA", value: 10 },
-      { name:"UK", value: 12 },
-    ];
-  }, [rawRows]);
-  const los = useMemo(()=> {
-    if(rawRows.length>0){
-      const buckets: Record<string, number> = {"1 notte":0, "2-3 notti":0, "4-6 notti":0, "7+ notti":0};
-      rawRows.forEach(r=>{
-        const v = Number.isFinite(r.los)? r.los : 0;
-        if(v<=1) buckets["1 notte"]++;
-        else if(v<=3) buckets["2-3 notti"]++;
-        else if(v<=6) buckets["4-6 notti"]++;
-        else buckets["7+ notti"]++;
-      });
-      return Object.entries(buckets).map(([bucket,value])=>({bucket, value}));
-    }
-    return [
-      { bucket:"1 notte", value: 15 },
-      { bucket:"2-3 notti", value: 46 },
-      { bucket:"4-6 notti", value: 29 },
-      { bucket:"7+ notti", value: 10 },
-    ];
-  }, [rawRows]);
-  const channels = useMemo(()=> {
-    if(rawRows.length>0){
-      const counts: Record<string, number> = {};
-      rawRows.forEach(r=>{ const k=(r.channel||"Altro")||"Altro"; counts[k]=(counts[k]||0)+1; });
-      return Object.entries(counts).map(([channel,value])=>({channel,value}));
-    }
-    return [
-      { channel:"Booking", value: 36 },
-      { channel:"Airbnb", value: 26 },
-      { channel:"Diretto", value: 22 },
-      { channel:"Expedia", value: 11 },
-      { channel:"Altro", value: 5 },
-    ];
-  }, [rawRows]);
+  // Grafici demo (fallback)
+  const provenance = useMemo(()=> rawRows.length>0 ? (
+    Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.provenance||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
+      .map(([name,value])=>({name,value}))
+  ) : [
+    { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 },
+  ], [rawRows]);
 
-  // Curva domanda (linea)
+  const los = useMemo(()=> rawRows.length>0 ? (()=> {
+    const buckets: Record<string, number> = {"1 notte":0, "2-3 notti":0, "4-6 notti":0, "7+ notti":0};
+    rawRows.forEach(r=>{
+      const v = Number.isFinite(r.los)? r.los : 0;
+      if(v<=1) buckets["1 notte"]++; else if(v<=3) buckets["2-3 notti"]++; else if(v<=6) buckets["4-6 notti"]++; else buckets["7+ notti"]++;
+    });
+    return Object.entries(buckets).map(([bucket,value])=>({bucket, value}));
+  })() : [
+    { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
+  ], [rawRows]);
+
+  const channels = useMemo(()=> rawRows.length>0 ? (
+    Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.channel||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
+      .map(([channel,value])=>({channel,value}))
+  ) : [
+    { channel:"Booking", value: 36 },{ channel:"Airbnb", value: 26 },{ channel:"Diretto", value: 22 },{ channel:"Expedia", value: 11 },{ channel:"Altro", value: 5 },
+  ], [rawRows]);
+
   const demand = useMemo(()=> (
     normalized.isBlocked ? [] : (rawRows.length>0
       ? calendarData.map(d=> ({ date: format(d.date, "d MMM", {locale:it}), value: d.pressure }))
@@ -520,17 +438,18 @@ export default function App(){
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
-      <div className="sticky top-0 z-40 w-full border-b bg-white/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 py-3 flex items-center justify-between">
+      <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
-            <p className="text-xs md:text-sm text-slate-500">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
+            <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
           </div>
           <button
-            className="px-3 py-2 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-800"
+            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
             onClick={()=> location.reload()}
+            title="Reset"
           >
-            <RefreshCw className="w-4 h-4 inline mr-2" />Reset
+            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
           </button>
         </div>
       </div>
@@ -539,110 +458,97 @@ export default function App(){
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
         {/* SIDEBAR CONTROLLI */}
         <aside className="space-y-6">
-          {/* Sorgente Dati */}
-          <section className="bg-white rounded-2xl border shadow-sm p-5">
-            <div className="text-sm font-semibold mb-3">Sorgente Dati</div>
-            <div className="grid gap-3">
-              <div className="flex items-center gap-3">
-                <label className="w-32 text-sm text-neutral-700">Tipo</label>
-                <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
-                  <option value="none">Nessuna (demo)</option>
-                  <option value="csv">CSV URL</option>
-                  <option value="gsheet">Google Sheet</option>
-                </select>
-              </div>
+          {/* Sorgente dati */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="text-sm font-semibold">Sorgente Dati</div>
 
-              {dataSource === "csv" && (
-                <div className="flex items-center gap-3">
-                  <label className="w-32 text-sm text-neutral-700">CSV URL</label>
-                  <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
-                </div>
-              )}
-
-              {dataSource === "gsheet" && (
-                <>
-                  <div className="flex items-center gap-3">
-                    <label className="w-32 text-sm text-neutral-700">Sheet ID</label>
-                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="w-32 text-sm text-neutral-700">Nome foglio</label>
-                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="w-32 text-sm text-neutral-700">Sheet GID</label>
-                    <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (da #gid=...)" />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="w-32 text-sm text-neutral-700">Modalità</label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
-                      <span>Rigida (consigliata)</span>
-                    </label>
-                  </div>
-                  {!strictSheet && (
-                    <div className="text-xs text-amber-700">
-                      Modalità non rigida: Google potrebbe ignorare il nome foglio e restituire il primo foglio. Per selezione certa usa il GID.
-                    </div>
-                  )}
-                </>
-              )}
-
-              {loading && <div className="text-xs text-neutral-600">Caricamento dati…</div>}
-              {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-              {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+            <div className="flex items-center gap-2">
+              <label className="w-28 text-sm text-slate-700">Tipo</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+                <option value="none">Nessuna (demo)</option>
+                <option value="csv">CSV URL</option>
+                <option value="gsheet">Google Sheet</option>
+              </select>
             </div>
+
+            {dataSource === "csv" && (
+              <div className="flex items-center gap-2">
+                <label className="w-28 text-sm text-slate-700">CSV URL</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+              </div>
+            )}
+
+            {dataSource === "gsheet" && (
+              <>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Sheet ID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Nome foglio</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Sheet GID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Modalità</label>
+                  <div className="flex items-center gap-2">
+                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
+            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
 
           {/* Località / Raggio / Mese / Tipologie / Modalità */}
-          <section className="bg-white rounded-2xl border shadow-sm p-5">
-            <div className="grid gap-3">
-              <div className="flex items-center gap-3">
-                <MapPin className="h-5 w-5"/>
-                <label className="w-32 text-sm text-neutral-700">Località</label>
-                <input className="w-full h-9 rounded-xl border border-neutral-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Località</label>
+              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
+            </div>
+            <div className="flex items-center gap-2">
+              <Route className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Raggio</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Mese</label>
+              <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+            </div>
+            <div className="flex items-start gap-2">
+              <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
+              <div className="grid grid-cols-2 gap-2">
+                {STRUCTURE_TYPES.map(t=> (
+                  <label key={t} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
+                      const c = ev.currentTarget.checked;
+                      setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
+                    }}/>
+                    <span>{typeLabels[t]}</span>
+                  </label>
+                ))}
               </div>
-
-              <div className="flex items-center gap-3">
-                <Route className="h-5 w-5"/>
-                <label className="w-32 text-sm text-neutral-700">Raggio</label>
-                <select className="h-9 rounded-xl border border-neutral-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-                  {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
-                </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="w-28 text-sm text-slate-700">Modalità</label>
+              <div className="inline-flex rounded-xl border overflow-hidden">
+                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
               </div>
-
-              <div className="flex items-center gap-3">
-                <CalendarDays className="h-5 w-5"/>
-                <label className="w-32 text-sm text-neutral-700">Mese</label>
-                <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-neutral-300 px-2 text-sm"/>
-              </div>
-
-              <div className="flex items-start gap-3">
-                <label className="w-32 mt-1 text-sm text-neutral-700">Tipologie</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2">
-                  {STRUCTURE_TYPES.map(t=> (
-                    <label key={t} className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
-                        const c = ev.currentTarget.checked;
-                        setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
-                      }}/>
-                      <span>{typeLabels[t]}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className="w-32 text-sm text-neutral-700">Modalità</label>
-                <div className="inline-flex rounded-xl border overflow-hidden">
-                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-neutral-900 text-white":"bg-white text-neutral-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
-                </div>
-
-                <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-neutral-900 text-white border-neutral-900 hover:bg-neutral-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
-                  <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
-                </button>
-              </div>
+              <button className="inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 ml-auto" disabled={normalized.isBlocked} title={normalized.isBlocked?"Inserisci la località per procedere":"Genera Analisi"}>
+                <RefreshCw className="h-4 w-4 mr-2"/>Genera Analisi
+              </button>
             </div>
           </section>
 
@@ -660,31 +566,26 @@ export default function App(){
         {/* MAIN */}
         <main className="space-y-6">
           {/* Mappa + Calendario */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* MAPPA (2 colonne) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2">
               <div className="h-[360px] overflow-hidden rounded-2xl">
                 {normalized.center ? (
                   <LocationMap
                     center={[normalized.center.lat, normalized.center.lng]}
-                    radius={normalized.safeR * 1000}
+                    radius={normalized.safeR*1000}
                     label={query || "Località"}
                   />
                 ) : (
-                  <div className="h-full flex items-center justify-center text-sm text-neutral-500">
+                  <div className="h-full flex items-center justify-center text-sm text-slate-500">
                     Inserisci una località valida per visualizzare la mappa e generare l'analisi
                   </div>
                 )}
               </div>
             </div>
-
-            {/* CALENDARIO */}
             <div className="bg-white rounded-2xl border shadow-sm p-6">
-              <div className="text-lg font-semibold mb-2">
-                Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
-              </div>
+              <div className="text-lg font-semibold mb-3">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
               {normalized.isBlocked ? (
-                <div className="text-sm text-neutral-500">Nessuna analisi disponibile: inserisci una località valida.</div>
+                <div className="text-sm text-slate-500">Nessuna analisi disponibile: inserisci una località valida.</div>
               ) : (
                 <CalendarHeatmap monthDate={monthDate} data={calendarData} />
               )}
@@ -692,7 +593,7 @@ export default function App(){
           </div>
 
           {/* Grafici */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               {Array.isArray(provenance) && provenance.length>0 ? (
@@ -706,7 +607,7 @@ export default function App(){
                     <RTooltip /><Legend />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
 
             <div className="bg-white rounded-2xl border shadow-sm p-4">
@@ -723,7 +624,7 @@ export default function App(){
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
 
             <div className="bg-white rounded-2xl border shadow-sm p-4">
@@ -740,7 +641,7 @@ export default function App(){
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-neutral-500">Nessun dato</div>}
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
           </div>
 
@@ -748,7 +649,7 @@ export default function App(){
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
             {normalized.isBlocked ? (
-              <div className="text-sm text-neutral-500">In attesa di località valida…</div>
+              <div className="text-sm text-slate-500">In attesa di località valida…</div>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={demand}>
