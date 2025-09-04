@@ -38,6 +38,9 @@ const typeLabels: Record<string,string> = {
   villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
+// Palette netta per i grafici (no gradienti)
+const PALETTE_SOLID = ["#e11d48", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#14b8a6", "#f97316"];
+
 /* =========================
    Geocoding demo
 ========================= */
@@ -205,15 +208,12 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
 }
 
 /* =========================
-   Calendario a riquadri (pulito)
+   Calendario a riquadri
 ========================= */
 function CalendarHeatmap({
   monthDate,
   data
-}: {
-  monthDate: Date;
-  data: { date: Date; pressure: number; adr: number }[];
-}) {
+}: { monthDate: Date; data: { date: Date; pressure: number; adr: number }[] }) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({ start, end });
@@ -281,7 +281,7 @@ function CalendarHeatmap({
 }
 
 /* =========================
-   App (UI pulita)
+   App
 ========================= */
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
@@ -534,60 +534,45 @@ export default function App(){
               <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
-           <div className="flex items-start gap-3">
-  <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
-  <div className="flex-1 space-y-2">
-    {STRUCTURE_TYPES.map(t => (
-      <label
-        key={t}
-        className="flex items-center gap-3 text-sm border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50"
-      >
-        <input
-          className="h-4 w-4"
-          type="checkbox"
-          checked={types.includes(t)}
-          onChange={(ev) => {
-            const c = ev.currentTarget.checked;
-            setTypes(prev => c ? Array.from(new Set([...prev, t])) : prev.filter(x => x !== t));
-          }}
-        />
-        <span className="font-medium">{typeLabels[t]}</span>
-      </label>
-    ))}
-  </div>
-</div>
+            {/* Tipologie: una per riga */}
+            <div className="flex items-start gap-3">
+              <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
+              <div className="flex-1 space-y-2">
+                {STRUCTURE_TYPES.map(t => (
+                  <label
+                    key={t}
+                    className="flex items-center gap-3 text-sm border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50"
+                  >
+                    <input
+                      className="h-4 w-4"
+                      type="checkbox"
+                      checked={types.includes(t)}
+                      onChange={(ev) => {
+                        const c = ev.currentTarget.checked;
+                        setTypes(prev => c ? Array.from(new Set([...prev, t])) : prev.filter(x => x !== t));
+                      }}
+                    />
+                    <span className="font-medium">{typeLabels[t]}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
 
             {/* Modalità + Pulsante su riga propria */}
-{/* 
-  Toggle Modalità:
-  - Zone       = analisi media sull’area geografica selezionata
-  - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
-  ⚠️ Nota: al momento in DEMO non cambia nulla, ma è pronto per logiche future.
-*/}
-<div className="mt-4">
-  <span className="block text-sm font-medium text-neutral-700 mb-1">Modalità</span>
-  <div className="flex items-center gap-2">
-    <div className="flex rounded-xl border border-neutral-300 overflow-hidden">
-      <button
-        className={`px-4 py-1 text-sm font-medium ${
-          mode === "zone" ? "bg-neutral-900 text-white" : "bg-white text-neutral-700"
-        }`}
-        onClick={() => setMode("zone")}
-      >
-        Zona
-      </button>
-      <button
-        className={`px-4 py-1 text-sm font-medium ${
-          mode === "competitor" ? "bg-neutral-900 text-white" : "bg-white text-neutral-700"
-        }`}
-        onClick={() => setMode("competitor")}
-      >
-        Competitor
-      </button>
-    </div>
-  </div>
-</div>
-
+            {/* 
+              Toggle Modalità:
+              - Zona       = analisi media sull’area geografica selezionata
+              - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
+              Nota: in DEMO non cambia dataset; pronto per logiche future.
+            */}
+            <div className="grid grid-cols-1 gap-3 mt-2">
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-slate-700">Modalità</label>
+                <div className="inline-flex rounded-xl border overflow-hidden">
+                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+                </div>
+              </div>
               <div>
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
@@ -613,146 +598,122 @@ export default function App(){
 
         {/* MAIN */}
         <main className="space-y-6">
-         {/* MAPPA – riga intera */}
-<div className="bg-white rounded-2xl border shadow-sm p-0">
-  <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
-    {normalized.center ? (
-      <LocationMap
-        center={[normalized.center.lat, normalized.center.lng]}
-        radius={normalized.safeR*1000}
-        label={query || "Località"}
-      />
-    ) : (
-      <div className="h-full flex items-center justify-center text-sm text-slate-500">
-        Inserisci una località valida per visualizzare la mappa e generare l'analisi
-      </div>
-    )}
-  </div>
-</div>
+          {/* MAPPA – riga intera */}
+          <div className="bg-white rounded-2xl border shadow-sm p-0">
+            <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
+              {normalized.center ? (
+                <LocationMap
+                  center={[normalized.center.lat, normalized.center.lng]}
+                  radius={normalized.safeR*1000}
+                  label={query || "Località"}
+                />
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-slate-500">
+                  Inserisci una località valida per visualizzare la mappa e generare l'analisi
+                </div>
+              )}
+            </div>
+          </div>
 
-{/* CALENDARIO – riga intera (niente compressione a “pillola”) */}
-<div className="bg-white rounded-2xl border shadow-sm p-6">
-  <div className="text-lg font-semibold mb-3">
-    Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
-  </div>
-  {normalized.isBlocked ? (
-    <div className="text-sm text-slate-500">
-      Nessuna analisi disponibile: inserisci una località valida.
-    </div>
-  ) : (
-    <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-  )}
-</div>
+          {/* CALENDARIO – riga intera */}
+          <div className="bg-white rounded-2xl border shadow-sm p-6">
+            <div className="text-lg font-semibold mb-3">
+              Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
+            </div>
+            {normalized.isBlocked ? (
+              <div className="text-sm text-slate-500">
+                Nessuna analisi disponibile: inserisci una località valida.
+              </div>
+            ) : (
+              <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+            )}
+          </div>
 
-          {/* Grafici */}
           {/* Grafici — riga 1: 2 card larghe */}
-<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-  {/* Provenienza */}
-  <div className="bg-white rounded-2xl border shadow-sm p-4">
-    <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-    {Array.isArray(provenance) && provenance.length>0 ? (
-    
-  <ResponsiveContainer width="100%" height={340}>
-  <PieChart>
-    {/* Palette + lieve effetto 3D */}
-    <defs>
-      {provenance.map((_, i) => (
-        <radialGradient id={`prov-grad-${i}`} key={i} cx="50%" cy="50%" r="75%">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.12" />
-          <stop
-            offset="100%"
-            stopColor={["#e11d48","#f59e0b","#10b981","#3b82f6","#8b5cf6"][i % 5]}
-            stopOpacity="1"
-          />
-        </radialGradient>
-      ))}
-      <filter id="prov-shadow" x="-20%" y="-20%" width="140%" height="140%">
-        <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
-      </filter>
-    </defs>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Provenienza (colori netti + percentuali) */}
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+              {Array.isArray(provenance) && provenance.length>0 ? (
+                <ResponsiveContainer width="100%" height={340}>
+                  <PieChart>
+                    <Pie
+                      data={provenance}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={110}
+                      paddingAngle={3}
+                      cornerRadius={6}
+                      labelLine={false}
+                      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
+                    >
+                      {provenance.map((_, i) => (
+                        <Cell
+                          key={i}
+                          fill={PALETTE_SOLID[i % PALETTE_SOLID.length]}
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </Pie>
+                    <RTooltip
+                      formatter={(val: any, name: any, props: any) => {
+                        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+                        const pct = total ? Math.round((props?.value / total) * 100) : 0;
+                        return [`${props?.value} (${pct}%)`, name];
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      iconType="circle"
+                      wrapperStyle={{ color: "#111827", fontWeight: 500 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+            </div>
 
-    <Pie
-      data={provenance}
-      dataKey="value"
-      nameKey="name"
-      cx="50%"
-      cy="50%"
-      innerRadius={70}          // donut
-      outerRadius={110}
-      paddingAngle={3}          // spicchi “staccati”
-      cornerRadius={6}          // bordi arrotondati
-      labelLine={false}
-      // percentuali sugli spicchi
-      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
-      style={{ filter: "url(#prov-shadow)" }} // lieve ombra
-    >
-      {provenance.map((_, i) => (
-        <Cell
-          key={i}
-          fill={`url(#prov-grad-${i})`}
-          stroke="#fff"
-          strokeWidth={2}
-        />
-      ))}
-    </Pie>
+            {/* LOS */}
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+              {Array.isArray(los) && los.length>0 ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={los} margin={{ left: 8, right: 8, top: 8, bottom: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" tick={{fontSize: 12}} />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value">
+                      {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+            </div>
+          </div>
 
-    <RTooltip
-      formatter={(val: any, name: any, props: any) => {
-        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
-        const pct = total ? Math.round((props?.value / total) * 100) : 0;
-        return [`${props?.value} (${pct}%)`, name];
-      }}
-    />
-    <Legend
-      verticalAlign="bottom"
-      iconType="circle"
-      wrapperStyle={{ color: "#111827", fontWeight: 500 }} // grigio scuro/nero
-    />
-  </PieChart>
-</ResponsiveContainer>
-    ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-  </div>
-
-  {/* LOS */}
-  <div className="bg-white rounded-2xl border shadow-sm p-4">
-    <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-    {Array.isArray(los) && los.length>0 ? (
-      <ResponsiveContainer width="100%" height={320}>
-        <BarChart data={los} margin={{ left: 8, right: 8, top: 8, bottom: 24 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="bucket" tick={{fontSize: 12}} />
-          <YAxis />
-          <RTooltip />
-          <Bar dataKey="value">
-            {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-  </div>
-</div>
-
-
-{/* Canali di Vendita — riga intera a capo */}
-<div className="bg-white rounded-2xl border shadow-sm p-4">
-  <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-  {Array.isArray(channels) && channels.length>0 ? (
-    <ResponsiveContainer width="100%" height={340}>
-      <BarChart data={channels} margin={{ left: 8, right: 8, top: 8, bottom: 32 }}>
-        <CartesianGrid strokeDasharray="3 3" />
-        {/* interval={0} forza tutte le etichette, height + bottom margin evitano il taglio */}
-        <XAxis dataKey="channel" interval={0} tick={{fontSize: 12}} height={36} />
-        <YAxis />
-        <RTooltip />
-        <Bar dataKey="value">
-          {channels.map((_,i)=> (
-            <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  ) : <div className="text-xs text-slate-500">Nessun dato</div>}
-</div>
+          {/* Canali di Vendita — riga intera a capo */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+            {Array.isArray(channels) && channels.length>0 ? (
+              <ResponsiveContainer width="100%" height={340}>
+                <BarChart data={channels} margin={{ left: 8, right: 8, top: 8, bottom: 32 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="channel" interval={0} tick={{fontSize: 12}} height={36} />
+                  <YAxis />
+                  <RTooltip />
+                  <Bar dataKey="value">
+                    {channels.map((_,i)=> (
+                      <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+          </div>
 
           {/* Curva domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
