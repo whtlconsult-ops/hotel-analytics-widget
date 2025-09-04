@@ -12,6 +12,9 @@ import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 
+// ⬇️ Tema & varianti
+import { THEME, type ChartVariant, solidColor } from "../theme";
+
 /* =========================
    Tipi & Costanti
 ========================= */
@@ -38,8 +41,8 @@ const typeLabels: Record<string,string> = {
   villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
-// Palette netta per i grafici (no gradienti)
-const PALETTE_SOLID = ["#e11d48", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#14b8a6", "#f97316"];
+// 👉 Se vuoi “3D-lite” e ombre sui grafici, cambia qui in "pro"
+const CHART_VARIANT: ChartVariant = "flat";
 
 /* =========================
    Geocoding demo
@@ -631,29 +634,45 @@ export default function App(){
 
           {/* Grafici — riga 1: 2 card larghe */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Provenienza (colori netti + percentuali) */}
+            {/* Provenienza (colori netti + percentuali; supporto variante "pro") */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               {Array.isArray(provenance) && provenance.length>0 ? (
                 <ResponsiveContainer width="100%" height={340}>
-                  <PieChart>
+                  <PieChart margin={{ bottom: 24 }}>
+                    {/* Defs per modalità "pro" (ombra + gradienti): se flat, non servono */}
+                    {CHART_VARIANT === "pro" ? (
+                      <defs>
+                        <filter id="pie-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
+                        </filter>
+                        {provenance.map((_, i) => (
+                          <radialGradient id={`pie-grad-${i}`} key={i} cx="50%" cy="50%" r="75%">
+                            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.10" />
+                            <stop offset="100%" stopColor={solidColor(i)} stopOpacity="1" />
+                          </radialGradient>
+                        ))}
+                      </defs>
+                    ) : null}
+
                     <Pie
                       data={provenance}
                       dataKey="value"
                       nameKey="name"
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={110}
-                      paddingAngle={3}
-                      cornerRadius={6}
+                      innerRadius={THEME.chart.pie.innerRadius}
+                      outerRadius={THEME.chart.pie.outerRadius}
+                      paddingAngle={THEME.chart.pie.paddingAngle}
+                      cornerRadius={THEME.chart.pie.cornerRadius}
                       labelLine={false}
                       label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
+                      {...(CHART_VARIANT === "pro" ? { style: { filter: "url(#pie-shadow)" } } : {})}
                     >
                       {provenance.map((_, i) => (
                         <Cell
                           key={i}
-                          fill={PALETTE_SOLID[i % PALETTE_SOLID.length]}
+                          fill={CHART_VARIANT === "pro" ? `url(#pie-grad-${i})` : solidColor(i)}
                           stroke="#ffffff"
                           strokeWidth={2}
                         />
@@ -669,7 +688,7 @@ export default function App(){
                     <Legend
                       verticalAlign="bottom"
                       iconType="circle"
-                      wrapperStyle={{ color: "#111827", fontWeight: 500 }}
+                      wrapperStyle={{ color: THEME.chart.pie.legendColor, fontWeight: 500 }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -681,13 +700,13 @@ export default function App(){
               <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
               {Array.isArray(los) && los.length>0 ? (
                 <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={los} margin={{ left: 8, right: 8, top: 8, bottom: 24 }}>
+                  <BarChart data={los} margin={THEME.chart.bar.margin}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" tick={{fontSize: 12}} />
+                    <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
                     <YAxis />
                     <RTooltip />
                     <Bar dataKey="value">
-                      {los.map((_,i)=> <Cell key={i} fill={["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"][i%4]} />)}
+                      {los.map((_,i)=> <Cell key={i} fill={THEME.palette.barBlue[i % THEME.palette.barBlue.length]} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -700,14 +719,14 @@ export default function App(){
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
               <ResponsiveContainer width="100%" height={340}>
-                <BarChart data={channels} margin={{ left: 8, right: 8, top: 8, bottom: 32 }}>
+                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{fontSize: 12}} height={36} />
+                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={36} />
                   <YAxis />
                   <RTooltip />
                   <Bar dataKey="value">
                     {channels.map((_,i)=> (
-                      <Cell key={i} fill={["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"][i%5]} />
+                      <Cell key={i} fill={THEME.palette.barOrange[i % THEME.palette.barOrange.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -727,7 +746,7 @@ export default function App(){
                   <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
                   <YAxis />
                   <RTooltip />
-                  <Line type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={2} dot={{r:2}} />
+                  <Line type="monotone" dataKey="value" stroke={THEME.chart.line.stroke} strokeWidth={THEME.chart.line.strokeWidth} dot={{r: THEME.chart.line.dotRadius}} />
                 </LineChart>
               </ResponsiveContainer>
             )}
