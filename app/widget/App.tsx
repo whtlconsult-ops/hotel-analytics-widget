@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import LocationMap from "../../components/Map";
+// import LocationMap from "../../components/Map";
+import dynamic from "next/dynamic";
+const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend

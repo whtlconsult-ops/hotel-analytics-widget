@@ -1,8 +1,8 @@
 "use client";
 
-// Forza il rendering client-side ed evita prerender/SSG
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const dynamic = "force-dynamic"; // evita prerender lato server
+export const revalidate = 0;             // nessuna cache/SSG
+export const fetchCache = "force-no-store";
 
 import App from "./widget/App";
 

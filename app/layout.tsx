@@ -1,6 +1,12 @@
+export const metadata = {
+  title: "Hotel Analytics Widget",
+  description: "Widget Analisi Domanda – Hospitality",
+};
 
-export const metadata = { title:"Hotel Analytics Widget", description:"Revenue dashboard MVP" };
-import "./globals.css";
-export default function RootLayout({children}:{children:React.ReactNode}){
-  return (<html lang="it"><body>{children}</body></html>);
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="it">
+      <body>{children}</body>
+    </html>
+  );
 }
