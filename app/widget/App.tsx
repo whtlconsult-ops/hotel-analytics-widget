@@ -629,16 +629,65 @@ export default function App(){
   <div className="bg-white rounded-2xl border shadow-sm p-4">
     <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
     {Array.isArray(provenance) && provenance.length>0 ? (
-      <ResponsiveContainer width="100%" height={320}>
-        <PieChart>
-          <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100}>
-            {provenance.map((_, index) => (
-              <Cell key={`cell-${index}`} fill={["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6"][index % 5]} />
-            ))}
-          </Pie>
-          <RTooltip /><Legend />
-        </PieChart>
-      </ResponsiveContainer>
+    
+  <ResponsiveContainer width="100%" height={340}>
+  <PieChart>
+    {/* Palette + lieve effetto 3D */}
+    <defs>
+      {provenance.map((_, i) => (
+        <radialGradient id={`prov-grad-${i}`} key={i} cx="50%" cy="50%" r="75%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.12" />
+          <stop
+            offset="100%"
+            stopColor={["#e11d48","#f59e0b","#10b981","#3b82f6","#8b5cf6"][i % 5]}
+            stopOpacity="1"
+          />
+        </radialGradient>
+      ))}
+      <filter id="prov-shadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="1.5" stdDeviation="2" floodOpacity="0.25" />
+      </filter>
+    </defs>
+
+    <Pie
+      data={provenance}
+      dataKey="value"
+      nameKey="name"
+      cx="50%"
+      cy="50%"
+      innerRadius={70}          // donut
+      outerRadius={110}
+      paddingAngle={3}          // spicchi “staccati”
+      cornerRadius={6}          // bordi arrotondati
+      labelLine={false}
+      // percentuali sugli spicchi
+      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
+      style={{ filter: "url(#prov-shadow)" }} // lieve ombra
+    >
+      {provenance.map((_, i) => (
+        <Cell
+          key={i}
+          fill={`url(#prov-grad-${i})`}
+          stroke="#fff"
+          strokeWidth={2}
+        />
+      ))}
+    </Pie>
+
+    <RTooltip
+      formatter={(val: any, name: any, props: any) => {
+        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+        const pct = total ? Math.round((props?.value / total) * 100) : 0;
+        return [`${props?.value} (${pct}%)`, name];
+      }}
+    />
+    <Legend
+      verticalAlign="bottom"
+      iconType="circle"
+      wrapperStyle={{ color: "#111827", fontWeight: 500 }} // grigio scuro/nero
+    />
+  </PieChart>
+</ResponsiveContainer>
     ) : <div className="text-xs text-slate-500">Nessun dato</div>}
   </div>
 
