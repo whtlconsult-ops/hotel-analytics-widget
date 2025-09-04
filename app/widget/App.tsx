@@ -533,20 +533,29 @@ export default function App(){
               <label className="w-28 text-sm text-slate-700">Mese</label>
               <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
-            <div className="flex items-start gap-2">
-              <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
-              <div className="grid grid-cols-2 gap-2">
-                {STRUCTURE_TYPES.map(t=> (
-                  <label key={t} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={types.includes(t)} onChange={(ev)=>{
-                      const c = ev.currentTarget.checked;
-                      setTypes(prev=> c? Array.from(new Set([...prev, t])) : prev.filter(x=>x!==t));
-                    }}/>
-                    <span>{typeLabels[t]}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+
+           <div className="flex items-start gap-3">
+  <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
+  <div className="flex-1 space-y-2">
+    {STRUCTURE_TYPES.map(t => (
+      <label
+        key={t}
+        className="flex items-center gap-3 text-sm border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50"
+      >
+        <input
+          className="h-4 w-4"
+          type="checkbox"
+          checked={types.includes(t)}
+          onChange={(ev) => {
+            const c = ev.currentTarget.checked;
+            setTypes(prev => c ? Array.from(new Set([...prev, t])) : prev.filter(x => x !== t));
+          }}
+        />
+        <span className="font-medium">{typeLabels[t]}</span>
+      </label>
+    ))}
+  </div>
+</div>
 
             {/* Modalità + Pulsante su riga propria */}
             <div className="grid grid-cols-1 gap-3">
