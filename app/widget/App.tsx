@@ -557,34 +557,28 @@ export default function App(){
   </div>
 </div>
 
-
             {/* Modalità + Pulsante su riga propria */}
 {/* 
   Toggle Modalità:
-  - Zona       = analisi media sull’area geografica selezionata
+  - Zone       = analisi media sull’area geografica selezionata
   - Competitor = analisi confronto diretto con un gruppo di strutture specifiche
   ⚠️ Nota: al momento in DEMO non cambia nulla, ma è pronto per logiche future.
 */}
-
 <div className="mt-4">
   <span className="block text-sm font-medium text-neutral-700 mb-1">Modalità</span>
   <div className="flex items-center gap-2">
     <div className="flex rounded-xl border border-neutral-300 overflow-hidden">
       <button
         className={`px-4 py-1 text-sm font-medium ${
-          mode === "zona"
-            ? "bg-neutral-900 text-white"
-            : "bg-white text-neutral-700"
+          mode === "zone" ? "bg-neutral-900 text-white" : "bg-white text-neutral-700"
         }`}
-        onClick={() => setMode("zona")}
+        onClick={() => setMode("zone")}
       >
         Zona
       </button>
       <button
         className={`px-4 py-1 text-sm font-medium ${
-          mode === "competitor"
-            ? "bg-neutral-900 text-white"
-            : "bg-white text-neutral-700"
+          mode === "competitor" ? "bg-neutral-900 text-white" : "bg-white text-neutral-700"
         }`}
         onClick={() => setMode("competitor")}
       >
