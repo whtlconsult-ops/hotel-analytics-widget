@@ -17,7 +17,7 @@ import { it } from "date-fns/locale";
 ========================= */
 type LatLng = { lat: number; lng: number };
 type DataRow = {
-  date: Date|null; adr: number; occ: number; los: number;
+  date: Date | null; adr: number; occ: number; los: number;
   channel: string; provenance: string; type: string; lat: number; lng: number
 };
 type Normalized = {
@@ -49,11 +49,8 @@ const knownPlaces: Record<string,LatLng> = {
 };
 function geocode(query: string, warnings: string[]): LatLng | null {
   const key = (query||"").trim().toLowerCase();
-  if(!key){
-    warnings.push("Località mancante: inserisci una località per procedere");
-    return null;
-  }
-  if(knownPlaces[key]) return knownPlaces[key];
+  if (!key) { warnings.push("Località mancante: inserisci una località per procedere"); return null; }
+  if (knownPlaces[key]) return knownPlaces[key];
   warnings.push(`Località non riconosciuta ("${query}"): inserisci un indirizzo valido`);
   return null;
 }
@@ -139,8 +136,8 @@ function smartSplit(line:string, d:string) {
   }
   out.push(cur);
   return out
-    .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette
+    .map(s => s.replace(/^\uFEFF/, ""))
+    .map(s => s.replace(/^"(.*)"$/,"$1"))
     .map(s => s.trim());
 }
 function parseCsv(text: string){
@@ -167,8 +164,10 @@ function toNumber(v: string, def=0){
 function toDate(v: string){
   if (!v) return null;
   const s = String(v).trim();
+
   const d1 = new Date(s);
   if (!Number.isNaN(d1.getTime())) return d1;
+
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
@@ -208,56 +207,75 @@ function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
 }
 
 /* =========================
-   Calendario Heatmap
+   Calendario a riquadri
 ========================= */
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
+}: {
+  monthDate: Date;
+  data: { date: Date; pressure: number; adr: number }[];
+}) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
-  const days = eachDayOfInterval({start, end});
-  const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
-  const pmin = Math.min(...(pvals.length? pvals : [0]));
-  const pmax = Math.max(...(pvals.length? pvals : [1]));
-  const firstDow = (getDay(start)+6)%7; // Mon=0
+  const days = eachDayOfInterval({ start, end });
+
+  const pvals = data.map(d => d.pressure).filter(Number.isFinite);
+  const pmin = Math.min(...(pvals.length ? pvals : [0]));
+  const pmax = Math.max(...(pvals.length ? pvals : [1]));
+
+  const firstDow = (getDay(start) + 6) % 7; // Mon=0
   const totalCells = firstDow + days.length;
-  const rows = Math.ceil(totalCells/7);
+  const rows = Math.ceil(totalCells / 7);
 
   return (
     <div className="w-full">
-      <div className="text-sm mb-2 grid grid-cols-7 gap-3 text-center text-slate-600">
-        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-semibold">{w}</div>)}
+      <div className="grid grid-cols-7 gap-3 text-center text-slate-600 text-sm font-semibold mb-2">
+        {WEEKDAYS.map((w) => <div key={w} className="py-1">{w}</div>)}
       </div>
-      <div className="grid grid-cols-7 gap-4">
-        {Array.from({length: rows*7}).map((_,i)=>{
+
+      <div className="grid grid-cols-7 gap-3">
+        {Array.from({ length: rows * 7 }).map((_, i) => {
           const dayIndex = i - firstDow;
           const d = days[dayIndex];
-          const dayData = data.find(x=> x.date.toDateString()===d?.toDateString());
-          if(dayIndex<0 || !d){
-            return <div key={i} className="h-28 bg-white border rounded-2xl"/>;
+          if (dayIndex < 0 || !d) {
+            return <div key={i} className="h-28 md:h-32 bg-white border rounded-2xl" />;
           }
-          const isSat = ((getDay(d))===6);
+
+          const dayData = data.find(x => x.date.toDateString() === d.toDateString());
           const pressure = dayData?.pressure ?? 0;
           const adr = dayData?.adr ?? 0;
-          const fill = colorForPressure(pressure,pmin,pmax);
-          const txtColor = contrastColor(fill);
+          const fill = colorForPressure(pressure, pmin, pmax);
+          const txt = contrastColor(fill);
+          const isSat = getDay(d) === 6;
+
           return (
-            <div key={i} className="h-28 rounded-2xl border-2 border-slate-700 relative overflow-hidden bg-white">
-              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-3 flex items-center justify-between">
-                <span className={`text-sm font-semibold ${isSat?"text-red-600":"text-slate-800"}`}>{format(d,"d",{locale:it})}</span>
-                <span className={`text-xs ${isSat?"text-red-600":"text-slate-500"}`}>{format(d,"eee",{locale:it})}</span>
+            <div
+              key={i}
+              className="h-28 md:h-32 rounded-2xl border-2 border-slate-700 bg-white relative overflow-hidden"
+            >
+              <div className="absolute inset-x-0 top-0 h-1/2 px-3 flex items-center justify-between">
+                <span className={`text-sm font-semibold ${isSat ? "text-red-600" : "text-slate-800"}`}>
+                  {format(d, "d", { locale: it })}
+                </span>
+                <span className={`text-xs ${isSat ? "text-red-600" : "text-slate-500"}`}>
+                  {format(d, "eee", { locale: it })}
+                </span>
               </div>
-              <div className="absolute inset-x-0 bottom-0 h-1/2 px-3 flex items-center justify-center" style={{background: fill}}>
-                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
+              <div
+                className="absolute inset-x-0 bottom-0 h-1/2 px-3 flex items-center justify-center"
+                style={{ background: fill }}
+              >
+                <span className="font-bold" style={{ color: txt }}>€{adr}</span>
               </div>
             </div>
-          )
+          );
         })}
       </div>
+
       <div className="mt-4 flex items-center justify-center gap-4 text-slate-600">
         <span className="text-xs">Bassa domanda</span>
-        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
+        <div className="h-2 w-48 rounded-full" style={{ background: "linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))" }} />
         <span className="text-xs">Alta domanda</span>
       </div>
     </div>
@@ -286,7 +304,6 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Normalizzazione
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = geocode(query, warnings);
@@ -300,11 +317,9 @@ export default function App(){
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
   }, [monthISO, query, radius, types]);
 
-  // Avvisi
   const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
   useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
 
-  // Google Sheet URL
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
@@ -323,7 +338,6 @@ export default function App(){
     return await res.text();
   }
 
-  // Caricamento dati
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
@@ -367,20 +381,16 @@ export default function App(){
     return ()=> controller.abort();
   }, [dataSource, csvUrl, gsId, gsSheet, gsGid, strictSheet]);
 
-  // Mese scelto
   const monthDate = useMemo(()=> {
     if(normalized.isBlocked || !normalized.safeMonthISO) return new Date();
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // Dati calendario
   const calendarData = useMemo(()=> {
     if(normalized.isBlocked) return [];
     if(rawRows.length>0){
-      const byDate = new globalThis.Map<string, {date: Date; adrVals:number[]; pressVals:number[]}>();
-      for(const d of normalized.safeDays){
-        byDate.set(d.toDateString(), { date: d, adrVals: [], pressVals: [] });
-      }
+      const byDate = new Map<string, {date: Date; adrVals:number[]; pressVals:number[]}>();
+      for(const d of normalized.safeDays){ byDate.set(d.toDateString(), { date: d, adrVals: [], pressVals: [] }); }
       rawRows.forEach(r=>{
         if(!r.date) return;
         const key = r.date.toDateString();
@@ -400,7 +410,6 @@ export default function App(){
     return normalized.safeDays.map(d=>({ date:d, pressure: pressureFor(d), adr: adrFromCompetitors(d, mode) }));
   }, [normalized.safeDays, normalized.isBlocked, mode, rawRows]);
 
-  // Grafici demo (fallback)
   const provenance = useMemo(()=> rawRows.length>0 ? (
     Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.provenance||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
       .map(([name,value])=>({name,value}))
@@ -567,8 +576,9 @@ export default function App(){
         <main className="space-y-6">
           {/* Mappa + Calendario */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2">
-              <div className="h-[360px] overflow-hidden rounded-2xl">
+            {/* MAPPA */}
+            <div className="bg-white rounded-2xl border shadow-sm p-0 lg:col-span-2 self-start">
+              <div className="h-80 md:h-[420px] lg:h-[560px] overflow-hidden rounded-2xl">
                 {normalized.center ? (
                   <LocationMap
                     center={[normalized.center.lat, normalized.center.lng]}
@@ -582,6 +592,8 @@ export default function App(){
                 )}
               </div>
             </div>
+
+            {/* CALENDARIO */}
             <div className="bg-white rounded-2xl border shadow-sm p-6">
               <div className="text-lg font-semibold mb-3">Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
               {normalized.isBlocked ? (
