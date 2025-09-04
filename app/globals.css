@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* opzionale, ma utile per tipografia consistente */
+html, body {
+  height: 100%;
+}
