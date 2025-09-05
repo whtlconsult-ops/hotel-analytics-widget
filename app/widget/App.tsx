@@ -863,13 +863,6 @@ export default function App(){
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
-  const hasChanges = useMemo(() =>
-    aQuery !== query ||
-    aRadius !== radius ||
-    aMonthISO !== monthISO ||
-    aMode !== mode ||
-    aTypes.join(",") !== types.join(","),
-  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
 
   /* =========== UI =========== */
 
