@@ -4,7 +4,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
 } from "recharts";
 import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
@@ -68,7 +68,7 @@ const typeLabels: Record<string,string> = {
 
 const THEME = {
   chart: {
-    pie: { innerRadius: 60, outerRadius: 110, paddingAngle: 2, cornerRadius: 6 },
+    pie: { innerRadius: 60, outerRadius: 110, paddingAngle: 4, cornerRadius: 8 },
     bar: { margin: { top: 8, right: 16, left: 0, bottom: 0 }, tickSize: 12 },
     barWide: { margin: { top: 8, right: 16, left: 0, bottom: 30 }, tickSize: 12 },
     line: { stroke: "#1e3a8a", strokeWidth: 2, dotRadius: 2 },
@@ -82,29 +82,18 @@ const THEME = {
 const solidColor = (i:number)=> THEME.palette.solid[i % THEME.palette.solid.length];
 
 /* =========================
-   Geocoding demo (solo validazione base)
-========================= */
-const knownPlaces: Record<string,LatLng> = {
-  "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
-  "arezzo": { lat: 43.4633, lng: 11.8797 },
-  "firenze": { lat: 43.7696, lng: 11.2558 },
-  "siena": { lat: 43.3188, lng: 11.3308 },
-};
-function geocode(query: string, warnings: string[]): LatLng | null {
-  const key = (query||"").trim().toLowerCase();
-  if(!key){
-    warnings.push("Località mancante: inserisci una località per procedere");
-    return null;
-  }
-  if(knownPlaces[key]) return knownPlaces[key];
-  warnings.push(`Località non riconosciuta ("${query}"): inserisci un indirizzo valido`);
-  return null;
-}
-
-/* =========================
-   Util varie
+   Utilità
 ========================= */
 function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
+function shade(hex: string, percent: number) {
+  const m = hex.replace('#','');
+  const num = parseInt(m, 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + Math.round(255 * percent)));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + Math.round(255 * percent)));
+  const b = Math.min(255, Math.max(0, (num & 0x0000FF) + Math.round(255 * percent)));
+  return `#${(1 << 24 | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
 function pressureFor(date: Date){
   const dow = getDay(date); // 0 Dom
   const base = 60 + (date.getDate()*2);
@@ -279,6 +268,26 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
 }
 
 /* =========================
+   Geocoding demo (validazione)
+========================= */
+const knownPlaces: Record<string,LatLng> = {
+  "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
+  "arezzo": { lat: 43.4633, lng: 11.8797 },
+  "firenze": { lat: 43.7696, lng: 11.2558 },
+  "siena": { lat: 43.3188, lng: 11.3308 },
+};
+function geocode(query: string, warnings: string[]): LatLng | null {
+  const key = (query||"").trim().toLowerCase();
+  if(!key){
+    warnings.push("Località mancante: inserisci una località per procedere");
+    return null;
+  }
+  if(knownPlaces[key]) return knownPlaces[key];
+  warnings.push(`Località non riconosciuta ("${query}"): inserisci un indirizzo valido`);
+  return null;
+}
+
+/* =========================
    Calendario Heatmap
 ========================= */
 function CalendarHeatmap({
@@ -371,14 +380,13 @@ export default function App(){
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
-  // Differenza tra bozza (UI) e applicati (analisi)?
-  const hasChanges = useMemo(() => (
+  const hasChanges = useMemo(() =>
     aQuery !== query ||
     aRadius !== radius ||
     aMonthISO !== monthISO ||
     aMode !== mode ||
-    aTypes.join(",") !== types.join(",")
-  ), [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
+    aTypes.join(",") !== types.join(","),
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
 
   // Validazione: stats/issues
   const [dataStats, setDataStats] = useState<DataStats | null>(null);
@@ -399,8 +407,10 @@ export default function App(){
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
   }, [aMonthISO, aQuery, aRadius, aTypes]);
 
-  const warningsKey = useMemo(()=> normalized.warnings.join("|"), [normalized.warnings]);
-  useEffect(()=>{ setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings)); }, [warningsKey, normalized.warnings]);
+  useEffect(()=>{
+    const warningsKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+  }, [normalized.warnings]);
 
   // URL builder (rigida vs non rigida)
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
@@ -822,14 +832,31 @@ export default function App(){
             )}
           </div>
 
-          {/* Grafici — riga 1: 2 card larghe */}
+          {/* =========================
+              GRAFICI – blocco completo
+          ======================== */}
+
+          {/* Riga 1: Provenienza (Pie) + LOS (Bar) */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Provenienza (Pie) */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               {Array.isArray(provenance) && provenance.length>0 ? (
-                <ResponsiveContainer width="100%" height={340}>
+                <ResponsiveContainer width="100%" height={360}>
                   <PieChart margin={{ bottom: 24 }}>
+                    {/* Gradienti spicchi + ombra soft */}
+                    <defs>
+                      {provenance.map((_, i) => {
+                        const base = solidColor(i);
+                        return (
+                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.25)} />
+                            <stop offset="100%" stopColor={shade(base, -0.12)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+
                     <Pie
                       data={provenance}
                       dataKey="value"
@@ -841,17 +868,20 @@ export default function App(){
                       paddingAngle={THEME.chart.pie.paddingAngle}
                       cornerRadius={THEME.chart.pie.cornerRadius}
                       labelLine={false}
-                      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
+                      label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
+                      isAnimationActive={true}
+                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
                     >
                       {provenance.map((_, i) => (
                         <Cell
                           key={i}
-                          fill={solidColor(i)}
+                          fill={`url(#gradSlice-${i})`}
                           stroke="#ffffff"
                           strokeWidth={2}
                         />
                       ))}
                     </Pie>
+
                     <RTooltip
                       formatter={(val: any, name: any, props: any) => {
                         const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
@@ -859,10 +889,12 @@ export default function App(){
                         return [`${props?.value} (${pct}%)`, name];
                       }}
                     />
-                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 500 }} />
+                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+              ) : (
+                <div className="text-xs text-slate-500">Nessun dato</div>
+              )}
             </div>
 
             {/* LOS (Bar) */}
@@ -871,54 +903,112 @@ export default function App(){
               {Array.isArray(los) && los.length>0 ? (
                 <ResponsiveContainer width="100%" height={320}>
                   <BarChart data={los} margin={THEME.chart.bar.margin}>
+                    <defs>
+                      {los.map((_, i) => {
+                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                        return (
+                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.2)} />
+                            <stop offset="100%" stopColor={shade(base, -0.15)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
                     <YAxis />
                     <RTooltip />
-                    <Bar dataKey="value">
+                    <Bar dataKey="value" radius={[8,8,0,0]}>
                       {los.map((_,i)=> (
-                        <Cell key={i} fill={THEME.palette.barBlue[i % THEME.palette.barBlue.length]} />
+                        <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+              ) : (
+                <div className="text-xs text-slate-500">Nessun dato</div>
+              )}
             </div>
           </div>
 
-          {/* Canali di Vendita — riga intera */}
+          {/* Canali di Vendita — riga intera (Bar) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
-              <ResponsiveContainer width="100%" height={340}>
+              <ResponsiveContainer width="100%" height={360}>
                 <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                  <defs>
+                    {channels.map((_, i) => {
+                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                      return (
+                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.18)} />
+                          <stop offset="100%" stopColor={shade(base, -0.15)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={36} />
+                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
                   <YAxis />
                   <RTooltip />
-                  <Bar dataKey="value">
+                  <Bar dataKey="value" radius={[8,8,0,0]}>
                     {channels.map((_,i)=> (
-                      <Cell key={i} fill={THEME.palette.barOrange[i % THEME.palette.barOrange.length]} />
+                      <Cell key={i} fill={`url(#gradBarCH-${i})`} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+            ) : (
+              <div className="text-xs text-slate-500">Nessun dato</div>
+            )}
           </div>
 
-          {/* Curva domanda (Line) */}
+          {/* Andamento Domanda — riga intera (Line + Area soft) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", {locale: it})}</div>
-            {normalized.isBlocked ? (
+            <div className="text-sm font-semibold mb-2">
+              Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
+            </div>
+            {(!demand || demand.length===0) ? (
               <div className="text-sm text-slate-500">In attesa di località valida…</div>
             ) : (
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={demand}>
+                  <defs>
+                    {/* Gradiente per la linea */}
+                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
+                    </linearGradient>
+                    {/* Gradiente per l’area sotto la linea */}
+                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
                   <YAxis />
                   <RTooltip />
-                  <Line type="monotone" dataKey="value" stroke={THEME.chart.line.stroke} strokeWidth={THEME.chart.line.strokeWidth} dot={{r:THEME.chart.line.dotRadius}} />
+                  {/* Area soft per profondità */}
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    fill="url(#gradLineFill)"
+                    stroke="none"
+                    isAnimationActive={true}
+                  />
+                  {/* Linea con gradiente + puntini rifiniti */}
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="url(#gradLineStroke)"
+                    strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
+                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
+                    isAnimationActive={true}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             )}
