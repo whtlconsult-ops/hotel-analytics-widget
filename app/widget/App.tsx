@@ -293,7 +293,7 @@ function geocode(query: string, warnings: string[]): LatLng | null {
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number}}[]}){
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
@@ -336,6 +336,21 @@ function CalendarHeatmap({
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
+
+              {/* Badge Festività */}
+              {dayData?.holidayName ? (
+                <div
+                  className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
+                  title={dayData.holidayName}
+                />
+              ) : null}
+
+              {/* Mini meteo (temperatura media del giorno) */}
+              {dayData?.wx?.t != null ? (
+                <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
+                  {dayData.wx.t.toFixed(0)}°C
+                </div>
+              ) : null}
             </div>
           )
         })}
@@ -373,139 +388,142 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-// ===== Dropdown Multi-Select Tipologie =====
-function TypesMultiSelect({
-  value,
-  onChange,
-  allTypes,
-  labels,
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  allTypes: readonly string[];
-  labels: Record<string, string>;
-}) {
-  const [open, setOpen] = React.useState(false);
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  // === Dati esterni ===
+  const [holidays, setHolidays] = useState<Record<string, string>>({});
+  const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number }>>({});
 
-  // Chiudi clic fuori
-  React.useEffect(() => {
-    function onClickOutside(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+  // ===== Dropdown Multi-Select Tipologie =====
+  function TypesMultiSelect({
+    value,
+    onChange,
+    allTypes,
+    labels,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    allTypes: readonly string[];
+    labels: Record<string, string>;
+  }) {
+    const [open, setOpen] = React.useState(false);
+    const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+    // Chiudi clic fuori
+    React.useEffect(() => {
+      function onClickOutside(e: MouseEvent) {
+        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      }
+      document.addEventListener("mousedown", onClickOutside);
+      return () => document.removeEventListener("mousedown", onClickOutside);
+    }, []);
+
+    // Toggle singolo tipo
+    function toggle(t: string) {
+      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
     }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
 
-  // Toggle singolo tipo
-  function toggle(t: string) {
-    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-  }
+    // Testo riepilogo (badge)
+    const summary =
+      value.length === 0
+        ? "Nessuna"
+        : value.length === allTypes.length
+        ? "Tutte"
+        : `${value.length} selezionate`;
 
-  // Testo riepilogo (badge)
-  const summary =
-    value.length === 0
-      ? "Nessuna"
-      : value.length === allTypes.length
-      ? "Tutte"
-      : `${value.length} selezionate`;
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <span className="block text-sm font-medium text-neutral-700 mb-1">
-        Tipologie
-      </span>
-
-      {/* Trigger */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
-      >
-        <span className="truncate">
-          {summary}
-          {value.length > 0 && value.length < allTypes.length ? (
-            <span className="ml-2 text-xs text-neutral-500">
-              {value
-                .slice()
-                .sort()
-                .map((t) => labels[t] || t)
-                .slice(0, 2)
-                .join(", ")}
-              {value.length > 2 ? "…" : ""}
-            </span>
-          ) : null}
+    return (
+      <div className="relative" ref={containerRef}>
+        <span className="block text-sm font-medium text-neutral-700 mb-1">
+          Tipologie
         </span>
-        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
-      </button>
 
-      {/* Panel */}
-      {open && (
-        <div
-          className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-          role="listbox"
-          aria-label="Seleziona tipologie"
+        {/* Trigger */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
         >
-             <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
-            <ul className="space-y-1">
-              {allTypes.map((t) => {
-                const active = value.includes(t);
-                return (
-                  <li key={t}>
-                    <button
-                      type="button"
-                      onClick={() => toggle(t)}
-                      className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
-                        ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
-                      role="option"
-                      aria-selected={active}
-                    >
-                      <span
-                        className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
-                          ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
-                      >
-                        {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                      </span>
-                      <span className="text-neutral-800">{labels[t] || t}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+          <span className="truncate">
+            {summary}
+            {value.length > 0 && value.length < allTypes.length ? (
+              <span className="ml-2 text-xs text-neutral-500">
+                {value
+                  .slice()
+                  .sort()
+                  .map((t) => labels[t] || t)
+                  .slice(0, 2)
+                  .join(", ")}
+                {value.length > 2 ? "…" : ""}
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+        </button>
 
-          {/* Footer azioni rapide */}
-          <div className="mt-2 flex items-center justify-between border-t pt-2">
-            <button
-              type="button"
-              className="text-xs text-neutral-600 hover:text-neutral-900"
-              onClick={() => onChange([])}
-            >
-              Pulisci
-            </button>
-            <div className="space-x-2">
+        {/* Panel */}
+        {open && (
+          <div
+            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+            role="listbox"
+            aria-label="Seleziona tipologie"
+          >
+            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
+              <ul className="space-y-1">
+                {allTypes.map((t) => {
+                  const active = value.includes(t);
+                  return (
+                    <li key={t}>
+                      <button
+                        type="button"
+                        onClick={() => toggle(t)}
+                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
+                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                        role="option"
+                        aria-selected={active}
+                      >
+                        <span
+                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
+                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
+                        >
+                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                        </span>
+                        <span className="text-neutral-800">{labels[t] || t}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {/* Footer azioni rapide */}
+            <div className="mt-2 flex items-center justify-between border-t pt-2">
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([...allTypes])}
+                onClick={() => onChange([])}
               >
-                Seleziona tutte
+                Pulisci
               </button>
-              <button
-                type="button"
-                className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                onClick={() => setOpen(false)}
-              >
-                Applica
-              </button>
+              <div className="space-x-2">
+                <button
+                  type="button"
+                  className="text-xs text-neutral-600 hover:text-neutral-900"
+                  onClick={() => onChange([...allTypes])}
+                >
+                  Seleziona tutte
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
+                  onClick={() => setOpen(false)}
+                >
+                  Applica
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
+        )}
+      </div>
+    );
+  }
 
   // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
   const [aQuery, setAQuery] = useState(query);
@@ -541,12 +559,13 @@ function TypesMultiSelect({
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
   }, [aMonthISO, aQuery, aRadius, aTypes]);
 
+  // Avvisi
   useEffect(()=>{
     const warningsKey = normalized.warnings.join("|");
     setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
   }, [normalized.warnings]);
 
-  // URL builder (rigida vs non rigida)
+  // URL builder CSV/Sheet
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
@@ -561,12 +580,49 @@ function TypesMultiSelect({
     const name = encodeURIComponent(sheetName||"Sheet1");
     return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
-
   async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
     const res = await fetch(url, { signal });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.text();
   }
+
+  // Festività IT per l'anno del mese selezionato (usa *monthISO live* per UX)
+  useEffect(() => {
+    if (!monthISO) return;
+    const y = Number(monthISO.slice(0, 4));
+
+    fetch(`/api/external/holidays?year=${y}&country=IT`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok) return;
+        const map: Record<string, string> = {};
+        (j.holidays || []).forEach((h: any) => { map[h.date] = h.localName || h.name; });
+        setHolidays(map);
+      })
+      .catch(() => { /* fallback: nessuna festività */ });
+  }, [monthISO]);
+
+  // Meteo per centro + mese (usa *center applicato* + *monthISO live*)
+  useEffect(() => {
+    if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
+    const { lat, lng } = normalized.center;
+
+    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+        const daily = j.weather.daily;
+        const out: Record<string, { t?: number; p?: number }> = {};
+        (daily.time || []).forEach((d: string, i: number) => {
+          out[d] = {
+            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+          };
+        });
+        setWeatherByDate(out);
+      })
+      .catch(() => setWeatherByDate({}));
+  }, [normalized.center, monthISO]);
 
   // Caricamento dati (CSV / Google Sheet)
   useEffect(()=>{
@@ -623,32 +679,56 @@ function TypesMultiSelect({
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // Dati calendario + ADR medio competitor — usa aMode
-  const calendarData = useMemo(()=> {
-    if(normalized.isBlocked) return [];
-    if(rawRows.length>0){
-      const byDate = new Map<string, {date: Date; adrVals:number[]; pressVals:number[]}>();
-      for(const d of normalized.safeDays){
+  // === Calendario: domanda + ADR (+ festività/meteo) ===
+  const calendarData = useMemo(() => {
+    if (normalized.isBlocked) return [];
+
+    if (rawRows.length > 0) {
+      const byDate = new Map<string, { date: Date; adrVals: number[]; pressVals: number[] }>();
+      for (const d of normalized.safeDays) {
         byDate.set(d.toDateString(), { date: d, adrVals: [], pressVals: [] });
       }
-      rawRows.forEach(r=>{
-        if(!r.date) return;
+      rawRows.forEach(r => {
+        if (!r.date) return;
         const key = r.date.toDateString();
         const slot = byDate.get(key);
-        if(slot){
-          if(Number.isFinite(r.adr)) slot.adrVals.push(r.adr);
-          const press = Number.isFinite(r.occ) ? (60 + r.occ) : (Number.isFinite(r.adr) ? 60 + r.adr/2 : 60);
-          slot.pressVals.push(press);
-        }
+        if (!slot) return;
+        if (Number.isFinite(r.adr)) slot.adrVals.push(r.adr);
+        const press = Number.isFinite(r.occ) ? (60 + r.occ) : (Number.isFinite(r.adr) ? 60 + r.adr / 2 : 60);
+        slot.pressVals.push(press);
       });
-      return Array.from(byDate.values()).map(v=> ({
-        date: v.date,
-        pressure: v.pressVals.length? Math.round(v.pressVals.reduce((a,b)=>a+b,0)/v.pressVals.length) : pressureFor(v.date),
-        adr: v.adrVals.length? Math.round(v.adrVals.reduce((a,b)=>a+b,0)/v.adrVals.length) : adrFromCompetitors(v.date, aMode)
-      }));
+
+      return Array.from(byDate.values()).map(v => {
+        const dISO = format(v.date, "yyyy-MM-dd");
+        const base = {
+          date: v.date,
+          pressure: v.pressVals.length
+            ? Math.round(v.pressVals.reduce((a, b) => a + b, 0) / v.pressVals.length)
+            : pressureFor(v.date),
+          adr: v.adrVals.length
+            ? Math.round(v.adrVals.reduce((a, b) => a + b, 0) / v.adrVals.length)
+            : adrFromCompetitors(v.date, aMode),
+        };
+        return {
+          ...base,
+          holidayName: holidays[dISO],
+          wx: weatherByDate[dISO] || undefined,
+        };
+      });
     }
-    return normalized.safeDays.map(d=>({ date:d, pressure: pressureFor(d), adr: adrFromCompetitors(d, aMode) }));
-  }, [normalized.safeDays, normalized.isBlocked, aMode, rawRows]);
+
+    // DEMO
+    return normalized.safeDays.map(d => {
+      const dISO = format(d, "yyyy-MM-dd");
+      return {
+        date: d,
+        pressure: pressureFor(d),
+        adr: adrFromCompetitors(d, aMode),
+        holidayName: holidays[dISO],
+        wx: weatherByDate[dISO] || undefined,
+      };
+    });
+  }, [normalized.safeDays, normalized.isBlocked, aMode, rawRows, holidays, weatherByDate]);
 
   // Grafici: Provenienza / LOS / Canali
   const provenance = useMemo(()=> rawRows.length>0 ? (
@@ -710,8 +790,7 @@ function TypesMultiSelect({
 
   return (
     <div className="min-h-screen bg-slate-50">
-      
-{/* Topbar */}
+      {/* Topbar */}
       <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
           <div>
@@ -730,8 +809,8 @@ function TypesMultiSelect({
 
       {/* Body */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        
-{/* SIDEBAR CONTROLLI */}
+
+        {/* SIDEBAR CONTROLLI */}
         <aside className="space-y-6">
           {/* Sorgente dati */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
@@ -803,12 +882,12 @@ function TypesMultiSelect({
             </div>
 
             {/* Tipologie (dropdown multiselect) */}
-<TypesMultiSelect
-  value={types}
-  onChange={setTypes}
-  allTypes={STRUCTURE_TYPES}
-  labels={typeLabels}
-/>
+            <TypesMultiSelect
+              value={types}
+              onChange={setTypes}
+              allTypes={STRUCTURE_TYPES}
+              labels={typeLabels}
+            />
 
             {/* Modalità + Pulsante su riga propria */}
             <div className="grid grid-cols-1 gap-3 mt-2">
@@ -964,7 +1043,6 @@ function TypesMultiSelect({
               {Array.isArray(provenance) && provenance.length>0 ? (
                 <ResponsiveContainer width="100%" height={360}>
                   <PieChart margin={{ bottom: 24 }}>
-                    {/* Gradienti spicchi + ombra soft */}
                     <defs>
                       {provenance.map((_, i) => {
                         const base = solidColor(i);
