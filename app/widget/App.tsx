@@ -1,3 +1,4 @@
+// app/widget/App.tsx
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
@@ -9,6 +10,7 @@ import {
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
+import { useRouter, useSearchParams } from "next/navigation"; // 👈 aggiunto
 
 // Import mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
@@ -288,6 +290,48 @@ function geocode(query: string, warnings: string[]): LatLng | null {
 }
 
 /* =========================
+   Helper per query string (URL share)
+========================= */
+function parseListParam(s?: string | null) {
+  if (!s) return [];
+  return s.split(",").map(decodeURIComponent).map(v => v.trim()).filter(Boolean);
+}
+function parseNumParam(s?: string | null, def = 0) {
+  const n = Number(s);
+  return Number.isFinite(n) ? n : def;
+}
+// Aggiorna l’URL con i filtri applicati (senza ricaricare)
+function replaceUrlWithState(
+  router: ReturnType<typeof useRouter>,
+  opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.set("q", opts.q);
+  params.set("r", String(opts.r));
+  params.set("m", opts.m.slice(0,7)); // YYYY-MM
+  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
+    params.set("t", opts.t.map(encodeURIComponent).join(","));
+  }
+  params.set("mode", opts.mode);
+
+  // sorgente dati
+  if (opts.dataSource === "csv" && opts.csvUrl) {
+    params.set("src", "csv");
+    params.set("csv", opts.csvUrl);
+  } else if (opts.dataSource === "gsheet" && opts.gsId) {
+    params.set("src", "gsheet");
+    params.set("id", opts.gsId);
+    if (opts.gsGid) params.set("gid", opts.gsGid);
+    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+  }
+
+  router.replace(`?${params.toString()}`, { scroll: false });
+}
+
+/* =========================
    Calendario Heatmap
 ========================= */
 function CalendarHeatmap({
@@ -465,7 +509,7 @@ export default function App(){
             role="listbox"
             aria-label="Seleziona tipologie"
           >
-            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
+            <div className="pr-1 md:max_h-none md:overflow-visible max-h-none overflow-visible">
               <ul className="space-y-1">
                 {allTypes.map((t) => {
                   const active = value.includes(t);
@@ -564,6 +608,39 @@ export default function App(){
     const warningsKey = normalized.warnings.join("|");
     setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
   }, [normalized.warnings]);
+
+  // 👇 Router & URL params
+  const router = useRouter();
+  const search = useSearchParams();
+
+  // 👇 All’avvio, leggi i parametri dall’URL e popola gli state
+  useEffect(() => {
+    if (!search) return;
+
+    const q = search.get("q") ?? query;
+    const r = parseNumParam(search.get("r"), radius);
+    const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
+    const t = (() => {
+      const raw = parseListParam(search.get("t"));
+      const valid = raw.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
+      return valid.length ? valid : types;
+    })();
+    const modeParam = (search.get("mode") === "competitor" ? "competitor" : "zone") as "zone"|"competitor";
+
+    const src = (search.get("src") as "none"|"csv"|"gsheet") ?? dataSource;
+    const csv = search.get("csv") ?? csvUrl;
+    const id  = search.get("id")  ?? gsId;
+    const gid = search.get("gid") ?? gsGid;
+    const sheet = search.get("sheet") ?? gsSheet;
+
+    // Aggiorna UI state
+    setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
+    setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
+
+    // Aggiorna anche gli “applicati” così l’apertura da link mantiene lo stesso stato
+    setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // URL builder CSV/Sheet
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
@@ -786,6 +863,14 @@ export default function App(){
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
+  const hasChanges = useMemo(() =>
+    aQuery !== query ||
+    aRadius !== radius ||
+    aMonthISO !== monthISO ||
+    aMode !== mode ||
+    aTypes.join(",") !== types.join(","),
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
+
   /* =========== UI =========== */
 
   return (
@@ -909,11 +994,19 @@ export default function App(){
                       : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")
                   }
                   onClick={() => {
-                    setAQuery(query);
-                    setARadius(radius);
-                    setAMonthISO(monthISO);
-                    setATypes(types);
-                    setAMode(mode);
+                    // Applica i valori correnti della UI
+                    const next = {
+                      q: query, r: radius, m: monthISO, t: types, mode,
+                      dataSource, csvUrl, gsId, gsGid, gsSheet
+                    };
+                    setAQuery(next.q);
+                    setARadius(next.r);
+                    setAMonthISO(next.m);
+                    setATypes(next.t);
+                    setAMode(next.mode);
+
+                    // Aggiorna l'URL con i filtri applicati (link condivisibile)
+                    replaceUrlWithState(router, next);
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
