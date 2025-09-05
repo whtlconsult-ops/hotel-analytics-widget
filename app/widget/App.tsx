@@ -42,14 +42,12 @@ const typeLabels: Record<string,string> = {
 };
 
 // ✅ Variante attiva: “pro” (ombre + gradienti)
-//   Cambia in "flat" per stile piatto
 const CHART_VARIANT: ChartVariant = "pro";
 
 /* =========================
    Helpers estetici
 ========================= */
 function lighten(hex: string, amount = 0.25) {
-  // hex "#rrggbb" → schiarito verso bianco (amount 0..1)
   const m = hex.replace("#", "");
   const r = parseInt(m.slice(0, 2), 16);
   const g = parseInt(m.slice(2, 4), 16);
@@ -78,11 +76,11 @@ function geocode(query: string, warnings: string[]): LatLng | null {
 }
 
 /* =========================
-   Util
+   Util di base
 ========================= */
 function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
 function pressureFor(date: Date){
-  const dow = getDay(date); // 0 Dom
+  const dow = getDay(date);
   const base = 60 + (date.getDate()*2);
   const wkndBoost = (dow===0 || dow===6) ? 25 : (dow===5 ? 18 : 0);
   return base + wkndBoost;
@@ -145,7 +143,7 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
 }
 
 /* =========================
-   CSV Parser Robusto
+   CSV Parser robusto
 ========================= */
 function smartSplit(line:string, d:string) {
   const out:string[] = [];
@@ -206,24 +204,104 @@ function getVal(row:any, keys:string[]){
   }
   return null;
 }
-function normalizeRows(rows: any[], warnings: string[]): DataRow[]{
-  const out: DataRow[] = rows.map((r:any)=>{
-    const date = toDate(String(getVal(r, ["date","data","giorno"]) ?? ""));
-    const adr = toNumber(String(getVal(r, ["adr","adr_medio","prezzo_medio"]) ?? ""));
-    const occ = toNumber(String(getVal(r, ["occ","occupazione","occ_rate"]) ?? ""));
-    const los = toNumber(String(getVal(r, ["los","notti","soggiorno"]) ?? ""));
-    const channel = String(getVal(r, ["channel","canale"]) ?? "");
-    const provenance = String(getVal(r, ["provenance","country","nazione"]) ?? "");
-    const type = String(getVal(r, ["type","tipo"]) ?? "");
-    const lat = toNumber(String(getVal(r, ["lat","latitude"]) ?? ""));
-    const lng = toNumber(String(getVal(r, ["lng","longitude"]) ?? ""));
-    return { date, adr, occ, los, channel, provenance, type, lat, lng };
+
+/* =========================
+   Validazione dati (NUOVA)
+========================= */
+type ValidationIssue = { row: number; field: string; value: string; reason: string };
+type DataStats = { total: number; valid: number; discarded: number; issuesByField: Record<string, number> };
+
+function isNumericStr(v:any){
+  if (v == null || v === "") return false;
+  const n = Number(String(v).trim().replace(/\s/g,"").replace(",","."));
+  return Number.isFinite(n);
+}
+function toNumberSoft(v:any){
+  if (!isNumericStr(v)) return Number.NaN;
+  const n = Number(String(v).trim().replace(/\s/g,"").replace(",","."));
+  return n;
+}
+function toNumber0to100(v:any){
+  const n = toNumberSoft(v);
+  if (!Number.isFinite(n)) return Number.NaN;
+  if (n < 0 || n > 100) return Number.NaN;
+  return n;
+}
+
+// Sostituisce la vecchia normalizeRows
+function normalizeRowsWithValidation(rows:any[], warnings:string[]){
+  const issues: ValidationIssue[] = [];
+  const valid: DataRow[] = [];
+  const fieldCount: Record<string, number> = {};
+  const bump = (field:string) => { fieldCount[field] = (fieldCount[field]||0)+1; };
+
+  rows.forEach((r, idx) => {
+    const rowNum = idx + 2; // +1 header, +1 numerazione "umana"
+    const v = (k:string[]) => getVal(r, k);
+
+    const dateStr = String(v(["date","data","giorno"]) ?? "");
+    const date = toDate(dateStr);
+    if (!date) {
+      issues.push({ row: rowNum, field: "date", value: dateStr, reason: "data non valida/mancante" });
+      bump("date");
+      return; // scarta la riga
+    }
+
+    const adrRaw = v(["adr","adr_medio","prezzo_medio"]);
+    let adr = toNumberSoft(adrRaw);
+    if (!Number.isFinite(adr)) { issues.push({ row: rowNum, field: "adr", value: String(adrRaw??""), reason: "valore non numerico" }); bump("adr"); }
+
+    const occRaw = v(["occ","occupazione","occ_rate"]);
+    let occ = toNumber0to100(occRaw);
+    if (!Number.isFinite(occ)) {
+      issues.push({
+        row: rowNum,
+        field: "occ",
+        value: String(occRaw??""),
+        reason: isNumericStr(occRaw) ? "fuori range 0–100" : "valore non numerico"
+      });
+      bump("occ");
+    }
+
+    const losRaw = v(["los","notti","soggiorno"]);
+    let los = toNumberSoft(losRaw);
+    if (!(Number.isFinite(los) && (los as number) >= 0)) {
+      issues.push({ row: rowNum, field: "los", value: String(losRaw??""), reason: "valore non numerico o negativo" });
+      bump("los");
+      los = Number.NaN;
+    }
+
+    const latRaw = v(["lat","latitude"]);
+    let lat = toNumberSoft(latRaw);
+    if (!Number.isFinite(lat)) lat = Number.NaN;
+
+    const lngRaw = v(["lng","longitude"]);
+    let lng = toNumberSoft(lngRaw);
+    if (!Number.isFinite(lng)) lng = Number.NaN;
+
+    const channel = String(v(["channel","canale"]) ?? "");
+    const provenance = String(v(["provenance","country","nazione"]) ?? "");
+    const type = String(v(["type","tipo"]) ?? "");
+
+    if (!channel)    { issues.push({ row: rowNum, field: "channel",    value: "", reason: "mancante" }); bump("channel"); }
+    if (!provenance) { issues.push({ row: rowNum, field: "provenance", value: "", reason: "mancante" }); bump("provenance"); }
+    if (!type)       { issues.push({ row: rowNum, field: "type",       value: "", reason: "mancante" }); bump("type"); }
+
+    valid.push({ date, adr, occ, los, channel, provenance, type, lat, lng });
   });
-  const valid = out.filter(r=> !!r.date);
-  if (valid.length === 0) {
-    warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
+
+  const stats: DataStats = {
+    total: rows.length,
+    valid: valid.length,
+    discarded: rows.length - valid.length,
+    issuesByField: fieldCount
+  };
+
+  if (stats.discarded > 0) {
+    warnings.push(`Righe scartate per data non valida: ${stats.discarded}`);
   }
-  return valid;
+
+  return { valid, issues, stats };
 }
 
 /* =========================
@@ -321,6 +399,11 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // NEW: stats/issue state per validazione
+  const [dataStats, setDataStats] = useState<DataStats | null>(null);
+  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
+  const [showIssueDetails, setShowIssueDetails] = useState(false);
+
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = geocode(query, warnings);
@@ -358,6 +441,8 @@ export default function App(){
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
+    setDataStats(null);
+    setDataIssues([]);
     if(dataSource === "none") return;
 
     const warnings: string[] = [];
@@ -385,8 +470,10 @@ export default function App(){
 
         const text = await fetchCsv(url, controller.signal);
         const parsed = parseCsv(text);
-        const normalizedRows = normalizeRows(parsed, warnings);
-        setRawRows(normalizedRows);
+        const { valid, issues, stats } = normalizeRowsWithValidation(parsed, warnings);
+        setRawRows(valid);
+        setDataStats(stats);
+        setDataIssues(issues);
         if(warnings.length>0) setNotices(prev=> Array.from(new Set([...prev, ...warnings])));
       }catch(e:any){
         setLoadError(String(e?.message || e));
@@ -446,24 +533,25 @@ export default function App(){
   ], [rawRows]);
 
   const channels = useMemo(() => (
-  rawRows.length > 0
-    ? Object
-        .entries(
-          rawRows.reduce((acc: Record<string, number>, r) => {
-            const k = r.channel || "Altro";
-            acc[k] = (acc[k] || 0) + 1; // ← parentesi a posto qui
-            return acc;
-          }, {})
-        )
-        .map(([channel, value]) => ({ channel, value }))
-    : [
-        { channel: "Booking", value: 36 },
-        { channel: "Airbnb", value: 26 },
-        { channel: "Diretto", value: 22 },
-        { channel: "Expedia", value: 11 },
-        { channel: "Altro", value: 5 },
-      ]
-), [rawRows]);
+    rawRows.length > 0
+      ? Object
+          .entries(
+            rawRows.reduce((acc: Record<string, number>, r) => {
+              const k = r.channel || "Altro";
+              acc[k] = (acc[k] || 0) + 1;
+              return acc;
+            }, {})
+          )
+          .map(([channel, value]) => ({ channel, value }))
+      : [
+          { channel: "Booking", value: 36 },
+          { channel: "Airbnb", value: 26 },
+          { channel: "Diretto", value: 22 },
+          { channel: "Expedia", value: 11 },
+          { channel: "Altro", value: 5 },
+        ]
+  ), [rawRows]);
+
   const demand = useMemo(()=> (
     normalized.isBlocked ? [] : (rawRows.length>0
       ? calendarData.map(d=> ({ date: format(d.date, "d MMM", {locale:it}), value: d.pressure }))
@@ -619,6 +707,70 @@ export default function App(){
               </ul>
             </section>
           )}
+
+          {/* Qualità dati (NUOVA CARD) */}
+          {dataStats && (
+            <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+              <div className="text-sm font-semibold">Qualità dati (Google Sheet)</div>
+
+              <div className="text-xs text-slate-600">
+                Totale righe: <b>{dataStats.total}</b> ·{" "}
+                Valide: <b className="text-emerald-700">{dataStats.valid}</b> ·{" "}
+                Scartate: <b className={dataStats.discarded ? "text-rose-700" : "text-slate-700"}>{dataStats.discarded}</b>
+              </div>
+
+              {Object.keys(dataStats.issuesByField).length>0 && (
+                <div className="text-xs">
+                  <div className="font-medium mb-1">Problemi rilevati (per campo)</div>
+                  <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {Object.entries(dataStats.issuesByField).map(([field,count])=> (
+                      <li key={field} className="flex justify-between">
+                        <span className="text-slate-600">{field}</span>
+                        <span className="font-semibold">{count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {dataIssues.length>0 && (
+                <div>
+                  <button
+                    type="button"
+                    className="text-xs underline text-slate-700"
+                    onClick={()=> setShowIssueDetails(s=>!s)}
+                  >
+                    {showIssueDetails ? "Nascondi dettagli" : "Mostra esempi (prime 10 righe problematiche)"}
+                  </button>
+
+                  {showIssueDetails && (
+                    <div className="mt-2 max-h-40 overflow-auto rounded-lg border bg-slate-50 p-2">
+                      <table className="w-full text-[11px]">
+                        <thead className="text-slate-500">
+                          <tr>
+                            <th className="text-left px-1">riga</th>
+                            <th className="text-left px-1">campo</th>
+                            <th className="text-left px-1">motivo</th>
+                            <th className="text-left px-1">valore</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dataIssues.slice(0,10).map((iss, i)=> (
+                            <tr key={i} className="border-t">
+                              <td className="px-1">{iss.row}</td>
+                              <td className="px-1">{iss.field}</td>
+                              <td className="px-1">{iss.reason}</td>
+                              <td className="px-1 truncate">{iss.value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </aside>
 
         {/* MAIN */}
@@ -670,7 +822,7 @@ export default function App(){
                         {provenance.map((_, i) => (
                           <radialGradient id={`pie-grad-${i}`} key={i} cx="50%" cy="50%" r="75%">
                             <stop offset="0%" stopColor="#ffffff" stopOpacity="0.10" />
-                            <stop offset="100%" stopColor={solidColor(i)} stopOpacity="1" />
+                            <stop offset="100%" stopColor={solidColor(i)} />
                           </radialGradient>
                         ))}
                       </defs>
