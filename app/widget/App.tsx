@@ -1,7 +1,7 @@
 // app/widget/App.tsx
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
@@ -10,7 +10,7 @@ import {
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
-import { useRouter, useSearchParams } from "next/navigation"; // 👈 aggiunto
+import { useRouter, useSearchParams } from "next/navigation";
 
 // Import mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
@@ -300,36 +300,6 @@ function parseNumParam(s?: string | null, def = 0) {
   const n = Number(s);
   return Number.isFinite(n) ? n : def;
 }
-// Aggiorna l’URL con i filtri applicati (senza ricaricare)
-function replaceUrlWithState(
-  router: ReturnType<typeof useRouter>,
-  opts: {
-    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-  }
-) {
-  const params = new URLSearchParams();
-  params.set("q", opts.q);
-  params.set("r", String(opts.r));
-  params.set("m", opts.m.slice(0,7)); // YYYY-MM
-  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
-    params.set("t", opts.t.map(encodeURIComponent).join(","));
-  }
-  params.set("mode", opts.mode);
-
-  // sorgente dati
-  if (opts.dataSource === "csv" && opts.csvUrl) {
-    params.set("src", "csv");
-    params.set("csv", opts.csvUrl);
-  } else if (opts.dataSource === "gsheet" && opts.gsId) {
-    params.set("src", "gsheet");
-    params.set("id", opts.gsId);
-    if (opts.gsGid) params.set("gid", opts.gsGid);
-    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
-  }
-
-  router.replace(`?${params.toString()}`, { scroll: false });
-}
 
 /* =========================
    Calendario Heatmap
@@ -509,7 +479,7 @@ export default function App(){
             role="listbox"
             aria-label="Seleziona tipologie"
           >
-            <div className="pr-1 md:max_h-none md:overflow-visible max-h-none overflow-visible">
+            <div className="pr-1 overflow-visible">
               <ul className="space-y-1">
                 {allTypes.map((t) => {
                   const active = value.includes(t);
@@ -609,22 +579,22 @@ export default function App(){
     setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
   }, [normalized.warnings]);
 
-  // 👇 Router & URL params
+  /* ---------- URL share ---------- */
   const router = useRouter();
   const search = useSearchParams();
 
-  // 👇 All’avvio, leggi i parametri dall’URL e popola gli state
+  // Inizializza stato da URL al mount
   useEffect(() => {
     if (!search) return;
 
     const q = search.get("q") ?? query;
     const r = parseNumParam(search.get("r"), radius);
     const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
-    const t = (() => {
-      const raw = parseListParam(search.get("t"));
-      const valid = raw.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
-      return valid.length ? valid : types;
-    })();
+
+    const rawT = parseListParam(search.get("t"));
+    const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
+    const t = validT.length ? validT : types;
+
     const modeParam = (search.get("mode") === "competitor" ? "competitor" : "zone") as "zone"|"competitor";
 
     const src = (search.get("src") as "none"|"csv"|"gsheet") ?? dataSource;
@@ -633,37 +603,51 @@ export default function App(){
     const gid = search.get("gid") ?? gsGid;
     const sheet = search.get("sheet") ?? gsSheet;
 
-    // Aggiorna UI state
+    // UI state
     setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
     setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
 
-    // Aggiorna anche gli “applicati” così l’apertura da link mantiene lo stesso stato
+    // Applicati
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // URL builder CSV/Sheet
-  function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
-    const id = (sheetId||"").trim();
-    if(!id) return { url: "", error: "" };
+  // Funzione per scrivere lo stato nell'URL (link condivisibile)
+  const replaceUrlWithState = useCallback((opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }) => {
+    const params = new URLSearchParams();
+    params.set("q", opts.q);
+    params.set("r", String(opts.r));
+    params.set("m", opts.m.slice(0,7)); // YYYY-MM
 
-    if(strict){
-      if(!gid || !gid.trim()){
-        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (#gid=...)."};
-      }
-      return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
+    // tipologie solo se non sono tutte
+    const ALL = STRUCTURE_TYPES as readonly string[];
+    const onlyValid = opts.t.filter(x => ALL.includes(x));
+    if (onlyValid.length > 0 && onlyValid.length < ALL.length) {
+      params.set("t", onlyValid.map(encodeURIComponent).join(","));
     }
 
-    const name = encodeURIComponent(sheetName||"Sheet1");
-    return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
-  }
-  async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
-    const res = await fetch(url, { signal });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.text();
-  }
+    params.set("mode", opts.mode);
 
-  // Festività IT per l'anno del mese selezionato (usa *monthISO live* per UX)
+    // sorgente dati
+    if (opts.dataSource === "csv" && opts.csvUrl) {
+      params.set("src", "csv");
+      params.set("csv", opts.csvUrl);
+    } else if (opts.dataSource === "gsheet" && opts.gsId) {
+      params.set("src", "gsheet");
+      params.set("id", opts.gsId);
+      if (opts.gsGid) params.set("gid", opts.gsGid);
+      if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+    }
+
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [router]);
+
+  /* ---------- Festività & Meteo ---------- */
+
+  // Festività IT (usa monthISO live per UX)
   useEffect(() => {
     if (!monthISO) return;
     const y = Number(monthISO.slice(0, 4));
@@ -679,7 +663,7 @@ export default function App(){
       .catch(() => { /* fallback: nessuna festività */ });
   }, [monthISO]);
 
-  // Meteo per centro + mese (usa *center applicato* + *monthISO live*)
+  // Meteo (center applicato + monthISO live)
   useEffect(() => {
     if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
     const { lat, lng } = normalized.center;
@@ -702,6 +686,8 @@ export default function App(){
   }, [normalized.center, monthISO]);
 
   // Caricamento dati (CSV / Google Sheet)
+  const [dataStats, setDataStats] = useState<DataStats | null>(null);
+  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
@@ -749,6 +735,27 @@ export default function App(){
     run();
     return ()=> controller.abort();
   }, [dataSource, csvUrl, gsId, gsSheet, gsGid, strictSheet]);
+
+  // URL builder CSV/Sheet
+  function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
+    const id = (sheetId||"").trim();
+    if(!id) return { url: "", error: "" };
+
+    if(strict){
+      if(!gid || !gid.trim()){
+        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (#gid=...)."};
+      }
+      return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
+    }
+
+    const name = encodeURIComponent(sheetName||"Sheet1");
+    return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
+  }
+  async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
+    const res = await fetch(url, { signal });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  }
 
   // Mese scelto (da applicati)
   const monthDate = useMemo(()=> {
@@ -862,7 +869,6 @@ export default function App(){
       : normalized.safeDays.map(d=> ({ date: format(d, "d MMM", {locale:it}), value: pressureFor(d) + rand(-10,10) }))
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
-
 
   /* =========== UI =========== */
 
@@ -999,7 +1005,7 @@ export default function App(){
                     setAMode(next.mode);
 
                     // Aggiorna l'URL con i filtri applicati (link condivisibile)
-                    replaceUrlWithState(router, next);
+                    replaceUrlWithState(next);
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
