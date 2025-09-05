@@ -6,7 +6,7 @@ import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
 } from "recharts";
-import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
+import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 
@@ -373,6 +373,140 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+// ===== Dropdown Multi-Select Tipologie =====
+function TypesMultiSelect({
+  value,
+  onChange,
+  allTypes,
+  labels,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  allTypes: readonly string[];
+  labels: Record<string, string>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Chiudi clic fuori
+  React.useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  // Toggle singolo tipo
+  function toggle(t: string) {
+    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+  }
+
+  // Testo riepilogo (badge)
+  const summary =
+    value.length === 0
+      ? "Nessuna"
+      : value.length === allTypes.length
+      ? "Tutte"
+      : `${value.length} selezionate`;
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <span className="block text-sm font-medium text-neutral-700 mb-1">
+        Tipologie
+      </span>
+
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
+      >
+        <span className="truncate">
+          {summary}
+          {value.length > 0 && value.length < allTypes.length ? (
+            <span className="ml-2 text-xs text-neutral-500">
+              {value
+                .slice()
+                .sort()
+                .map((t) => labels[t] || t)
+                .slice(0, 2)
+                .join(", ")}
+              {value.length > 2 ? "…" : ""}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Panel */}
+      {open && (
+        <div
+          className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+          role="listbox"
+          aria-label="Seleziona tipologie"
+        >
+          <div className="max-h-64 overflow-auto pr-1">
+            <ul className="space-y-1">
+              {allTypes.map((t) => {
+                const active = value.includes(t);
+                return (
+                  <li key={t}>
+                    <button
+                      type="button"
+                      onClick={() => toggle(t)}
+                      className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
+                        ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                      role="option"
+                      aria-selected={active}
+                    >
+                      <span
+                        className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
+                          ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
+                      >
+                        {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                      </span>
+                      <span className="text-neutral-800">{labels[t] || t}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Footer azioni rapide */}
+          <div className="mt-2 flex items-center justify-between border-t pt-2">
+            <button
+              type="button"
+              className="text-xs text-neutral-600 hover:text-neutral-900"
+              onClick={() => onChange([])}
+            >
+              Pulisci
+            </button>
+            <div className="space-x-2">
+              <button
+                type="button"
+                className="text-xs text-neutral-600 hover:text-neutral-900"
+                onClick={() => onChange([...allTypes])}
+              >
+                Seleziona tutte
+              </button>
+              <button
+                type="button"
+                className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
+                onClick={() => setOpen(false)}
+              >
+                Applica
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
   // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
@@ -576,7 +710,8 @@ export default function App(){
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Topbar */}
+      
+{/* Topbar */}
       <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
           <div>
@@ -595,7 +730,8 @@ export default function App(){
 
       {/* Body */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        {/* SIDEBAR CONTROLLI */}
+        
+{/* SIDEBAR CONTROLLI */}
         <aside className="space-y-6">
           {/* Sorgente dati */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
@@ -666,29 +802,13 @@ export default function App(){
               <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
-            {/* Tipologie: una per riga */}
-            <div className="flex items-start gap-3">
-              <label className="w-28 mt-1 text-sm text-slate-700">Tipologie</label>
-              <div className="flex-1 space-y-2">
-                {STRUCTURE_TYPES.map(t => (
-                  <label
-                    key={t}
-                    className="flex items-center gap-3 text-sm border border-slate-200 rounded-xl px-3 py-2 hover:bg-slate-50"
-                  >
-                    <input
-                      className="h-4 w-4"
-                      type="checkbox"
-                      checked={types.includes(t)}
-                      onChange={(ev) => {
-                        const c = ev.currentTarget.checked;
-                        setTypes(prev => c ? Array.from(new Set([...prev, t])) : prev.filter(x => x !== t));
-                      }}
-                    />
-                    <span className="font-medium">{typeLabels[t]}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            {/* Tipologie (dropdown multiselect) */}
+<TypesMultiSelect
+  value={types}
+  onChange={setTypes}
+  allTypes={STRUCTURE_TYPES}
+  labels={typeLabels}
+/>
 
             {/* Modalità + Pulsante su riga propria */}
             <div className="grid grid-cols-1 gap-3 mt-2">
