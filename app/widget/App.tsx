@@ -446,7 +446,7 @@ function TypesMultiSelect({
           role="listbox"
           aria-label="Seleziona tipologie"
         >
-          <div className="max-h-64 overflow-auto pr-1">
+             <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
             <ul className="space-y-1">
               {allTypes.map((t) => {
                 const active = value.includes(t);
