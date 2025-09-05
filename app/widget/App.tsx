@@ -1,3 +1,350 @@
+"use client";
+
+import React, { useMemo, useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+import {
+  PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, LineChart, Line, ResponsiveContainer, Legend
+} from "recharts";
+import { CalendarDays, MapPin, Route, RefreshCw } from "lucide-react";
+import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { it } from "date-fns/locale";
+
+// Import mappa senza SSR
+const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
+
+/* =========================
+   Tipi
+========================= */
+type LatLng = { lat: number; lng: number };
+
+type DataRow = {
+  date: Date | null;
+  adr: number;
+  occ: number;
+  los: number;
+  channel: string;
+  provenance: string;
+  type: string;
+  lat: number;
+  lng: number;
+};
+
+type Normalized = {
+  warnings: string[];
+  safeMonthISO: string;
+  safeDays: Date[];
+  center: LatLng | null;
+  safeR: number;
+  safeT: string[];
+  isBlocked: boolean;
+};
+
+type ValidationIssue = {
+  row: number;
+  field: string;
+  reason: string;
+  value: string;
+};
+
+type DataStats = {
+  total: number;
+  valid: number;
+  discarded: number;
+  issuesByField: Record<string, number>;
+};
+
+/* =========================
+   Costanti & Tema grafici
+========================= */
+const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
+const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
+const RADIUS_OPTIONS = [10,20,30] as const;
+
+const typeLabels: Record<string,string> = {
+  hotel:"Hotel", agriturismo:"Agriturismo", casa_vacanza:"Case Vacanza",
+  villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
+};
+
+const THEME = {
+  chart: {
+    pie: { innerRadius: 60, outerRadius: 110, paddingAngle: 2, cornerRadius: 6 },
+    bar: { margin: { top: 8, right: 16, left: 0, bottom: 0 }, tickSize: 12 },
+    barWide: { margin: { top: 8, right: 16, left: 0, bottom: 30 }, tickSize: 12 },
+    line: { stroke: "#1e3a8a", strokeWidth: 2, dotRadius: 2 },
+  },
+  palette: {
+    barBlue: ["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"],
+    barOrange: ["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"],
+    solid: ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#eab308","#06b6d4"]
+  }
+};
+const solidColor = (i:number)=> THEME.palette.solid[i % THEME.palette.solid.length];
+
+/* =========================
+   Geocoding demo (solo validazione base)
+========================= */
+const knownPlaces: Record<string,LatLng> = {
+  "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
+  "arezzo": { lat: 43.4633, lng: 11.8797 },
+  "firenze": { lat: 43.7696, lng: 11.2558 },
+  "siena": { lat: 43.3188, lng: 11.3308 },
+};
+function geocode(query: string, warnings: string[]): LatLng | null {
+  const key = (query||"").trim().toLowerCase();
+  if(!key){
+    warnings.push("Località mancante: inserisci una località per procedere");
+    return null;
+  }
+  if(knownPlaces[key]) return knownPlaces[key];
+  warnings.push(`Località non riconosciuta ("${query}"): inserisci un indirizzo valido`);
+  return null;
+}
+
+/* =========================
+   Util varie
+========================= */
+function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
+function pressureFor(date: Date){
+  const dow = getDay(date); // 0 Dom
+  const base = 60 + (date.getDate()*2);
+  const wkndBoost = (dow===0 || dow===6) ? 25 : (dow===5 ? 18 : 0);
+  return base + wkndBoost;
+}
+function adrFromCompetitors(date: Date, mode: "zone"|"competitor"){
+  const base = 90 + (date.getDate()%7)*5;
+  return Math.round(base + (mode==="competitor"? 15:0));
+}
+function colorForPressure(p:number, pmin:number, pmax:number){
+  const spread = Math.max(1,(pmax-pmin));
+  const t = (p - pmin) / spread;
+  const stops = [
+    [255,255,204], [255,237,160], [254,217,118], [254,178,76],
+    [253,141,60], [252,78,42], [227,26,28]
+  ];
+  const idx = Math.min(stops.length-1, Math.max(0, Math.floor(t*(stops.length-1))));
+  const [r,g,b] = stops[idx];
+  return `rgb(${r},${g},${b})`;
+}
+function contrastColor(rgb:string){
+  const m = rgb.match(/rgb\((\d+),(\d+),(\d+)\)/);
+  if(!m) return "#000";
+  const r = parseInt(m[1],10), g=parseInt(m[2],10), b=parseInt(m[3],10);
+  const brightness = 0.299*r + 0.587*g + 0.114*b;
+  return brightness < 150 ? "#fff" : "#000";
+}
+function safeParseMonthISO(v:string|undefined|null, warnings:string[]): string{
+  const now = new Date();
+  const def = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+  if(!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)){
+    warnings.push("Mese non valido: fallback al mese corrente");
+    return def;
+  }
+  return v;
+}
+function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
+  try{
+    const d = parseISO(monthISO);
+    const start = startOfMonth(d);
+    const end = endOfMonth(d);
+    return eachDayOfInterval({start, end});
+  }catch{
+    warnings.push("Errore nel parsing data: fallback mese corrente");
+    const now = new Date();
+    return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
+  }
+}
+function safeRadius(r:number, warnings:string[]): number{
+  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){
+    warnings.push("Raggio non valido: fallback 20km");
+    return 20;
+  }
+  return r;
+}
+function safeTypes(ts:string[], warnings:string[]): string[]{
+  if(!Array.isArray(ts) || ts.length===0){
+    warnings.push("Nessuna tipologia selezionata: fallback a Tutte");
+    return [...STRUCTURE_TYPES];
+  }
+  return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
+}
+
+/* =========================
+   CSV Parser + Normalizzazione con validazione
+========================= */
+function smartSplit(line:string, d:string) {
+  const out:string[] = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === d && !inQuotes) { out.push(cur); cur = ""; }
+    else { cur += ch; }
+  }
+  out.push(cur);
+  return out
+    .map(s => s.replace(/^\uFEFF/, ""))    // BOM
+    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+    .map(s => s.trim());
+}
+function parseCsv(text: string){
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return [];
+  const headerLine = lines[0].replace(/^\uFEFF/, "");
+  const count = (s:string, ch:string) => (s.match(new RegExp(`\\${ch}`, "g")) || []).length;
+  const delim = count(headerLine, ";") > count(headerLine, ",") ? ";" : ",";
+  const headersRaw = smartSplit(headerLine, delim);
+  const headers = headersRaw.map(h => h.toLowerCase().trim());
+  return lines.slice(1).map(line => {
+    const cells = smartSplit(line, delim);
+    const row:any = {};
+    headers.forEach((h, i) => { row[h] = (cells[i] ?? "").trim(); });
+    return row;
+  });
+}
+function toNumber(v: string, def=0){
+  if (v == null) return def;
+  const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : def;
+}
+function toDate(v: string){
+  if (!v) return null;
+  const s = String(v).trim();
+  const d1 = new Date(s);
+  if (!Number.isNaN(d1.getTime())) return d1;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
+    const d2 = new Date(yy, mm, dd);
+    if (!Number.isNaN(d2.getTime())) return d2;
+  }
+  return null;
+}
+function getVal(row:any, keys:string[]){
+  const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
+  const map = new Map<string,any>();
+  Object.keys(row||{}).forEach(k => map.set(norm(k), row[k]));
+  for (const k of keys) {
+    const v = map.get(norm(k));
+    if (v != null && v !== "") return v;
+  }
+  return null;
+}
+
+function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
+  const issues: ValidationIssue[] = [];
+  const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
+
+  const valid: DataRow[] = rows.map((r:any, idx:number)=>{
+    const rowIndex = idx+2; // considerando intestazione
+    const dateV = String(getVal(r, ["date","data","giorno"]) ?? "");
+    const d = toDate(dateV);
+    if(!d) issues.push({ row: rowIndex, field: "date", reason: "data non valida", value: dateV });
+
+    const adrV = String(getVal(r, ["adr","adr_medio","prezzo_medio"]) ?? "");
+    const adr = toNumber(adrV, 0);
+    if(!Number.isFinite(adr)) issues.push({ row: rowIndex, field: "adr", reason: "numero non valido", value: adrV });
+
+    const occV = String(getVal(r, ["occ","occupazione","occ_rate"]) ?? "");
+    const occ = toNumber(occV, 0);
+
+    const losV = String(getVal(r, ["los","notti","soggiorno"]) ?? "");
+    const los = toNumber(losV, 0);
+
+    const channel = String(getVal(r, ["channel","canale"]) ?? "") || "Altro";
+    const provenance = String(getVal(r, ["provenance","country","nazione"]) ?? "") || "Altro";
+    const type = String(getVal(r, ["type","tipo"]) ?? "") || "";
+
+    const latV = String(getVal(r, ["lat","latitude"]) ?? "");
+    const lngV = String(getVal(r, ["lng","longitude"]) ?? "");
+    const lat = toNumber(latV, 0);
+    const lng = toNumber(lngV, 0);
+
+    return { date: d, adr, occ, los, channel, provenance, type, lat, lng };
+  }).filter(r=> !!r.date);
+
+  const stats: DataStats = {
+    total: rows.length,
+    valid: valid.length,
+    discarded: Math.max(0, rows.length - valid.length),
+    issuesByField: issues.reduce((acc, it)=> inc(acc, it.field), {} as Record<string,number>)
+  };
+
+  if (valid.length === 0) {
+    warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
+  }
+
+  return { valid, issues, stats };
+}
+
+/* =========================
+   Calendario Heatmap
+========================= */
+function CalendarHeatmap({
+  monthDate,
+  data
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number}[]}){
+  const start = startOfMonth(monthDate);
+  const end = endOfMonth(monthDate);
+  const days = eachDayOfInterval({start, end});
+  const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
+  const pmin = Math.min(...(pvals.length? pvals : [0]));
+  const pmax = Math.max(...(pvals.length? pvals : [1]));
+  const firstDow = (getDay(start)+6)%7; // Mon=0
+  const totalCells = firstDow + days.length;
+  const rows = Math.ceil(totalCells/7);
+
+  return (
+    <div className="w-full">
+      {/* Intestazione giorni */}
+      <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
+        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
+      </div>
+
+      {/* Griglia */}
+      <div className="grid grid-cols-7 gap-3">
+        {Array.from({length: rows*7}).map((_,i)=>{
+          const dayIndex = i - firstDow;
+          const d = days[dayIndex];
+          const dayData = d && data.find(x=> x.date.toDateString()===d.toDateString());
+          if(dayIndex<0 || !d){
+            return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>;
+          }
+          const isSat = ((getDay(d))===6);
+          const pressure = dayData?.pressure ?? 0;
+          const adr = dayData?.adr ?? 0;
+          const fill = colorForPressure(pressure,pmin,pmax);
+          const txtColor = contrastColor(fill);
+          return (
+            <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
+              {/* Top half: giorno + settimana */}
+              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
+                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
+                <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
+              </div>
+              {/* Bottom half: ADR con sfondo domanda */}
+              <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
+                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Legenda */}
+      <div className="mt-3 flex items-center justify-center gap-4">
+        <span className="text-xs">Bassa domanda</span>
+        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
+        <span className="text-xs">Alta domanda</span>
+      </div>
+    </div>
+  );
+}
+
+/* =========================
+   APP
+========================= */
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
   const [mode, setMode] = useState<"zone"|"competitor">("zone");
@@ -17,14 +364,14 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // === NUOVO: stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
+  // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
-  // C'è differenza tra bozza (UI) e applicato (analisi)?
+  // Differenza tra bozza (UI) e applicati (analisi)?
   const hasChanges = useMemo(() => (
     aQuery !== query ||
     aRadius !== radius ||
@@ -33,12 +380,12 @@ export default function App(){
     aTypes.join(",") !== types.join(",")
   ), [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
 
-  // === Validazione: stats/issue
+  // Validazione: stats/issues
   const [dataStats, setDataStats] = useState<DataStats | null>(null);
   const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
   const [showIssueDetails, setShowIssueDetails] = useState(false);
 
-  // Normalizzazione — ORA usa gli *applicati*
+  // Normalizzazione — usa gli *applicati*
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = geocode(aQuery, warnings);
@@ -306,7 +653,7 @@ export default function App(){
             <div className="flex items-center gap-2">
               <CalendarDays className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Mese</label>
-              <input type="month" value={normalized.safeMonthISO ? normalized.safeMonthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
             {/* Tipologie: una per riga */}
@@ -342,6 +689,7 @@ export default function App(){
                   <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
                 </div>
               </div>
+
               <div>
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -376,7 +724,7 @@ export default function App(){
             </section>
           )}
 
-          {/* Qualità dati (NUOVA CARD) */}
+          {/* Qualità dati */}
           {dataStats && (
             <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
               <div className="text-sm font-semibold">Qualità dati (Google Sheet)</div>
