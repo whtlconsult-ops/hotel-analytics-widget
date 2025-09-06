@@ -1,7 +1,6 @@
-"use client";
-
-export const dynamic = "force-dynamic"; // disattiva il prerender/SSG di questa pagina
-export const fetchCache = "force-no-store";
+// app/page.tsx
+export const dynamic = 'force-dynamic'; // evita prerender statico
+export const revalidate = 0;            // niente ISR
 
 import App from "./widget/App";
 
