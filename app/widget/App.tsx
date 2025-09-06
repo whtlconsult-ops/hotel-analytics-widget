@@ -144,12 +144,26 @@ function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
     return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
   }
 }
-function safeRadius(r:number, warnings:string[]): number{
-  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){
-    warnings.push("Raggio non valido: fallback 20km");
-    return 20;
-  }
-  return r;
+function safeRadius(r: unknown, warnings: string[]): number {
+  const allowed = [10, 20, 30] as const;
+
+  // estrai numero da qualsiasi input (es. "10 km" -> 10)
+  const n = typeof r === "number"
+    ? r
+    : parseInt(String(r ?? "").replace(/\D+/g, ""), 10);
+
+  if (allowed.includes(n as any)) return n as number;
+
+  // scegli il più vicino tra quelli permessi
+  const closest = allowed.reduce((best, cur) =>
+    Math.abs((n || 0) - cur) < Math.abs((n || 0) - best) ? cur : best, allowed[0]);
+
+  if (!Number.isFinite(n))
+    warnings.push("Raggio mancante: fallback 20km");
+  else
+    warnings.push(`Raggio ${n}km non valido: adattato a ${closest}km`);
+
+  return closest;
 }
 function safeTypes(ts:string[], warnings:string[]): string[]{
   if(!Array.isArray(ts) || ts.length===0){
