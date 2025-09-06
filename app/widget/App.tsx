@@ -1,7 +1,7 @@
 // app/widget/App.tsx
 "use client";
 
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
@@ -301,6 +301,55 @@ function parseNumParam(s?: string | null, def = 0) {
   return Number.isFinite(n) ? n : def;
 }
 
+// Costruisce l'URL con i filtri
+function makeShareUrl(
+  pathname: string,
+  opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.set("q", opts.q);
+  params.set("r", String(opts.r));
+  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
+  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
+    params.set("t", opts.t.map(encodeURIComponent).join(","));
+  }
+  params.set("mode", opts.mode);
+
+  // sorgente dati
+  if (opts.dataSource === "csv" && opts.csvUrl) {
+    params.set("src", "csv");
+    params.set("csv", opts.csvUrl);
+  } else if (opts.dataSource === "gsheet" && opts.gsId) {
+    params.set("src", "gsheet");
+    params.set("id", opts.gsId);
+    if (opts.gsGid) params.set("gid", opts.gsGid);
+    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+  }
+  return `${pathname}?${params.toString()}`;
+}
+
+// Aggiorna l’URL (router + fallback) e ritorna il path con query
+function replaceUrlWithState(
+  router: ReturnType<typeof useRouter>,
+  pathname: string,
+  opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }
+) {
+  const url = makeShareUrl(pathname, opts);
+  try { router.replace(url, { scroll: false }); } catch {}
+  try {
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", url);
+    }
+  } catch {}
+  return url;
+}
+
 /* =========================
    Calendario Heatmap
 ========================= */
@@ -402,24 +451,9 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const router = useRouter();
-  const search = useSearchParams();
-  const pathname = usePathname();
-
-  const [shareUrl, setShareUrl] = useState<string>("");
-
-
   // === Dati esterni ===
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number }>>({});
-// Router + URL share
-const router = useRouter();
-const search = useSearchParams();
-const pathname = usePathname();
-
-// Link condivisibile (fallback se l’URL bar non si aggiorna)
-const [shareUrl, setShareUrl] = useState<string>("");
-
 
   // ===== Dropdown Multi-Select Tipologie =====
   function TypesMultiSelect({
@@ -494,7 +528,7 @@ const [shareUrl, setShareUrl] = useState<string>("");
             role="listbox"
             aria-label="Seleziona tipologie"
           >
-            <div className="pr-1 overflow-visible">
+            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
               <ul className="space-y-1">
                 {allTypes.map((t) => {
                   const active = value.includes(t);
@@ -596,7 +630,9 @@ const [shareUrl, setShareUrl] = useState<string>("");
 
   /* ---------- URL share ---------- */
   const router = useRouter();
+  const pathname = usePathname();
   const search = useSearchParams();
+  const [shareUrl, setShareUrl] = useState<string>("");
 
   // Inizializza stato da URL al mount
   useEffect(() => {
@@ -624,135 +660,39 @@ const [shareUrl, setShareUrl] = useState<string>("");
 
     // Applicati
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
+
+    // Link condivisibile iniziale
+    const url = makeShareUrl(pathname || "/", {
+      q, r, m, t, mode: modeParam,
+      dataSource: src, csvUrl: csv, gsId: id || "", gsGid: gid || "", gsSheet: sheet || ""
+    });
+    setShareUrl(url);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Funzione per scrivere lo stato nell'URL (link condivisibile)
-  function makeShareUrl(pathname: string, opts: {
-  q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-  dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("q", opts.q);
-  params.set("r", String(opts.r));
-  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
-  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
-    params.set("t", opts.t.map(encodeURIComponent).join(","));
-  }
-  params.set("mode", opts.mode);
+  // URL builder CSV/Sheet
+  function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
+    const id = (sheetId||"").trim();
+    if(!id) return { url: "", error: "" };
 
-  if (opts.dataSource === "csv" && opts.csvUrl) {
-    params.set("src", "csv");
-    params.set("csv", opts.csvUrl);
-  } else if (opts.dataSource === "gsheet" && opts.gsId) {
-    params.set("src", "gsheet");
-    params.set("id", opts.gsId);
-    if (opts.gsGid) params.set("gid", opts.gsGid);
-    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
-  }
-  return `${pathname}?${params.toString()}`;
-}
-
-function replaceUrlWithState(
-  router: ReturnType<typeof useRouter>,
-  pathname: string,
-  opts: {
-    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-  }
-) {
-  const url = makeShareUrl(pathname, opts);
-
-  // Next Router
-  try { router.replace(url, { scroll: false }); } catch {}
-
-  // Fallback nativo (alcuni browser bloccano replace di Next)
-  try {
-    if (typeof window !== "undefined") {
-      window.history.replaceState({}, "", url);
-    }
-  } catch {}
-
-  return url; // lo usiamo per il campo "Link condivisibile"
-}
-
-
-    // tipologie solo se non sono tutte
-    const ALL = STRUCTURE_TYPES as readonly string[];
-    const onlyValid = opts.t.filter(x => ALL.includes(x));
-    if (onlyValid.length > 0 && onlyValid.length < ALL.length) {
-      params.set("t", onlyValid.map(encodeURIComponent).join(","));
+    if(strict){
+      if(!gid || !gid.trim()){
+        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (#gid=...)."};
+      }
+      return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
     }
 
-    params.set("mode", opts.mode);
-
-    // sorgente dati
-    if (opts.dataSource === "csv" && opts.csvUrl) {
-      params.set("src", "csv");
-      params.set("csv", opts.csvUrl);
-    } else if (opts.dataSource === "gsheet" && opts.gsId) {
-      params.set("src", "gsheet");
-      params.set("id", opts.gsId);
-      if (opts.gsGid) params.set("gid", opts.gsGid);
-      if (opts.gsSheet) params.set("sheet", opts.gsSheet);
-    }
-
-    function makeShareUrl(
-  pathname: string,
-  opts: {
-    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+    const name = encodeURIComponent(sheetName||"Sheet1");
+    return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
-) {
-  const params = new URLSearchParams();
-  params.set("q", opts.q);
-  params.set("r", String(opts.r));
-  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
-
-  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
-    params.set("t", opts.t.map(encodeURIComponent).join(","));
+  async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
+    const res = await fetch(url, { signal });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
   }
-  params.set("mode", opts.mode);
-
-  // sorgente dati
-  if (opts.dataSource === "csv" && opts.csvUrl) {
-    params.set("src", "csv");
-    params.set("csv", opts.csvUrl);
-  } else if (opts.dataSource === "gsheet" && opts.gsId) {
-    params.set("src", "gsheet");
-    params.set("id", opts.gsId);
-    if (opts.gsGid) params.set("gid", opts.gsGid);
-    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
-  }
-  return `${pathname}?${params.toString()}`;
-}
-function replaceUrlWithState(
-  router: ReturnType<typeof useRouter>,
-  pathname: string,
-  opts: {
-    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-  }
-) {
-  const url = makeShareUrl(pathname, opts);
-
-  // Next Router (non ricarica la pagina)
-  try { router.replace(url, { scroll: false }); } catch {}
-
-  // Fallback nativo (alcuni browser non riflettono subito l’URL del router)
-  try {
-    if (typeof window !== "undefined") {
-      window.history.replaceState({}, "", url);
-    }
-  } catch {}
-
-  return url; // lo usiamo per mostrare il link condivisibile in input
-}
-
 
   /* ---------- Festività & Meteo ---------- */
-
-  // Festività IT (usa monthISO live per UX)
   useEffect(() => {
     if (!monthISO) return;
     const y = Number(monthISO.slice(0, 4));
@@ -768,7 +708,6 @@ function replaceUrlWithState(
       .catch(() => { /* fallback: nessuna festività */ });
   }, [monthISO]);
 
-  // Meteo (center applicato + monthISO live)
   useEffect(() => {
     if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
     const { lat, lng } = normalized.center;
@@ -791,8 +730,6 @@ function replaceUrlWithState(
   }, [normalized.center, monthISO]);
 
   // Caricamento dati (CSV / Google Sheet)
-  const [dataStats, setDataStats] = useState<DataStats | null>(null);
-  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
@@ -840,27 +777,6 @@ function replaceUrlWithState(
     run();
     return ()=> controller.abort();
   }, [dataSource, csvUrl, gsId, gsSheet, gsGid, strictSheet]);
-
-  // URL builder CSV/Sheet
-  function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
-    const id = (sheetId||"").trim();
-    if(!id) return { url: "", error: "" };
-
-    if(strict){
-      if(!gid || !gid.trim()){
-        return { url: "", error: "Modalità rigida attiva: inserisci il GID del foglio (#gid=...)."};
-      }
-      return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
-    }
-
-    const name = encodeURIComponent(sheetName||"Sheet1");
-    return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
-  }
-  async function fetchCsv(url: string, signal?: AbortSignal): Promise<string>{
-    const res = await fetch(url, { signal });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.text();
-  }
 
   // Mese scelto (da applicati)
   const monthDate = useMemo(()=> {
@@ -974,6 +890,7 @@ function replaceUrlWithState(
       : normalized.safeDays.map(d=> ({ date: format(d, "d MMM", {locale:it}), value: pressureFor(d) + rand(-10,10) }))
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
+
 
   /* =========== UI =========== */
 
@@ -1109,26 +1026,31 @@ function replaceUrlWithState(
                     setATypes(next.t);
                     setAMode(next.mode);
 
-                    // Aggiorna l'URL con i filtri applicati (link condivisibile)
-                   const url = replaceUrlWithState(router, pathname, next);
-                   setShareUrl(url);
-
+                    // Aggiorna l'URL (link condivisibile) e mostra il link
+                    const url = replaceUrlWithState(router, pathname || "/", next);
+                    setShareUrl(url);
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
                   {hasChanges ? "Genera Analisi" : "Aggiornato"}
                 </button>
-{shareUrl && (
-  <div className="mt-2">
-    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
-    <input
-      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
-      value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
-      readOnly
-      onFocus={(e)=> e.currentTarget.select()}
-    />
-  </div>
-)}
+
+                {/* Campo: Link condivisibile */}
+                {shareUrl && (
+                  <div className="mt-2">
+                    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
+                    <input
+                      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
+                      value={
+                        typeof window !== "undefined"
+                          ? `${location.origin}${shareUrl}`
+                          : shareUrl
+                      }
+                      readOnly
+                      onFocus={(e)=> e.currentTarget.select()}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </section>
