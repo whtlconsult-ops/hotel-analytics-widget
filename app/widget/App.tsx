@@ -697,8 +697,58 @@ function replaceUrlWithState(
       if (opts.gsSheet) params.set("sheet", opts.gsSheet);
     }
 
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [router]);
+    function makeShareUrl(
+  pathname: string,
+  opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }
+) {
+  const params = new URLSearchParams();
+  params.set("q", opts.q);
+  params.set("r", String(opts.r));
+  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
+
+  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
+    params.set("t", opts.t.map(encodeURIComponent).join(","));
+  }
+  params.set("mode", opts.mode);
+
+  // sorgente dati
+  if (opts.dataSource === "csv" && opts.csvUrl) {
+    params.set("src", "csv");
+    params.set("csv", opts.csvUrl);
+  } else if (opts.dataSource === "gsheet" && opts.gsId) {
+    params.set("src", "gsheet");
+    params.set("id", opts.gsId);
+    if (opts.gsGid) params.set("gid", opts.gsGid);
+    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+  }
+  return `${pathname}?${params.toString()}`;
+}
+function replaceUrlWithState(
+  router: ReturnType<typeof useRouter>,
+  pathname: string,
+  opts: {
+    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+  }
+) {
+  const url = makeShareUrl(pathname, opts);
+
+  // Next Router (non ricarica la pagina)
+  try { router.replace(url, { scroll: false }); } catch {}
+
+  // Fallback nativo (alcuni browser non riflettono subito l’URL del router)
+  try {
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", url);
+    }
+  } catch {}
+
+  return url; // lo usiamo per mostrare il link condivisibile in input
+}
+
 
   /* ---------- Festività & Meteo ---------- */
 
