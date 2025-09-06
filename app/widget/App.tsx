@@ -172,6 +172,29 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   }
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
+// Map semplice dai codici Open-Meteo a icone
+function weatherIconFromCode(code?: number): string {
+  if (code == null) return "";
+  // https://open-meteo.com/en/docs#api_weathercode
+  if ([0].includes(code)) return "☀️";                 // Sereno
+  if ([1, 2].includes(code)) return "🌤️";              // Poco nuvoloso / variabile
+  if ([3].includes(code)) return "☁️";                 // Nuvoloso
+  if ([45, 48].includes(code)) return "🌫️";            // Nebbia
+  if ([51, 53, 55, 56, 57].includes(code)) return "🌦️"; // Pioviggine / pioviggine gelata
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return "🌧️"; // Pioggia
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return "🌨️"; // Neve
+  if ([95, 96, 99].includes(code)) return "⛈️";        // Temporali
+  return "❓";
+}
+
+// true se la data è nei prossimi 7 giorni (incluso oggi)
+function isWithinNext7Days(d: Date): boolean {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // oggi 00:00
+  const cutoff = new Date(start); cutoff.setDate(cutoff.getDate() + 7);
+  return d >= start && d <= cutoff;
+}
+
 
 /* =========================
    CSV Parser + Normalizzazione con validazione
@@ -365,7 +388,7 @@ function replaceUrlWithState(
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number}}[]}){
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}}[]}){
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
@@ -378,10 +401,12 @@ function CalendarHeatmap({
 
   return (
     <div className="w-full">
+      {/* Intestazione giorni */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
       </div>
 
+      {/* Griglia */}
       <div className="grid grid-cols-7 gap-3">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
@@ -395,20 +420,39 @@ function CalendarHeatmap({
           const adr = dayData?.adr ?? 0;
           const fill = colorForPressure(pressure,pmin,pmax);
           const txtColor = contrastColor(fill);
+
+          const showIcon = dayData?.wx?.code != null && isWithinNext7Days(d);
+          const icon = weatherIconFromCode(dayData?.wx?.code);
+
           return (
             <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
+              {/* Top half: giorno + settimana */}
               <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
                 <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
                 <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
               </div>
+
+              {/* Bottom half: ADR con sfondo domanda */}
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
 
+              {/* Festività (pallino) */}
               {dayData?.holidayName ? (
-                <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
+                <div
+                  className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
+                  title={dayData.holidayName}
+                />
               ) : null}
 
+              {/* Meteo: icona in basso-sinistra (solo prossimi 7 giorni) */}
+              {showIcon ? (
+                <div className="absolute bottom-1 left-1 text-[12px]" title="Meteo">
+                  {icon}
+                </div>
+              ) : null}
+
+              {/* Temperatura in basso-destra (se disponibile) */}
               {dayData?.wx?.t != null ? (
                 <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
                   {dayData.wx.t.toFixed(0)}°C
@@ -419,6 +463,7 @@ function CalendarHeatmap({
         })}
       </div>
 
+      {/* Legenda */}
       <div className="mt-3 flex items-center justify-center gap-4">
         <span className="text-xs">Bassa domanda</span>
         <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
@@ -452,7 +497,7 @@ export default function App(){
 
   // Dati esterni
   const [holidays, setHolidays] = useState<Record<string, string>>({});
-  const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number }>>({});
+  const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
   // Share URL (stringa mostrata nel campo)
   const [shareUrl, setShareUrl] = useState<string>("");
@@ -570,26 +615,28 @@ export default function App(){
       .catch(() => {});
   }, [monthISO]);
 
-  // Meteo (center applicato + monthISO UI)
-  useEffect(() => {
-    if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
-    const { lat, lng } = normalized.center;
-    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
-      .then(r => r.json())
-      .then((j) => {
-        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
-        const daily = j.weather.daily;
-        const out: Record<string, { t?: number; p?: number }> = {};
-        (daily.time || []).forEach((d: string, i: number) => {
-          out[d] = {
-            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
-            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
-          };
-        });
-        setWeatherByDate(out);
-      })
-      .catch(() => setWeatherByDate({}));
-  }, [normalized.center, monthISO]);
+  // Meteo per centro + mese (usa *center applicato* + *monthISO live*)
+useEffect(() => {
+  if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
+  const { lat, lng } = normalized.center;
+
+  fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
+    .then(r => r.json())
+    .then((j) => {
+      if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+      const daily = j.weather.daily;
+      const out: Record<string, { t?: number; p?: number; code?: number }> = {};
+      (daily.time || []).forEach((d: string, i: number) => {
+        out[d] = {
+          t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+          p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+          code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined,
+        };
+      });
+      setWeatherByDate(out);
+    })
+    .catch(() => setWeatherByDate({}));
+}, [normalized.center, monthISO]);
 
   // Caricamento dati (CSV / Google Sheet)
   useEffect(()=>{
