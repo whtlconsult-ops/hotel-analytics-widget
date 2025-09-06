@@ -10,9 +10,9 @@ import {
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
-// Import mappa senza SSR
+// mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
 /* =========================
@@ -95,9 +95,8 @@ function shade(hex: string, percent: number) {
   const b = Math.min(255, Math.max(0, (num & 0x0000FF) + Math.round(255 * percent)));
   return `#${(1 << 24 | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
-
 function pressureFor(date: Date){
-  const dow = getDay(date); // 0 Dom
+  const dow = getDay(date); // 0=Dom
   const base = 60 + (date.getDate()*2);
   const wkndBoost = (dow===0 || dow===6) ? 25 : (dow===5 ? 18 : 0);
   return base + wkndBoost;
@@ -175,7 +174,7 @@ function smartSplit(line:string, d:string) {
   out.push(cur);
   return out
     .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette
     .map(s => s.trim());
 }
 function parseCsv(text: string){
@@ -222,13 +221,12 @@ function getVal(row:any, keys:string[]){
   }
   return null;
 }
-
 function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
   const issues: ValidationIssue[] = [];
   const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
 
   const valid: DataRow[] = rows.map((r:any, idx:number)=>{
-    const rowIndex = idx+2; // considerando intestazione
+    const rowIndex = idx+2; // intestazione
     const dateV = String(getVal(r, ["date","data","giorno"]) ?? "");
     const d = toDate(dateV);
     if(!d) issues.push({ row: rowIndex, field: "date", reason: "data non valida", value: dateV });
@@ -239,7 +237,6 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
 
     const occV = String(getVal(r, ["occ","occupazione","occ_rate"]) ?? "");
     const occ = toNumber(occV, 0);
-
     const losV = String(getVal(r, ["los","notti","soggiorno"]) ?? "");
     const los = toNumber(losV, 0);
 
@@ -270,7 +267,7 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
 }
 
 /* =========================
-   Geocoding demo (validazione)
+   Geocoding demo
 ========================= */
 const knownPlaces: Record<string,LatLng> = {
   "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
@@ -290,7 +287,7 @@ function geocode(query: string, warnings: string[]): LatLng | null {
 }
 
 /* =========================
-   Helper per query string (URL share)
+   URL helpers (share)
 ========================= */
 function parseListParam(s?: string | null) {
   if (!s) return [];
@@ -301,14 +298,11 @@ function parseNumParam(s?: string | null, def = 0) {
   return Number.isFinite(n) ? n : def;
 }
 
-// Costruisce l'URL con i filtri
-function makeShareUrl(
-  pathname: string,
-  opts: {
-    q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
-    dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-  }
-) {
+// costruisce link completo basato su env
+function makeShareUrl(opts: {
+  q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+  dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+}) {
   const params = new URLSearchParams();
   params.set("q", opts.q);
   params.set("r", String(opts.r));
@@ -318,7 +312,6 @@ function makeShareUrl(
   }
   params.set("mode", opts.mode);
 
-  // sorgente dati
   if (opts.dataSource === "csv" && opts.csvUrl) {
     params.set("src", "csv");
     params.set("csv", opts.csvUrl);
@@ -328,25 +321,27 @@ function makeShareUrl(
     if (opts.gsGid) params.set("gid", opts.gsGid);
     if (opts.gsSheet) params.set("sheet", opts.gsSheet);
   }
-  return `${pathname}?${params.toString()}`;
+
+  const base =
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  return `${base}?${params.toString()}`;
 }
 
-// Aggiorna l’URL (router + fallback) e ritorna il path con query
+// aggiorna URL e restituisce la share URL
 function replaceUrlWithState(
   router: ReturnType<typeof useRouter>,
-  pathname: string,
   opts: {
     q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
     dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
   }
 ) {
-  const url = makeShareUrl(pathname, opts);
-  try { router.replace(url, { scroll: false }); } catch {}
+  const url = makeShareUrl(opts);
   try {
-    if (typeof window !== "undefined") {
-      window.history.replaceState({}, "", url);
-    }
-  } catch {}
+    router.replace(url, { scroll: false });
+  } catch {
+    if (typeof window !== "undefined") window.history.replaceState({}, "", url);
+  }
   return url;
 }
 
@@ -369,12 +364,10 @@ function CalendarHeatmap({
 
   return (
     <div className="w-full">
-      {/* Intestazione giorni */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
       </div>
 
-      {/* Griglia */}
       <div className="grid grid-cols-7 gap-3">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
@@ -390,25 +383,18 @@ function CalendarHeatmap({
           const txtColor = contrastColor(fill);
           return (
             <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              {/* Top half: giorno + settimana */}
               <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
                 <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
                 <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
               </div>
-              {/* Bottom half: ADR con sfondo domanda */}
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
 
-              {/* Badge Festività */}
               {dayData?.holidayName ? (
-                <div
-                  className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
-                  title={dayData.holidayName}
-                />
+                <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
               ) : null}
 
-              {/* Mini meteo (temperatura media del giorno) */}
               {dayData?.wx?.t != null ? (
                 <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
                   {dayData.wx.t.toFixed(0)}°C
@@ -419,7 +405,6 @@ function CalendarHeatmap({
         })}
       </div>
 
-      {/* Legenda */}
       <div className="mt-3 flex items-center justify-center gap-4">
         <span className="text-xs">Bassa domanda</span>
         <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
@@ -451,188 +436,16 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // === Dati esterni ===
+  // Dati esterni
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number }>>({});
 
-  // ===== Dropdown Multi-Select Tipologie =====
-  function TypesMultiSelect({
-    value,
-    onChange,
-    allTypes,
-    labels,
-  }: {
-    value: string[];
-    onChange: (next: string[]) => void;
-    allTypes: readonly string[];
-    labels: Record<string, string>;
-  }) {
-    const [open, setOpen] = React.useState(false);
-    const containerRef = React.useRef<HTMLDivElement | null>(null);
-
-    // Chiudi clic fuori
-    React.useEffect(() => {
-      function onClickOutside(e: MouseEvent) {
-        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-      }
-      document.addEventListener("mousedown", onClickOutside);
-      return () => document.removeEventListener("mousedown", onClickOutside);
-    }, []);
-
-    // Toggle singolo tipo
-    function toggle(t: string) {
-      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-    }
-
-    // Testo riepilogo (badge)
-    const summary =
-      value.length === 0
-        ? "Nessuna"
-        : value.length === allTypes.length
-        ? "Tutte"
-        : `${value.length} selezionate`;
-
-    return (
-      <div className="relative" ref={containerRef}>
-        <span className="block text-sm font-medium text-neutral-700 mb-1">
-          Tipologie
-        </span>
-
-        {/* Trigger */}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
-        >
-          <span className="truncate">
-            {summary}
-            {value.length > 0 && value.length < allTypes.length ? (
-              <span className="ml-2 text-xs text-neutral-500">
-                {value
-                  .slice()
-                  .sort()
-                  .map((t) => labels[t] || t)
-                  .slice(0, 2)
-                  .join(", ")}
-                {value.length > 2 ? "…" : ""}
-              </span>
-            ) : null}
-          </span>
-          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
-        </button>
-
-        {/* Panel */}
-        {open && (
-          <div
-            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-            role="listbox"
-            aria-label="Seleziona tipologie"
-          >
-            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
-              <ul className="space-y-1">
-                {allTypes.map((t) => {
-                  const active = value.includes(t);
-                  return (
-                    <li key={t}>
-                      <button
-                        type="button"
-                        onClick={() => toggle(t)}
-                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
-                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
-                        role="option"
-                        aria-selected={active}
-                      >
-                        <span
-                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
-                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
-                        >
-                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                        </span>
-                        <span className="text-neutral-800">{labels[t] || t}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            {/* Footer azioni rapide */}
-            <div className="mt-2 flex items-center justify-between border-t pt-2">
-              <button
-                type="button"
-                className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([])}
-              >
-                Pulisci
-              </button>
-              <div className="space-x-2">
-                <button
-                  type="button"
-                  className="text-xs text-neutral-600 hover:text-neutral-900"
-                  onClick={() => onChange([...allTypes])}
-                >
-                  Seleziona tutte
-                </button>
-                <button
-                  type="button"
-                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                  onClick={() => setOpen(false)}
-                >
-                  Applica
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
-  const [aQuery, setAQuery] = useState(query);
-  const [aRadius, setARadius] = useState(radius);
-  const [aMonthISO, setAMonthISO] = useState(monthISO);
-  const [aTypes, setATypes] = useState<string[]>(types);
-  const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
-
-  const hasChanges = useMemo(() =>
-    aQuery !== query ||
-    aRadius !== radius ||
-    aMonthISO !== monthISO ||
-    aMode !== mode ||
-    aTypes.join(",") !== types.join(","),
-  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
-
-  // Validazione: stats/issues
-  const [dataStats, setDataStats] = useState<DataStats | null>(null);
-  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
-  const [showIssueDetails, setShowIssueDetails] = useState(false);
-
-  // Normalizzazione — usa gli *applicati*
-  const normalized: Normalized = useMemo(()=>{
-    const warnings: string[] = [];
-    const center = geocode(aQuery, warnings);
-    const safeR = safeRadius(aRadius, warnings);
-    const safeT = safeTypes(aTypes, warnings);
-    if(!center){
-      return { warnings, safeMonthISO: "", safeDays: [], center: null, safeR, safeT, isBlocked: true };
-    }
-    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
-    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
-    return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
-  }, [aMonthISO, aQuery, aRadius, aTypes]);
-
-  // Avvisi
-  useEffect(()=>{
-    const warningsKey = normalized.warnings.join("|");
-    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
-  }, [normalized.warnings]);
+  // Share URL (stringa mostrata nel campo)
+  const [shareUrl, setShareUrl] = useState<string>("");
 
   /* ---------- URL share ---------- */
   const router = useRouter();
-  const pathname = usePathname();
   const search = useSearchParams();
-  const [shareUrl, setShareUrl] = useState<string>("");
 
   // Inizializza stato da URL al mount
   useEffect(() => {
@@ -661,15 +474,20 @@ export default function App(){
     // Applicati
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
 
-    // Link condivisibile iniziale
-    const url = makeShareUrl(pathname || "/", {
+    // Precompila share url coerente
+    const initialShare = makeShareUrl({
       q, r, m, t, mode: modeParam,
-      dataSource: src, csvUrl: csv, gsId: id || "", gsGid: gid || "", gsSheet: sheet || ""
+      dataSource: src, csvUrl: csv, gsId: id, gsGid: gid ?? "", gsSheet: sheet ?? ""
     });
-    setShareUrl(url);
-
+    setShareUrl(initialShare);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Avvisi
+  useEffect(()=>{
+    const warningsKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+  }, [normalized.warnings]);
 
   // URL builder CSV/Sheet
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
@@ -692,11 +510,41 @@ export default function App(){
     return await res.text();
   }
 
-  /* ---------- Festività & Meteo ---------- */
+  // Stati APPLICATI (si aggiornano solo con "Genera Analisi")
+  const [aQuery, setAQuery] = useState(query);
+  const [aRadius, setARadius] = useState(radius);
+  const [aMonthISO, setAMonthISO] = useState(monthISO);
+  const [aTypes, setATypes] = useState<string[]>(types);
+  const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
+
+  const hasChanges = useMemo(() =>
+    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO ||
+    aMode !== mode || aTypes.join(",") !== types.join(","),
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
+
+  // Validazione
+  const [dataStats, setDataStats] = useState<DataStats | null>(null);
+  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
+  const [showIssueDetails, setShowIssueDetails] = useState(false);
+
+  // Normalizzazione — usa gli applicati
+  const normalized: Normalized = useMemo(()=>{
+    const warnings: string[] = [];
+    const center = geocode(aQuery, warnings);
+    const safeR = safeRadius(aRadius, warnings);
+    const safeT = safeTypes(aTypes, warnings);
+    if(!center){
+      return { warnings, safeMonthISO: "", safeDays: [], center: null, safeR, safeT, isBlocked: true };
+    }
+    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
+    return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
+  }, [aMonthISO, aQuery, aRadius, aTypes]);
+
+  // Festività (in base al monthISO della UI per reattività)
   useEffect(() => {
     if (!monthISO) return;
     const y = Number(monthISO.slice(0, 4));
-
     fetch(`/api/external/holidays?year=${y}&country=IT`)
       .then(r => r.json())
       .then((j) => {
@@ -705,13 +553,13 @@ export default function App(){
         (j.holidays || []).forEach((h: any) => { map[h.date] = h.localName || h.name; });
         setHolidays(map);
       })
-      .catch(() => { /* fallback: nessuna festività */ });
+      .catch(() => {});
   }, [monthISO]);
 
+  // Meteo (center applicato + monthISO UI)
   useEffect(() => {
     if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
     const { lat, lng } = normalized.center;
-
     fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
       .then(r => r.json())
       .then((j) => {
@@ -784,7 +632,7 @@ export default function App(){
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // === Calendario: domanda + ADR (+ festività/meteo) ===
+  // Calendario: domanda + ADR (+ extra)
   const calendarData = useMemo(() => {
     if (normalized.isBlocked) return [];
 
@@ -835,7 +683,7 @@ export default function App(){
     });
   }, [normalized.safeDays, normalized.isBlocked, aMode, rawRows, holidays, weatherByDate]);
 
-  // Grafici: Provenienza / LOS / Canali
+  // Grafici
   const provenance = useMemo(()=> rawRows.length>0 ? (
     Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.provenance||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
       .map(([name,value])=>({name,value}))
@@ -891,8 +739,65 @@ export default function App(){
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
-
   /* =========== UI =========== */
+  // Multiselect Tipologie (inline component)
+  function TypesMultiSelect({
+    value, onChange, allTypes, labels,
+  }: { value: string[]; onChange: (next: string[]) => void; allTypes: readonly string[]; labels: Record<string, string>; }) {
+    const [open, setOpen] = React.useState(false);
+    const containerRef = React.useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+      function onClickOutside(e: MouseEvent) { if (!containerRef.current?.contains(e.target as Node)) setOpen(false); }
+      document.addEventListener("mousedown", onClickOutside);
+      return () => document.removeEventListener("mousedown", onClickOutside);
+    }, []);
+    function toggle(t: string) { onChange(value.includes(t) ? value.filter(x=>x!==t) : [...value, t]); }
+    const summary = value.length===0 ? "Nessuna" : value.length===allTypes.length ? "Tutte" : `${value.length} selezionate`;
+    return (
+      <div className="relative" ref={containerRef}>
+        <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
+        <button type="button" onClick={()=> setOpen(v=>!v)} className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition">
+          <span className="truncate">
+            {summary}
+            {value.length>0 && value.length<allTypes.length ? (
+              <span className="ml-2 text-xs text-neutral-500">
+                {value.slice().sort().map(t=> labels[t] || t).slice(0,2).join(", ")}{value.length>2 ? "…" : ""}
+              </span>
+            ):null}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open?"rotate-180":""}`} />
+        </button>
+        {open && (
+          <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2">
+            <div className="pr-1">
+              <ul className="space-y-1">
+                {allTypes.map(t=>{
+                  const active = value.includes(t);
+                  return (
+                    <li key={t}>
+                      <button type="button" onClick={()=> toggle(t)} className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active?"bg-slate-50":"hover:bg-neutral-50"}`}>
+                        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${active?"bg-slate-900 border-slate-900":"bg-white border-neutral-300"}`}>
+                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                        </span>
+                        <span className="text-neutral-800">{labels[t] || t}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div className="mt-2 flex items-center justify-between border-t pt-2">
+              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={()=> onChange([])}>Pulisci</button>
+              <div className="space-x-2">
+                <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={()=> onChange([...allTypes])}>Seleziona tutte</button>
+                <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={()=> setOpen(false)}>Applica</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -903,11 +808,7 @@ export default function App(){
             <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
             <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
           </div>
-          <button
-            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            onClick={()=> location.reload()}
-            title="Reset"
-          >
+          <button className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800" onClick={()=> location.reload()} title="Reset">
             <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
           </button>
         </div>
@@ -915,8 +816,7 @@ export default function App(){
 
       {/* Body */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-
-        {/* SIDEBAR CONTROLLI */}
+        {/* SIDEBAR */}
         <aside className="space-y-6">
           {/* Sorgente dati */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
@@ -967,7 +867,7 @@ export default function App(){
             {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
 
-          {/* Località / Raggio / Mese / Tipologie */}
+          {/* Filtri */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-slate-700"/>
@@ -987,15 +887,9 @@ export default function App(){
               <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
-            {/* Tipologie (dropdown multiselect) */}
-            <TypesMultiSelect
-              value={types}
-              onChange={setTypes}
-              allTypes={STRUCTURE_TYPES}
-              labels={typeLabels}
-            />
+            <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels} />
 
-            {/* Modalità + Pulsante su riga propria */}
+            {/* Modalità + bottone + link condivisibile */}
             <div className="grid grid-cols-1 gap-3 mt-2">
               <div className="flex items-center gap-3">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
@@ -1009,43 +903,26 @@ export default function App(){
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={normalized.isBlocked || !hasChanges}
-                  title={
-                    normalized.isBlocked
-                      ? "Inserisci la località per procedere"
-                      : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")
-                  }
+                  title={normalized.isBlocked ? "Inserisci la località per procedere" : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")}
                   onClick={() => {
-                    // Applica i valori correnti della UI
-                    const next = {
-                      q: query, r: radius, m: monthISO, t: types, mode,
-                      dataSource, csvUrl, gsId, gsGid, gsSheet
-                    };
-                    setAQuery(next.q);
-                    setARadius(next.r);
-                    setAMonthISO(next.m);
-                    setATypes(next.t);
-                    setAMode(next.mode);
-
-                    // Aggiorna l'URL (link condivisibile) e mostra il link
-                    const url = replaceUrlWithState(router, pathname || "/", next);
-                    setShareUrl(url);
+                    const next = { q: query, r: radius, m: monthISO, t: types, mode,
+                      dataSource, csvUrl, gsId, gsGid, gsSheet };
+                    setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
+                    const link = replaceUrlWithState(router, next);
+                    setShareUrl(link);
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
                   {hasChanges ? "Genera Analisi" : "Aggiornato"}
                 </button>
 
-                {/* Campo: Link condivisibile */}
+                {/* Link condivisibile */}
                 {shareUrl && (
                   <div className="mt-2">
                     <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
                     <input
                       className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
-                      value={
-                        typeof window !== "undefined"
-                          ? `${location.origin}${shareUrl}`
-                          : shareUrl
-                      }
+                      value={shareUrl}
                       readOnly
                       onFocus={(e)=> e.currentTarget.select()}
                     />
@@ -1069,13 +946,11 @@ export default function App(){
           {dataStats && (
             <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
               <div className="text-sm font-semibold">Qualità dati (Google Sheet)</div>
-
               <div className="text-xs text-slate-600">
                 Totale righe: <b>{dataStats.total}</b> ·{" "}
                 Valide: <b className="text-emerald-700">{dataStats.valid}</b> ·{" "}
                 Scartate: <b className={dataStats.discarded ? "text-rose-700" : "text-slate-700"}>{dataStats.discarded}</b>
               </div>
-
               {Object.keys(dataStats.issuesByField).length>0 && (
                 <div className="text-xs">
                   <div className="font-medium mb-1">Problemi rilevati (per campo)</div>
@@ -1089,27 +964,17 @@ export default function App(){
                   </ul>
                 </div>
               )}
-
+              {/* dettaglio prime 10 righe problematiche */}
               {dataIssues.length>0 && (
                 <div>
-                  <button
-                    type="button"
-                    className="text-xs underline text-slate-700"
-                    onClick={()=> setShowIssueDetails(s=>!s)}
-                  >
+                  <button type="button" className="text-xs underline text-slate-700" onClick={()=> setShowIssueDetails(s=>!s)}>
                     {showIssueDetails ? "Nascondi dettagli" : "Mostra esempi (prime 10 righe problematiche)"}
                   </button>
-
                   {showIssueDetails && (
                     <div className="mt-2 max-h-40 overflow-auto rounded-lg border bg-slate-50 p-2">
                       <table className="w-full text-[11px]">
                         <thead className="text-slate-500">
-                          <tr>
-                            <th className="text-left px-1">riga</th>
-                            <th className="text-left px-1">campo</th>
-                            <th className="text-left px-1">motivo</th>
-                            <th className="text-left px-1">valore</th>
-                          </tr>
+                          <tr><th className="text-left px-1">riga</th><th className="text-left px-1">campo</th><th className="text-left px-1">motivo</th><th className="text-left px-1">valore</th></tr>
                         </thead>
                         <tbody>
                           {dataIssues.slice(0,10).map((iss, i)=> (
@@ -1132,15 +997,11 @@ export default function App(){
 
         {/* MAIN */}
         <main className="space-y-6">
-          {/* MAPPA – riga intera */}
+          {/* MAPPA */}
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
-                <LocationMap
-                  center={[normalized.center.lat, normalized.center.lng]}
-                  radius={normalized.safeR*1000}
-                  label={aQuery || "Località"}
-                />
+                <LocationMap center={[normalized.center.lat, normalized.center.lng]} radius={normalized.safeR*1000} label={aQuery || "Località"} />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
                   Inserisci una località valida per visualizzare la mappa e generare l'analisi
@@ -1149,27 +1010,21 @@ export default function App(){
             </div>
           </div>
 
-          {/* CALENDARIO – riga intera */}
+          {/* CALENDARIO */}
           <div className="bg-white rounded-2xl border shadow-sm p-6">
             <div className="text-lg font-semibold mb-3">
               Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
             </div>
             {normalized.isBlocked ? (
-              <div className="text-sm text-slate-500">
-                Nessuna analisi disponibile: inserisci una località valida.
-              </div>
+              <div className="text-sm text-slate-500">Nessuna analisi disponibile: inserisci una località valida.</div>
             ) : (
               <CalendarHeatmap monthDate={monthDate} data={calendarData} />
             )}
           </div>
 
-          {/* =========================
-              GRAFICI – blocco completo
-          ======================== */}
-
-          {/* Riga 1: Provenienza (Pie) + LOS (Bar) */}
+          {/* GRAFICI */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Provenienza (Pie) */}
+            {/* Provenienza */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               {Array.isArray(provenance) && provenance.length>0 ? (
@@ -1186,7 +1041,6 @@ export default function App(){
                         );
                       })}
                     </defs>
-
                     <Pie
                       data={provenance}
                       dataKey="value"
@@ -1199,35 +1053,25 @@ export default function App(){
                       cornerRadius={THEME.chart.pie.cornerRadius}
                       labelLine={false}
                       label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
-                      isAnimationActive={true}
+                      isAnimationActive
                       style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
                     >
                       {provenance.map((_, i) => (
-                        <Cell
-                          key={i}
-                          fill={`url(#gradSlice-${i})`}
-                          stroke="#ffffff"
-                          strokeWidth={2}
-                        />
+                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2}/>
                       ))}
                     </Pie>
-
-                    <RTooltip
-                      formatter={(val: any, name: any, props: any) => {
-                        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
-                        const pct = total ? Math.round((props?.value / total) * 100) : 0;
-                        return [`${props?.value} (${pct}%)`, name];
-                      }}
-                    />
+                    <RTooltip formatter={(val: any, name: any, props: any) => {
+                      const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+                      const pct = total ? Math.round((props?.value / total) * 100) : 0;
+                      return [`${props?.value} (${pct}%)`, name];
+                    }}/>
                     <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="text-xs text-slate-500">Nessun dato</div>
-              )}
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
 
-            {/* LOS (Bar) */}
+            {/* LOS */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
               {Array.isArray(los) && los.length>0 ? (
@@ -1249,19 +1093,15 @@ export default function App(){
                     <YAxis />
                     <RTooltip />
                     <Bar dataKey="value" radius={[8,8,0,0]}>
-                      {los.map((_,i)=> (
-                        <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
-                      ))}
+                      {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : (
-                <div className="text-xs text-slate-500">Nessun dato</div>
-              )}
+              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
             </div>
           </div>
 
-          {/* Canali di Vendita — riga intera (Bar) */}
+          {/* Canali di vendita */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
@@ -1283,18 +1123,14 @@ export default function App(){
                   <YAxis />
                   <RTooltip />
                   <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {channels.map((_,i)=> (
-                      <Cell key={i} fill={`url(#gradBarCH-${i})`} />
-                    ))}
+                    {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            ) : (
-              <div className="text-xs text-slate-500">Nessun dato</div>
-            )}
+            ) : <div className="text-xs text-slate-500">Nessun dato</div>}
           </div>
 
-          {/* Andamento Domanda — riga intera (Line + Area soft) */}
+          {/* Andamento domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">
               Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
@@ -1305,40 +1141,24 @@ export default function App(){
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={demand}>
                   <defs>
-                    {/* Gradiente per la linea */}
                     <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
                       <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
                     </linearGradient>
-                    {/* Gradiente per l’area sotto la linea */}
                     <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
                       <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
                   <YAxis />
                   <RTooltip />
-                  {/* Area soft per profondità */}
-                  <Area
-                    type="monotone"
-                    dataKey="value"
-                    fill="url(#gradLineFill)"
-                    stroke="none"
-                    isAnimationActive={true}
-                  />
-                  {/* Linea con gradiente + puntini rifiniti */}
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    stroke="url(#gradLineStroke)"
-                    strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
-                    isAnimationActive={true}
-                  />
+                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
+                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                        dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
+                        activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
+                        isAnimationActive />
                 </LineChart>
               </ResponsiveContainer>
             )}
