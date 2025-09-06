@@ -10,7 +10,7 @@ import {
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 // Import mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
@@ -402,9 +402,24 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const router = useRouter();
+  const search = useSearchParams();
+  const pathname = usePathname();
+
+  const [shareUrl, setShareUrl] = useState<string>("");
+
+
   // === Dati esterni ===
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number }>>({});
+// Router + URL share
+const router = useRouter();
+const search = useSearchParams();
+const pathname = usePathname();
+
+// Link condivisibile (fallback se l’URL bar non si aggiorna)
+const [shareUrl, setShareUrl] = useState<string>("");
+
 
   // ===== Dropdown Multi-Select Tipologie =====
   function TypesMultiSelect({
@@ -613,14 +628,54 @@ export default function App(){
   }, []);
 
   // Funzione per scrivere lo stato nell'URL (link condivisibile)
-  const replaceUrlWithState = useCallback((opts: {
+  function makeShareUrl(pathname: string, opts: {
+  q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
+  dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("q", opts.q);
+  params.set("r", String(opts.r));
+  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
+  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
+    params.set("t", opts.t.map(encodeURIComponent).join(","));
+  }
+  params.set("mode", opts.mode);
+
+  if (opts.dataSource === "csv" && opts.csvUrl) {
+    params.set("src", "csv");
+    params.set("csv", opts.csvUrl);
+  } else if (opts.dataSource === "gsheet" && opts.gsId) {
+    params.set("src", "gsheet");
+    params.set("id", opts.gsId);
+    if (opts.gsGid) params.set("gid", opts.gsGid);
+    if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+  }
+  return `${pathname}?${params.toString()}`;
+}
+
+function replaceUrlWithState(
+  router: ReturnType<typeof useRouter>,
+  pathname: string,
+  opts: {
     q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
     dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-  }) => {
-    const params = new URLSearchParams();
-    params.set("q", opts.q);
-    params.set("r", String(opts.r));
-    params.set("m", opts.m.slice(0,7)); // YYYY-MM
+  }
+) {
+  const url = makeShareUrl(pathname, opts);
+
+  // Next Router
+  try { router.replace(url, { scroll: false }); } catch {}
+
+  // Fallback nativo (alcuni browser bloccano replace di Next)
+  try {
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", url);
+    }
+  } catch {}
+
+  return url; // lo usiamo per il campo "Link condivisibile"
+}
+
 
     // tipologie solo se non sono tutte
     const ALL = STRUCTURE_TYPES as readonly string[];
@@ -1005,12 +1060,25 @@ export default function App(){
                     setAMode(next.mode);
 
                     // Aggiorna l'URL con i filtri applicati (link condivisibile)
-                    replaceUrlWithState(next);
+                   const url = replaceUrlWithState(router, pathname, next);
+                   setShareUrl(url);
+
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
                   {hasChanges ? "Genera Analisi" : "Aggiornato"}
                 </button>
+{shareUrl && (
+  <div className="mt-2">
+    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
+    <input
+      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
+      value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
+      readOnly
+      onFocus={(e)=> e.currentTarget.select()}
+    />
+  </div>
+)}
               </div>
             </div>
           </section>
