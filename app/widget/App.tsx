@@ -483,12 +483,6 @@ export default function App(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Avvisi
-  useEffect(()=>{
-    const warningsKey = normalized.warnings.join("|");
-    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
-  }, [normalized.warnings]);
-
   // URL builder CSV/Sheet
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
@@ -540,6 +534,12 @@ export default function App(){
     const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
   }, [aMonthISO, aQuery, aRadius, aTypes]);
+
+// Avvisi
+  useEffect(()=>{
+    const warningsKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+  }, [normalized.warnings]);
 
   // Festività (in base al monthISO della UI per reattività)
   useEffect(() => {
