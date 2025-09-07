@@ -1,19 +1,19 @@
 // app/api/external/weather/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-// Utility per formattare yyyy-mm-dd
-function toISO(d: Date) {
-  return d.toISOString().slice(0, 10);
+function parseMonthISO(monthISO: string) {
+  // monthISO atteso tipo "2025-09-01"
+  const d = new Date(monthISO);
+  if (Number.isNaN(d.getTime())) throw new Error("Bad monthISO");
+  const start = new Date(d.getFullYear(), d.getMonth(), 1);
+  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const iso = (x: Date) => x.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
 }
 
-function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-function endOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
-}
+export const revalidate = 3600; // cache 1h su Vercel
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const lat = Number(searchParams.get("lat"));
@@ -21,66 +21,67 @@ export async function GET(req: Request) {
     const monthISO = searchParams.get("monthISO") || "";
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return NextResponse.json({ ok: false, error: "Missing or invalid lat/lng" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Missing lat/lng" }, { status: 400 });
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(monthISO || "")) {
-      return NextResponse.json({ ok: false, error: "Missing or invalid monthISO (YYYY-MM-01)" }, { status: 400 });
-    }
-
-    // Finestra del mese richiesto
-    const mDate = new Date(monthISO);
-    const mStart = startOfMonth(mDate);
-    const mEnd = endOfMonth(mDate);
-
-    // Finestra forecast affidabile con Open-Meteo
-    const today = new Date();
-    const forecastStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // oggi
-    const forecastEnd = new Date(today);
-    forecastEnd.setDate(forecastEnd.getDate() + 16); // Open-Meteo tipicamente 16 giorni
-
-    // Intersezione tra mese richiesto e finestra forecast:
-    const start = new Date(Math.max(mStart.getTime(), forecastStart.getTime()));
-    const end = new Date(Math.min(mEnd.getTime(), forecastEnd.getTime()));
-
-    // Se non c'è intersezione, torniamo struttura vuota (UI mostrerà solo ciò che ha)
-    if (start > end) {
-      return NextResponse.json({
-        ok: true,
-        weather: {
-          daily: { time: [], temperature_2m_mean: [], precipitation_sum: [], weather_code: [] },
-        },
-        note: "Requested month is outside forecast window",
-      });
+    if (!monthISO) {
+      return NextResponse.json({ ok: false, error: "Missing monthISO" }, { status: 400 });
     }
 
-    const params = new URLSearchParams({
-      latitude: String(lat),
-      longitude: String(lng),
-      timezone: "Europe/Rome",
-      start_date: toISO(start),
-      end_date: toISO(end),
-      daily: ["temperature_2m_mean", "precipitation_sum", "weather_code"].join(","),
-    });
+    const { start, end } = parseMonthISO(monthISO);
 
-    const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+    // Open-Meteo: daily con temperature medie, precipitazioni e weather_code
+    // NB: forecast supporta intervalli passati e futuri, ma i dati futuri sono
+    // limitati (~16 giorni). Otterrai comunque solo i giorni disponibili.
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=temperature_2m_mean,precipitation_sum,weather_code&start_date=${start}&end_date=${end}&timezone=Europe%2FRome`;
 
-    const res = await fetch(url, { next: { revalidate: 60 * 30 } }); // cache 30 minuti
+    const res = await fetch(url, { next: { revalidate } });
     if (!res.ok) {
-      return NextResponse.json({ ok: false, error: `Open-Meteo HTTP ${res.status}` }, { status: 502 });
+      return NextResponse.json({ ok: false, error: `Upstream ${res.status}` }, { status: 502 });
     }
     const data = await res.json();
 
-    // Normalizziamo la forma attesa dalla UI:
-    const daily = data?.daily || {};
-    const out = {
-      time: Array.isArray(daily.time) ? daily.time : [],
-      temperature_2m_mean: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean : [],
-      precipitation_sum: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum : [],
-      weather_code: Array.isArray(daily.weather_code) ? daily.weather_code : [], // 👈 importante per le icone
-    };
+    // Ci aspettiamo una struttura con data.daily.time[], temperature_2m_mean[], precipitation_sum[], weather_code[]
+    if (!data?.daily?.time) {
+      return NextResponse.json({ ok: false, error: "No daily data" }, { status: 200 });
+    }
 
-    return NextResponse.json({ ok: true, weather: { daily: out } });
+    return NextResponse.json({ ok: true, weather: { daily: data.daily } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
+// app/api/external/holidays/route.ts
+import { NextRequest, NextResponse } from "next/server";
+
+export const revalidate = 86400; // 24h
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const year = Number(searchParams.get("year"));
+    const country = (searchParams.get("country") || "IT").toUpperCase();
+
+    if (!Number.isFinite(year)) {
+      return NextResponse.json({ ok: false, error: "Missing year" }, { status: 400 });
+    }
+
+    const url = `https://date.nager.at/api/v3/PublicHolidays/${year}/${country}`;
+    const res = await fetch(url, { next: { revalidate } });
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, error: `Upstream ${res.status}` }, { status: 502 });
+    }
+    const arr = await res.json();
+
+    // riduciamo ai campi usati dal widget
+    const holidays = (Array.isArray(arr) ? arr : []).map((h: any) => ({
+      date: h.date,             // "YYYY-MM-DD"
+      localName: h.localName,   // es. "Ferragosto"
+      name: h.name,
+    }));
+
+    return NextResponse.json({ ok: true, holidays });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+  }
+}
+
