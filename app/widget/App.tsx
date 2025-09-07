@@ -8,11 +8,15 @@ import {
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
 } from "recharts";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
-import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import {
+  eachDayOfInterval, format, getDay,
+  startOfMonth, endOfMonth, parseISO,
+  addDays, isAfter
+} from "date-fns";
 import { it } from "date-fns/locale";
 import { useRouter, useSearchParams } from "next/navigation";
 
-// mappa senza SSR
+// Mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
 /* =========================
@@ -42,12 +46,7 @@ type Normalized = {
   isBlocked: boolean;
 };
 
-type ValidationIssue = {
-  row: number;
-  field: string;
-  reason: string;
-  value: string;
-};
+type ValidationIssue = { row: number; field: string; reason: string; value: string; };
 
 type DataStats = {
   total: number;
@@ -60,12 +59,16 @@ type DataStats = {
    Costanti & Tema grafici
 ========================= */
 const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
-const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
+const STRUCTURE_TYPES = [
+  "hotel","agriturismo","casa_vacanza",
+  "villaggio_turistico","resort","b&b","affittacamere"
+] as const;
 const RADIUS_OPTIONS = [10,20,30] as const;
 
 const typeLabels: Record<string,string> = {
   hotel:"Hotel", agriturismo:"Agriturismo", casa_vacanza:"Case Vacanza",
-  villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
+  villaggio_turistico:"Villaggi Turistici", resort:"Resort",
+  "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
 const THEME = {
@@ -95,8 +98,9 @@ function shade(hex: string, percent: number) {
   const b = Math.min(255, Math.max(0, (num & 0x0000FF) + Math.round(255 * percent)));
   return `#${(1 << 24 | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
+
 function pressureFor(date: Date){
-  const dow = getDay(date); // 0=Dom
+  const dow = getDay(date); // 0 Dom
   const base = 60 + (date.getDate()*2);
   const wkndBoost = (dow===0 || dow===6) ? 25 : (dow===5 ? 18 : 0);
   return base + wkndBoost;
@@ -144,26 +148,12 @@ function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
     return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
   }
 }
-function safeRadius(r: unknown, warnings: string[]): number {
-  const allowed = [10, 20, 30] as const;
-
-  // estrai numero da qualsiasi input (es. "10 km" -> 10)
-  const n = typeof r === "number"
-    ? r
-    : parseInt(String(r ?? "").replace(/\D+/g, ""), 10);
-
-  if (allowed.includes(n as any)) return n as number;
-
-  // scegli il più vicino tra quelli permessi
-  const closest = allowed.reduce((best, cur) =>
-    Math.abs((n || 0) - cur) < Math.abs((n || 0) - best) ? cur : best, allowed[0]);
-
-  if (!Number.isFinite(n))
-    warnings.push("Raggio mancante: fallback 20km");
-  else
-    warnings.push(`Raggio ${n}km non valido: adattato a ${closest}km`);
-
-  return closest;
+function safeRadius(r:number, warnings:string[]): number{
+  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){
+    warnings.push("Raggio non valido: fallback 20km");
+    return 20;
+  }
+  return r;
 }
 function safeTypes(ts:string[], warnings:string[]): string[]{
   if(!Array.isArray(ts) || ts.length===0){
@@ -172,36 +162,10 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   }
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
-// Map semplice dai codici Open-Meteo a icone
-function weatherIconFromCode(code?: number): string {
-  if (code == null) return "";
-  // https://open-meteo.com/en/docs#api_weathercode
-  if ([0].includes(code)) return "☀️";                 // Sereno
-  if ([1, 2].includes(code)) return "🌤️";              // Poco nuvoloso / variabile
-  if ([3].includes(code)) return "☁️";                 // Nuvoloso
-  if ([45, 48].includes(code)) return "🌫️";            // Nebbia
-  if ([51, 53, 55, 56, 57].includes(code)) return "🌦️"; // Pioviggine / pioviggine gelata
-  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return "🌧️"; // Pioggia
-  if ([71, 73, 75, 77, 85, 86].includes(code)) return "🌨️"; // Neve
-  if ([95, 96, 99].includes(code)) return "⛈️";        // Temporali
-  return "❓";
-}
 
-// true se la data è nei prossimi 7 giorni (incluso oggi)
-function isWithinNext7Days(d: Date): boolean {
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); // oggi 00:00
-  const cutoff = new Date(start); cutoff.setDate(cutoff.getDate() + 7);
-  return d >= start && d <= cutoff;
-}
-
-
-/* =========================
-   CSV Parser + Normalizzazione con validazione
-========================= */
+/* ===== CSV Parser + Normalizzazione ===== */
 function smartSplit(line:string, d:string) {
-  const out:string[] = [];
-  let cur = "", inQuotes = false;
+  const out:string[] = []; let cur = "", inQuotes = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (ch === '"') { inQuotes = !inQuotes; continue; }
@@ -211,7 +175,7 @@ function smartSplit(line:string, d:string) {
   out.push(cur);
   return out
     .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette
+    .map(s => s.replace(/^"(.*)"$/,"$1")) // "campo"
     .map(s => s.trim());
 }
 function parseCsv(text: string){
@@ -263,7 +227,7 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
   const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
 
   const valid: DataRow[] = rows.map((r:any, idx:number)=>{
-    const rowIndex = idx+2; // intestazione
+    const rowIndex = idx+2;
     const dateV = String(getVal(r, ["date","data","giorno"]) ?? "");
     const d = toDate(dateV);
     if(!d) issues.push({ row: rowIndex, field: "date", reason: "data non valida", value: dateV });
@@ -274,6 +238,7 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
 
     const occV = String(getVal(r, ["occ","occupazione","occ_rate"]) ?? "");
     const occ = toNumber(occV, 0);
+
     const losV = String(getVal(r, ["los","notti","soggiorno"]) ?? "");
     const los = toNumber(losV, 0);
 
@@ -303,9 +268,7 @@ function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
   return { valid, issues, stats };
 }
 
-/* =========================
-   Geocoding demo
-========================= */
+/* ===== Geocoding demo ===== */
 const knownPlaces: Record<string,LatLng> = {
   "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
   "arezzo": { lat: 43.4633, lng: 11.8797 },
@@ -323,9 +286,7 @@ function geocode(query: string, warnings: string[]): LatLng | null {
   return null;
 }
 
-/* =========================
-   URL helpers (share)
-========================= */
+/* ===== Helpers URL (share) ===== */
 function parseListParam(s?: string | null) {
   if (!s) return [];
   return s.split(",").map(decodeURIComponent).map(v => v.trim()).filter(Boolean);
@@ -334,21 +295,18 @@ function parseNumParam(s?: string | null, def = 0) {
   const n = Number(s);
   return Number.isFinite(n) ? n : def;
 }
-
-// costruisce link completo basato su env
-function makeShareUrl(opts: {
+function makeShareUrl(pathname: string, opts: {
   q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
   dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
 }) {
   const params = new URLSearchParams();
   params.set("q", opts.q);
   params.set("r", String(opts.r));
-  params.set("m", opts.m.slice(0, 7)); // YYYY-MM
+  params.set("m", opts.m.slice(0,7)); // YYYY-MM
   if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
     params.set("t", opts.t.map(encodeURIComponent).join(","));
   }
   params.set("mode", opts.mode);
-
   if (opts.dataSource === "csv" && opts.csvUrl) {
     params.set("src", "csv");
     params.set("csv", opts.csvUrl);
@@ -358,37 +316,45 @@ function makeShareUrl(opts: {
     if (opts.gsGid) params.set("gid", opts.gsGid);
     if (opts.gsSheet) params.set("sheet", opts.gsSheet);
   }
-
-  const base =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    (typeof window !== "undefined" ? window.location.origin : "");
-  return `${base}?${params.toString()}`;
+  return `${pathname}?${params.toString()}`;
 }
-
-// aggiorna URL e restituisce la share URL
 function replaceUrlWithState(
   router: ReturnType<typeof useRouter>,
+  pathname: string,
   opts: {
     q: string; r: number; m: string; t: string[]; mode: "zone"|"competitor";
     dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
   }
 ) {
-  const url = makeShareUrl(opts);
-  try {
-    router.replace(url, { scroll: false });
-  } catch {
-    if (typeof window !== "undefined") window.history.replaceState({}, "", url);
-  }
+  const url = makeShareUrl(pathname, opts);
+  try { router.replace(url, { scroll: false }); } catch {}
+  try { if (typeof window!=="undefined") window.history.replaceState({}, "", url); } catch {}
   return url;
 }
 
+/* ===== Meteo helpers ===== */
+function isWithinNextDays(date: Date, days: number) {
+  const today = new Date();
+  const limit = addDays(today, days);
+  return isAfter(limit, date);
+}
+function iconForWeatherCode(code: number) {
+  if (code === 0) return "☀️";
+  if ([1, 2].includes(code)) return "🌤️";
+  if (code === 3) return "☁️";
+  if ([45, 48].includes(code)) return "🌫️";
+  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return "🌧️";
+  if ([71, 73, 75, 85, 86].includes(code)) return "❄️";
+  return "❔";
+}
+
 /* =========================
-   Calendario Heatmap
+   Heatmap Calendario
 ========================= */
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}}[]}){
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?:number}}[]}){
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
@@ -401,12 +367,10 @@ function CalendarHeatmap({
 
   return (
     <div className="w-full">
-      {/* Intestazione giorni */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
       </div>
 
-      {/* Griglia */}
       <div className="grid grid-cols-7 gap-3">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
@@ -415,55 +379,46 @@ function CalendarHeatmap({
           if(dayIndex<0 || !d){
             return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>;
           }
-          const isSat = ((getDay(d))===6);
           const pressure = dayData?.pressure ?? 0;
           const adr = dayData?.adr ?? 0;
           const fill = colorForPressure(pressure,pmin,pmax);
           const txtColor = contrastColor(fill);
 
-          const showIcon = dayData?.wx?.code != null && isWithinNext7Days(d);
-          const icon = weatherIconFromCode(dayData?.wx?.code);
-
           return (
             <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              {/* Top half: giorno + settimana */}
+              {/* top half */}
               <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
-                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
-                <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
+                <span className="text-sm">{format(d,"d",{locale:it})}</span>
+                <span className="text-xs text-neutral-600">{format(d,"EEE",{locale:it})}</span>
               </div>
-
-              {/* Bottom half: ADR con sfondo domanda */}
+              {/* bottom half */}
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
 
-              {/* Festività (pallino) */}
+              {/* Festività */}
               {dayData?.holidayName ? (
-                <div
-                  className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
-                  title={dayData.holidayName}
-                />
+                <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
               ) : null}
 
-              {/* Meteo: icona in basso-sinistra (solo prossimi 7 giorni) */}
-              {showIcon ? (
-                <div className="absolute bottom-1 left-1 text-[12px]" title="Meteo">
-                  {icon}
-                </div>
-              ) : null}
-
-              {/* Temperatura in basso-destra (se disponibile) */}
+              {/* Temperatura (sempre se presente) */}
               {dayData?.wx?.t != null ? (
-                <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
+                <div className="absolute bottom-1 right-1 text-[11px] text-neutral-700/80">
                   {dayData.wx.t.toFixed(0)}°C
                 </div>
               ) : null}
+
+              {/* Icona meteo (solo prossimi 7 giorni) */}
+              {dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
+                <div className="absolute bottom-1 left-1 text-[14px]" title="Previsione">
+                  {iconForWeatherCode(dayData.wx.code)}
+                </div>
+              ) : null}
             </div>
-          )
+          );
         })}
       </div>
 
-      {/* Legenda */}
       <div className="mt-3 flex items-center justify-center gap-4">
         <span className="text-xs">Bassa domanda</span>
         <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
@@ -499,12 +454,108 @@ export default function App(){
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
-  // Share URL (stringa mostrata nel campo)
-  const [shareUrl, setShareUrl] = useState<string>("");
+  // Dropdown Tipologie
+  function TypesMultiSelect({
+    value, onChange, allTypes, labels,
+  }: { value: string[]; onChange: (next: string[]) => void; allTypes: readonly string[]; labels: Record<string, string>; }) {
+    const [open, setOpen] = React.useState(false);
+    const containerRef = React.useRef<HTMLDivElement | null>(null);
+    React.useEffect(() => {
+      function onClickOutside(e: MouseEvent) { if (!containerRef.current?.contains(e.target as Node)) setOpen(false); }
+      document.addEventListener("mousedown", onClickOutside);
+      return () => document.removeEventListener("mousedown", onClickOutside);
+    }, []);
+    function toggle(t: string) { onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]); }
+    const summary = value.length === 0 ? "Nessuna" : value.length === allTypes.length ? "Tutte" : `${value.length} selezionate`;
+    return (
+      <div className="relative" ref={containerRef}>
+        <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
+        <button type="button" onClick={() => setOpen(v=>!v)} className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition">
+          <span className="truncate">
+            {summary}
+            {value.length > 0 && value.length < allTypes.length ? (
+              <span className="ml-2 text-xs text-neutral-500">
+                {value.slice().sort().map(t => labels[t] || t).slice(0, 2).join(", ")}
+                {value.length > 2 ? "…" : ""}
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+        </button>
+        {open && (
+          <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2" role="listbox" aria-label="Seleziona tipologie">
+            <div className="pr-1 max-h-none overflow-visible">
+              <ul className="space-y-1">
+                {allTypes.map((t) => {
+                  const active = value.includes(t);
+                  return (
+                    <li key={t}>
+                      <button type="button" onClick={() => toggle(t)}
+                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                        role="option" aria-selected={active}>
+                        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}>
+                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                        </span>
+                        <span className="text-neutral-800">{labels[t] || t}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div className="mt-2 flex items-center justify-between border-t pt-2">
+              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([])}>Pulisci</button>
+              <div className="space-x-2">
+                <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([...allTypes])}>Seleziona tutte</button>
+                <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={() => setOpen(false)}>Applica</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Stati APPLICATI (si aggiornano su “Genera Analisi”)
+  const [aQuery, setAQuery] = useState(query);
+  const [aRadius, setARadius] = useState(radius);
+  const [aMonthISO, setAMonthISO] = useState(monthISO);
+  const [aTypes, setATypes] = useState<string[]>(types);
+  const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
+
+  const hasChanges = useMemo(() =>
+    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO ||
+    aMode !== mode || aTypes.join(",") !== types.join(","),
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
+
+  // Validazione: stats/issues
+  const [dataStats, setDataStats] = useState<DataStats | null>(null);
+  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
+  const [showIssueDetails, setShowIssueDetails] = useState(false);
+
+  // Normalizzazione — usa gli applicati
+  const normalized: Normalized = useMemo(()=>{
+    const warnings: string[] = [];
+    const center = geocode(aQuery, warnings);
+    const safeR = safeRadius(aRadius, warnings);
+    const safeT = safeTypes(aTypes, warnings);
+    if(!center){
+      return { warnings, safeMonthISO: "", safeDays: [], center: null, safeR, safeT, isBlocked: true };
+    }
+    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
+    return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
+  }, [aMonthISO, aQuery, aRadius, aTypes]);
+
+  useEffect(()=>{
+    const warningsKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+  }, [normalized.warnings]);
 
   /* ---------- URL share ---------- */
   const router = useRouter();
   const search = useSearchParams();
+  const [shareUrl, setShareUrl] = useState<string>("");
 
   // Inizializza stato da URL al mount
   useEffect(() => {
@@ -526,21 +577,18 @@ export default function App(){
     const gid = search.get("gid") ?? gsGid;
     const sheet = search.get("sheet") ?? gsSheet;
 
-    // UI state
     setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
     setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
 
-    // Applicati
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
-
-    // Precompila share url coerente
-    const initialShare = makeShareUrl({
-      q, r, m, t, mode: modeParam,
-      dataSource: src, csvUrl: csv, gsId: id, gsGid: gid ?? "", gsSheet: sheet ?? ""
-    });
-    setShareUrl(initialShare);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Qualità dati – avvisi
+  useEffect(()=>{
+    const warningsKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+  }, [normalized.warnings]);
 
   // URL builder CSV/Sheet
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
@@ -553,7 +601,6 @@ export default function App(){
       }
       return { url: `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${encodeURIComponent(gid.trim())}`, error: "" };
     }
-
     const name = encodeURIComponent(sheetName||"Sheet1");
     return { url: `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${name}`, error: "" };
   }
@@ -563,47 +610,11 @@ export default function App(){
     return await res.text();
   }
 
-  // Stati APPLICATI (si aggiornano solo con "Genera Analisi")
-  const [aQuery, setAQuery] = useState(query);
-  const [aRadius, setARadius] = useState(radius);
-  const [aMonthISO, setAMonthISO] = useState(monthISO);
-  const [aTypes, setATypes] = useState<string[]>(types);
-  const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
-
-  const hasChanges = useMemo(() =>
-    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO ||
-    aMode !== mode || aTypes.join(",") !== types.join(","),
-  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
-
-  // Validazione
-  const [dataStats, setDataStats] = useState<DataStats | null>(null);
-  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
-  const [showIssueDetails, setShowIssueDetails] = useState(false);
-
-  // Normalizzazione — usa gli applicati
-  const normalized: Normalized = useMemo(()=>{
-    const warnings: string[] = [];
-    const center = geocode(aQuery, warnings);
-    const safeR = safeRadius(aRadius, warnings);
-    const safeT = safeTypes(aTypes, warnings);
-    if(!center){
-      return { warnings, safeMonthISO: "", safeDays: [], center: null, safeR, safeT, isBlocked: true };
-    }
-    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
-    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
-    return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
-  }, [aMonthISO, aQuery, aRadius, aTypes]);
-
-// Avvisi
-  useEffect(()=>{
-    const warningsKey = normalized.warnings.join("|");
-    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
-  }, [normalized.warnings]);
-
-  // Festività (in base al monthISO della UI per reattività)
+  /* ---------- Festività & Meteo ---------- */
   useEffect(() => {
     if (!monthISO) return;
     const y = Number(monthISO.slice(0, 4));
+
     fetch(`/api/external/holidays?year=${y}&country=IT`)
       .then(r => r.json())
       .then((j) => {
@@ -612,33 +623,33 @@ export default function App(){
         (j.holidays || []).forEach((h: any) => { map[h.date] = h.localName || h.name; });
         setHolidays(map);
       })
-      .catch(() => {});
+      .catch(() => { /* fallback: nessuna festività */ });
   }, [monthISO]);
 
-  // Meteo per centro + mese (usa *center applicato* + *monthISO live*)
-useEffect(() => {
-  if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
-  const { lat, lng } = normalized.center;
+  // Meteo: includiamo anche weather_code se disponibile lato API
+  useEffect(() => {
+    if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
+    const { lat, lng } = normalized.center;
 
-  fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
-    .then(r => r.json())
-    .then((j) => {
-      if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
-      const daily = j.weather.daily;
-      const out: Record<string, { t?: number; p?: number; code?: number }> = {};
-      (daily.time || []).forEach((d: string, i: number) => {
-        out[d] = {
-          t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
-          p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
-          code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined,
-        };
-      });
-      setWeatherByDate(out);
-    })
-    .catch(() => setWeatherByDate({}));
-}, [normalized.center, monthISO]);
+    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+        const daily = j.weather.daily;
+        const out: Record<string, { t?: number; p?: number; code?: number }> = {};
+        (daily.time || []).forEach((d: string, i: number) => {
+          out[d] = {
+            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+            code: Array.isArray((daily as any).weather_code) ? (daily as any).weather_code[i] : undefined,
+          };
+        });
+        setWeatherByDate(out);
+      })
+      .catch(() => setWeatherByDate({}));
+  }, [normalized.center, monthISO]);
 
-  // Caricamento dati (CSV / Google Sheet)
+  /* ---------- Caricamento dati (CSV / Google Sheet) ---------- */
   useEffect(()=>{
     setLoadError(null);
     setRawRows([]);
@@ -693,7 +704,7 @@ useEffect(() => {
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // Calendario: domanda + ADR (+ extra)
+  /* ---------- Calendar data (con festività + meteo) ---------- */
   const calendarData = useMemo(() => {
     if (normalized.isBlocked) return [];
 
@@ -705,10 +716,9 @@ useEffect(() => {
       rawRows.forEach(r => {
         if (!r.date) return;
         const key = r.date.toDateString();
-        const slot = byDate.get(key);
-        if (!slot) return;
+        const slot = byDate.get(key); if (!slot) return;
         if (Number.isFinite(r.adr)) slot.adrVals.push(r.adr);
-        const press = Number.isFinite(r.occ) ? (60 + r.occ) : (Number.isFinite(r.adr) ? 60 + r.adr / 2 : 60);
+        const press = Number.isFinite(r.occ) ? (60 + r.occ) : (Number.isFinite(r.adr) ? 60 + r.adr/2 : 60);
         slot.pressVals.push(press);
       });
 
@@ -775,15 +785,13 @@ useEffect(() => {
 
   const channels = useMemo(() => (
     rawRows.length > 0
-      ? Object
-          .entries(
-            rawRows.reduce((acc: Record<string, number>, r) => {
-              const k = r.channel || "Altro";
-              acc[k] = (acc[k] || 0) + 1;
-              return acc;
-            }, {})
-          )
-          .map(([channel, value]) => ({ channel, value }))
+      ? Object.entries(
+          rawRows.reduce((acc: Record<string, number>, r) => {
+            const k = r.channel || "Altro";
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {})
+        ).map(([channel, value]) => ({ channel, value }))
       : [
           { channel: "Booking", value: 36 },
           { channel: "Airbnb", value: 26 },
@@ -801,65 +809,6 @@ useEffect(() => {
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
   /* =========== UI =========== */
-  // Multiselect Tipologie (inline component)
-  function TypesMultiSelect({
-    value, onChange, allTypes, labels,
-  }: { value: string[]; onChange: (next: string[]) => void; allTypes: readonly string[]; labels: Record<string, string>; }) {
-    const [open, setOpen] = React.useState(false);
-    const containerRef = React.useRef<HTMLDivElement | null>(null);
-    useEffect(() => {
-      function onClickOutside(e: MouseEvent) { if (!containerRef.current?.contains(e.target as Node)) setOpen(false); }
-      document.addEventListener("mousedown", onClickOutside);
-      return () => document.removeEventListener("mousedown", onClickOutside);
-    }, []);
-    function toggle(t: string) { onChange(value.includes(t) ? value.filter(x=>x!==t) : [...value, t]); }
-    const summary = value.length===0 ? "Nessuna" : value.length===allTypes.length ? "Tutte" : `${value.length} selezionate`;
-    return (
-      <div className="relative" ref={containerRef}>
-        <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
-        <button type="button" onClick={()=> setOpen(v=>!v)} className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition">
-          <span className="truncate">
-            {summary}
-            {value.length>0 && value.length<allTypes.length ? (
-              <span className="ml-2 text-xs text-neutral-500">
-                {value.slice().sort().map(t=> labels[t] || t).slice(0,2).join(", ")}{value.length>2 ? "…" : ""}
-              </span>
-            ):null}
-          </span>
-          <ChevronDown className={`h-4 w-4 transition ${open?"rotate-180":""}`} />
-        </button>
-        {open && (
-          <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2">
-            <div className="pr-1">
-              <ul className="space-y-1">
-                {allTypes.map(t=>{
-                  const active = value.includes(t);
-                  return (
-                    <li key={t}>
-                      <button type="button" onClick={()=> toggle(t)} className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active?"bg-slate-50":"hover:bg-neutral-50"}`}>
-                        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${active?"bg-slate-900 border-slate-900":"bg-white border-neutral-300"}`}>
-                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                        </span>
-                        <span className="text-neutral-800">{labels[t] || t}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            <div className="mt-2 flex items-center justify-between border-t pt-2">
-              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={()=> onChange([])}>Pulisci</button>
-              <div className="space-x-2">
-                <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={()=> onChange([...allTypes])}>Seleziona tutte</button>
-                <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={()=> setOpen(false)}>Applica</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
@@ -869,7 +818,11 @@ useEffect(() => {
             <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
             <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
           </div>
-          <button className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800" onClick={()=> location.reload()} title="Reset">
+          <button
+            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+            onClick={()=> location.reload()}
+            title="Reset"
+          >
             <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
           </button>
         </div>
@@ -877,7 +830,7 @@ useEffect(() => {
 
       {/* Body */}
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        {/* SIDEBAR */}
+        {/* SIDEBAR CONTROLLI */}
         <aside className="space-y-6">
           {/* Sorgente dati */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
@@ -885,7 +838,8 @@ useEffect(() => {
 
             <div className="flex items-center gap-2">
               <label className="w-28 text-sm text-slate-700">Tipo</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full"
+                      value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
                 <option value="none">Nessuna (demo)</option>
                 <option value="csv">CSV URL</option>
                 <option value="gsheet">Google Sheet</option>
@@ -895,7 +849,9 @@ useEffect(() => {
             {dataSource === "csv" && (
               <div className="flex items-center gap-2">
                 <label className="w-28 text-sm text-slate-700">CSV URL</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                       value={csvUrl} onChange={e=> setCsvUrl(e.target.value)}
+                       placeholder="https://.../out:csv&sheet=Foglio1" />
               </div>
             )}
 
@@ -903,20 +859,24 @@ useEffect(() => {
               <>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Sheet ID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                         value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Nome foglio</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                         value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Sheet GID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                         value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Modalità</label>
                   <div className="flex items-center gap-2">
-                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <input id="strict" type="checkbox" checked={strictSheet}
+                           onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
                     <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
                   </div>
                 </div>
@@ -928,29 +888,34 @@ useEffect(() => {
             {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
 
-          {/* Filtri */}
+          {/* Località / Raggio / Mese / Tipologie */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Località</label>
-              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
+              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                     value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
             </div>
             <div className="flex items-center gap-2">
               <Route className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40"
+                      value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
                 {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
             <div className="flex items-center gap-2">
               <CalendarDays className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Mese</label>
-              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""}
+                     onChange={e=> setMonthISO(`${e.target.value||""}-01`)}
+                     className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
-            <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels} />
+            {/* Tipologie */}
+            <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels}/>
 
-            {/* Modalità + bottone + link condivisibile */}
+            {/* Modalità + Pulsante */}
             <div className="grid grid-cols-1 gap-3 mt-2">
               <div className="flex items-center gap-3">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
@@ -967,10 +932,13 @@ useEffect(() => {
                   title={normalized.isBlocked ? "Inserisci la località per procedere" : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")}
                   onClick={() => {
                     const next = { q: query, r: radius, m: monthISO, t: types, mode,
-                      dataSource, csvUrl, gsId, gsGid, gsSheet };
-                    setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
-                    const link = replaceUrlWithState(router, next);
-                    setShareUrl(link);
+                                   dataSource, csvUrl, gsId, gsGid, gsSheet };
+                    setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m);
+                    setATypes(next.t); setAMode(next.mode);
+
+                    const url = replaceUrlWithState(router, (typeof window!=="undefined"? location.pathname : "/"), next);
+                    const full = (typeof window!=="undefined" ? `${location.origin}${url}` : url);
+                    setShareUrl(full);
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
@@ -1007,11 +975,13 @@ useEffect(() => {
           {dataStats && (
             <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
               <div className="text-sm font-semibold">Qualità dati (Google Sheet)</div>
+
               <div className="text-xs text-slate-600">
                 Totale righe: <b>{dataStats.total}</b> ·{" "}
                 Valide: <b className="text-emerald-700">{dataStats.valid}</b> ·{" "}
                 Scartate: <b className={dataStats.discarded ? "text-rose-700" : "text-slate-700"}>{dataStats.discarded}</b>
               </div>
+
               {Object.keys(dataStats.issuesByField).length>0 && (
                 <div className="text-xs">
                   <div className="font-medium mb-1">Problemi rilevati (per campo)</div>
@@ -1025,7 +995,7 @@ useEffect(() => {
                   </ul>
                 </div>
               )}
-              {/* dettaglio prime 10 righe problematiche */}
+
               {dataIssues.length>0 && (
                 <div>
                   <button type="button" className="text-xs underline text-slate-700" onClick={()=> setShowIssueDetails(s=>!s)}>
@@ -1035,7 +1005,12 @@ useEffect(() => {
                     <div className="mt-2 max-h-40 overflow-auto rounded-lg border bg-slate-50 p-2">
                       <table className="w-full text-[11px]">
                         <thead className="text-slate-500">
-                          <tr><th className="text-left px-1">riga</th><th className="text-left px-1">campo</th><th className="text-left px-1">motivo</th><th className="text-left px-1">valore</th></tr>
+                          <tr>
+                            <th className="text-left px-1">riga</th>
+                            <th className="text-left px-1">campo</th>
+                            <th className="text-left px-1">motivo</th>
+                            <th className="text-left px-1">valore</th>
+                          </tr>
                         </thead>
                         <tbody>
                           {dataIssues.slice(0,10).map((iss, i)=> (
@@ -1062,7 +1037,11 @@ useEffect(() => {
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
-                <LocationMap center={[normalized.center.lat, normalized.center.lng]} radius={normalized.safeR*1000} label={aQuery || "Località"} />
+                <LocationMap
+                  center={[normalized.center.lat, normalized.center.lng]}
+                  radius={normalized.safeR*1000}
+                  label={aQuery || "Località"}
+                />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
                   Inserisci una località valida per visualizzare la mappa e generare l'analisi
@@ -1077,7 +1056,9 @@ useEffect(() => {
               Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}
             </div>
             {normalized.isBlocked ? (
-              <div className="text-sm text-slate-500">Nessuna analisi disponibile: inserisci una località valida.</div>
+              <div className="text-sm text-slate-500">
+                Nessuna analisi disponibile: inserisci una località valida.
+              </div>
             ) : (
               <CalendarHeatmap monthDate={monthDate} data={calendarData} />
             )}
@@ -1102,34 +1083,37 @@ useEffect(() => {
                         );
                       })}
                     </defs>
+
                     <Pie
                       data={provenance}
                       dataKey="value"
                       nameKey="name"
-                      cx="50%"
-                      cy="50%"
+                      cx="50%" cy="50%"
                       innerRadius={THEME.chart.pie.innerRadius}
                       outerRadius={THEME.chart.pie.outerRadius}
                       paddingAngle={THEME.chart.pie.paddingAngle}
                       cornerRadius={THEME.chart.pie.cornerRadius}
                       labelLine={false}
                       label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
-                      isAnimationActive
+                      isAnimationActive={true}
                       style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
                     >
                       {provenance.map((_, i) => (
-                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2}/>
+                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
                       ))}
                     </Pie>
-                    <RTooltip formatter={(val: any, name: any, props: any) => {
-                      const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
-                      const pct = total ? Math.round((props?.value / total) * 100) : 0;
-                      return [`${props?.value} (${pct}%)`, name];
-                    }}/>
+
+                    <RTooltip
+                      formatter={(val: any, name: any, props: any) => {
+                        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+                        const pct = total ? Math.round((props?.value / total) * 100) : 0;
+                        return [`${props?.value} (${pct}%)`, name];
+                      }}
+                    />
                     <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+              ) : (<div className="text-xs text-slate-500">Nessun dato</div>)}
             </div>
 
             {/* LOS */}
@@ -1154,15 +1138,15 @@ useEffect(() => {
                     <YAxis />
                     <RTooltip />
                     <Bar dataKey="value" radius={[8,8,0,0]}>
-                      {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
+                      {los.map((_,i)=> <Cell key={i} fill={`url(#gradBarLOS-${i})`} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+              ) : (<div className="text-xs text-slate-500">Nessun dato</div>)}
             </div>
           </div>
 
-          {/* Canali di vendita */}
+          {/* Canali di Vendita */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
@@ -1179,19 +1163,19 @@ useEffect(() => {
                       );
                     })}
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
-                  <YAxis />
-                  <RTooltip />
-                  <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
-                  </Bar>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value" radius={[8,8,0,0]}>
+                      {channels.map((_,i)=> <Cell key={i} fill={`url(#gradBarCH-${i})`} />)}
+                    </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            ) : <div className="text-xs text-slate-500">Nessun dato</div>}
+            ) : (<div className="text-xs text-slate-500">Nessun dato</div>)}
           </div>
 
-          {/* Andamento domanda */}
+          {/* Andamento Domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">
               Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
@@ -1211,12 +1195,14 @@ useEffect(() => {
                       <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
+
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
                   <YAxis />
                   <RTooltip />
                   <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)"
+                        strokeWidth={THEME.chart.line.strokeWidth + 0.5}
                         dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
                         activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
                         isAnimationActive />
