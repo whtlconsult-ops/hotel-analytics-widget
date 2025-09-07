@@ -1,7 +1,7 @@
 // app/api/external/weather/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-export const revalidate = 60 * 60; // 1h
+export const revalidate = 60 * 60; // cache 1h
 
 function toISO(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -15,19 +15,20 @@ function clampForecastWindow(monthISO: string) {
   const endOfMonth   = new Date(month.getFullYear(), month.getMonth() + 1, 0);
 
   const today = new Date();
-  const plus16 = new Date(today); plus16.setDate(today.getDate() + 16);
+  // ATTENZIONE: molti endpoint accettano solo +15 giorni (inclusivo)
+  const plus15 = new Date(today);
+  plus15.setDate(today.getDate() + 15);
 
-  // finestra effettiva richiedibile al provider
+  // Finestra effettiva richiedibile: [max(today, startOfMonth) , min(endOfMonth, plus15)]
   const start = today > startOfMonth ? today : startOfMonth;
-  const end   = plus16 < endOfMonth ? plus16 : endOfMonth;
+  const end   = plus15 < endOfMonth ? plus15 : endOfMonth;
 
-  if (end < start) {
-    // mese completamente nel passato oppure troppo nel futuro
-    return { start: null, end: null };
-  }
-  // normalizza a mezzanotte locale per evitare off-by-one
-  start.setHours(0,0,0,0);
-  end.setHours(0,0,0,0);
+  if (end < start) return { start: null, end: null };
+
+  // normalizza a mezzanotte per evitare off-by-one UTC
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
   return { start, end };
 }
 
@@ -69,11 +70,13 @@ export async function GET(req: NextRequest) {
     const r = await fetch(url.toString(), { next: { revalidate } });
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
-      return NextResponse.json({ ok: false, error: `Upstream ${r.status}: ${txt || "forecast error"}` }, { status: 502 });
+      return NextResponse.json(
+        { ok: false, error: `Upstream ${r.status}: ${txt || "forecast error"}` },
+        { status: 502 }
+      );
     }
     const json = await r.json();
 
-    // shape compatibile con il client
     return NextResponse.json({ ok: true, weather: { daily: json?.daily ?? {} } });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
