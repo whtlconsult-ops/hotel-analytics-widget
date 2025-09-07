@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { WeatherIcon, codeToKind } from "@/components/WeatherIcon";
+import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 import dynamic from "next/dynamic";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
