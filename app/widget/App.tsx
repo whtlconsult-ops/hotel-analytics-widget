@@ -168,19 +168,6 @@ function isWithinNextDays(d: Date, n = 7) {
   const dd = new Date(d); dd.setHours(0,0,0,0);
   return dd >= today && dd <= max;
 }
-{/* Icona meteo — solo prossimi 7 giorni, in basso a sinistra */}
-{dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
-  <div
-    className="absolute bottom-1 left-1"
-    title="Previsione"
-  >
-    <WeatherIcon
-      kind={codeToKind(dayData.wx.code)}
-      className="h-[18px] w-[18px]"
-    />
-  </div>
-) : null}
-
 
 /* =========================
    CSV Parser + Normalizzazione con validazione
@@ -427,12 +414,12 @@ function CalendarHeatmap({
                 </div>
               ) : null}
 
-              {/* Icona meteo — solo prossimi 7 giorni, in basso a sinistra */}
-              {dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
-                <div className="absolute bottom-1 left-1 text-[12px]" title="Previsione">
-                  {iconForWeatherCode(dayData.wx.code)}
-                </div>
-              ) : null}
+             {/* Icona meteo — solo prossimi 7 giorni, in basso a sinistra (SVG) */}
+{dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
+  <div className="absolute bottom-1 left-1" title="Previsione">
+    <WeatherIcon kind={codeToKind(dayData.wx.code)} className="h-[18px] w-[18px]" />
+  </div>
+) : null}
             </div>
           )
         })}
@@ -695,28 +682,28 @@ export default function App(){
       .catch(() => {});
   }, [monthISO]);
 
-  // Meteo per centro + mese (usa center applicato + monthISO live)
-  useEffect(() => {
-    if (!normalized.center || !monthISO) { setWeatherByDate({}); return; }
-    const { lat, lng } = normalized.center;
+  // Meteo per centro + mese **APPLICATO** (allineato al calendario dopo "Genera Analisi")
+useEffect(() => {
+  if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
+  const { lat, lng } = normalized.center;
 
-    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(monthISO)}`)
-      .then(r => r.json())
-      .then((j) => {
-        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
-        const daily = j.weather.daily;
-        const out: Record<string, { t?: number; p?: number; code?: number }> = {};
-        (daily.time || []).forEach((d: string, i: number) => {
-          out[d] = {
-            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
-            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
-            code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined, // 👈 icona
-          };
-        });
-        setWeatherByDate(out);
-      })
-      .catch(() => setWeatherByDate({}));
-  }, [normalized.center, monthISO]);
+  fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(aMonthISO)}`)
+    .then(r => r.json())
+    .then((j) => {
+      if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+      const daily = j.weather.daily;
+      const out: Record<string, { t?: number; p?: number; code?: number }> = {};
+      (daily.time || []).forEach((d: string, i: number) => {
+        out[d] = {
+          t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+          p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+          code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined, // 👈 icona
+        };
+      });
+      setWeatherByDate(out);
+    })
+    .catch(() => setWeatherByDate({}));
+}, [normalized.center, aMonthISO]);
 
   // Caricamento dati (CSV / Google Sheet)
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
