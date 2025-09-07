@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
+import { WeatherIcon, codeToKind } from "@/components/WeatherIcon";
 import dynamic from "next/dynamic";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
@@ -167,16 +168,19 @@ function isWithinNextDays(d: Date, n = 7) {
   const dd = new Date(d); dd.setHours(0,0,0,0);
   return dd >= today && dd <= max;
 }
-function iconForWeatherCode(code?: number) {
-  if (code == null) return "•";
-  if (code === 0) return "☀️";
-  if ([1,2,3].includes(code)) return "⛅️";
-  if ([45,48].includes(code)) return "🌫️";
-  if ([51,53,55,56,57,61,63,65,80,81,82].includes(code)) return "🌧️";
-  if ([71,73,75,77,85,86].includes(code)) return "❄️";
-  if ([95,96,99].includes(code)) return "⛈️";
-  return "⛅️";
-}
+{/* Icona meteo — solo prossimi 7 giorni, in basso a sinistra */}
+{dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
+  <div
+    className="absolute bottom-1 left-1"
+    title="Previsione"
+  >
+    <WeatherIcon
+      kind={codeToKind(dayData.wx.code)}
+      className="h-[18px] w-[18px]"
+    />
+  </div>
+) : null}
+
 
 /* =========================
    CSV Parser + Normalizzazione con validazione
