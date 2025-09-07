@@ -476,6 +476,7 @@ export default function App(){
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
+
   // URL share
   const router = useRouter();
   const search = useSearchParams();

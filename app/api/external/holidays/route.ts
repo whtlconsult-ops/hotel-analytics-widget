@@ -1,25 +1,48 @@
 // app/api/external/holidays/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-/** Cache 12h su edge/server */
-const REVALIDATE_SECONDS = 60 * 60 * 12;
+export const revalidate = 86400; // 24h cache lato server
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const year = searchParams.get("year") || new Date().getFullYear().toString();
-    const country = searchParams.get("country") || "IT";
+    const year = Number(searchParams.get("year"));
+    const country = (searchParams.get("country") || "IT").toUpperCase();
 
-    const url = `https://date.nager.at/api/v3/PublicHolidays/${year}/${country}`;
-    const res = await fetch(url, { next: { revalidate: REVALIDATE_SECONDS } });
-
-    if (!res.ok) {
-      return NextResponse.json({ ok: false, error: `HTTP ${res.status}` }, { status: 500 });
+    if (!year || year < 1900 || year > 2100) {
+      return NextResponse.json({ ok: false, error: "Invalid year" }, { status: 400 });
     }
 
-    const json = await res.json(); // [{date:"2025-01-01", localName:"Capodanno", ...}, ...]
-    return NextResponse.json({ ok: true, holidays: json });
+    // API pubblica Nager.Date
+    const upstream = await fetch(
+      `https://date.nager.at/api/v3/PublicHolidays/${year}/${country}`,
+      { next: { revalidate } }
+    );
+
+    if (!upstream.ok) {
+      return NextResponse.json(
+        { ok: false, error: `Upstream ${upstream.status}` },
+        { status: 502 }
+      );
+    }
+
+    const data = await upstream.json();
+
+    // normalizza -> { date, localName, name }
+    const holidays = Array.isArray(data)
+      ? data.map((h: any) => ({
+          date: h.date,
+          localName: h.localName || h.name,
+          name: h.name,
+        }))
+      : [];
+
+    return NextResponse.json({ ok: true, holidays });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
+
