@@ -7,7 +7,7 @@ import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 
-/** Mantiene la mappa “in forma”: ridisegna e riallinea la vista */
+/** Mantiene la mappa “in forma”: riallinea la vista e invalida le dimensioni */
 function ResizeFix({ center }: { center: [number, number] }) {
   const map = useMap();
 
@@ -58,7 +58,7 @@ function RadiusOverlay({
   return null;
 }
 
-/** Cattura i click sulla mappa e li propaga */
+/** Cattura i click sulla mappa e li propaga verso l’esterno */
 function ClickCatcher({
   onClick,
 }: {
@@ -90,38 +90,38 @@ export default function LocationMap({
     return center ? [center.lat, center.lng] : [0, 0];
   }, [center?.lat, center?.lng]);
 
-  // Aggiorna vista quando cambia il center
+  // Centra la vista quando cambia il center
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !center) return;
+    const m = mapRef.current;
+    if (!m || !center) return;
 
-    const z = map.getZoom() || 12;
-    map.setView(ll, z);
-    setTimeout(() => map.invalidateSize(), 0);
+    const z = m.getZoom() || 12;
+    m.setView(ll, z);
+    setTimeout(() => m.invalidateSize(), 0);
   }, [center?.lat, center?.lng, ll]);
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        // Niente center/zoom/scrollWheelZoom qui: inizializziamo con whenCreated
-        whenCreated={(m: LeafletMap) => {
+        // Inizializzazione compatibile con la tua versione: whenReady
+        whenReady={(e) => {
+          const m = e.target as LeafletMap;
           mapRef.current = m;
           m.setView(ll, 12);
           try {
-            // abilita zoom da rotella se disponibile
-            // @ts-ignore - alcune versioni non tipizzano correttamente il controllo
+            // alcune versioni non tipizzano correttamente lo scrollWheelZoom
+            // @ts-ignore
             m.scrollWheelZoom?.enable?.();
-          } catch {/* ignore */}
+          } catch {
+            /* ignore */
+          }
           setTimeout(() => m.invalidateSize(), 0);
         }}
         style={{ height: "100%", width: "100%" }}
       >
         <ResizeFix center={ll} />
-
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
         <ClickCatcher onClick={onClick} />
-
         <RadiusOverlay center={ll} radius={radius ?? undefined} label={label ?? undefined} />
       </MapContainer>
     </div>
