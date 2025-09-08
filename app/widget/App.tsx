@@ -1,22 +1,21 @@
 // app/widget/App.tsx
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
-import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
+import {
+  eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO
+} from "date-fns";
+import { it } from "date-fns/locale";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
 } from "recharts";
-import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check } from "lucide-react";
-import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
-import { it } from "date-fns/locale";
-import { useRouter, useSearchParams } from "next/navigation";
+import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-
-// Import mappa senza SSR
+// Mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
 /* =========================
@@ -40,7 +39,7 @@ type Normalized = {
   warnings: string[];
   safeMonthISO: string;
   safeDays: Date[];
-  center: LatLng | null;
+  center: (LatLng & { label?: string }) | null;
   safeR: number;
   safeT: string[];
   isBlocked: boolean;
@@ -164,250 +163,21 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
 
-// --- Località predefinite + geocoding fallback ---
-const PRESETS: Record<string, { lat: number; lng: number; label: string }> = {
-  "firenze": { lat: 43.7696, lng: 11.2558, label: "Firenze" },
-  "castiglion fiorentino": { lat: 43.3423, lng: 11.9173, label: "Castiglion Fiorentino" },
-  "arezzo": { lat: 43.4633, lng: 11.8794, label: "Arezzo" },
-};
-
-async function resolvePlace(input: string): Promise<{ lat: number; lng: number; label: string } | null> {
-  const key = input.trim().toLowerCase();
-  if (!key) return null;
-
-  // 1) preset
-  if (PRESETS[key]) return PRESETS[key];
-
-  // 2) fallback geocoding
-  try {
-    const r = await fetch(`/api/external/geocode?q=${encodeURIComponent(input)}`);
-    const j = await r.json();
-    if (!j?.ok || !Array.isArray(j.results) || j.results.length === 0) return null;
-    const best = j.results[0];
-    return { lat: best.lat, lng: best.lng, label: best.name };
-  } catch {
-    return null;
-  }
-}
-
-/* ======= Meteo helpers ======= */
-function isWithinNextDays(d: Date, n = 7) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const max   = new Date(today); max.setDate(today.getDate() + n);
-  const dd = new Date(d); dd.setHours(0,0,0,0);
-  return dd >= today && dd <= max;
-}
-async function geocodeByName(name: string) {
-  const r = await fetch(`/api/external/geocode?q=${encodeURIComponent(name)}`);
-  if (!r.ok) throw new Error("geocode http");
-  const j = await r.json();
-  // atteso: { ok: true, results: [{ name, lat, lng }, ...] }
-  if (!j?.ok || !Array.isArray(j.results) || j.results.length === 0) {
-    throw new Error("no_results");
-  }
-// === Geocoding via API per qualunque località ===
-// Usa la tua route /api/external/geocode?q=...
-async function handleSearchLocation() {
-  if (!query?.trim()) return;
-
-  try {
-    const res = await fetch(`/api/external/geocode?q=${encodeURIComponent(query.trim())}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const j = await res.json();
-
-    // Aspettati un array o un singolo oggetto con { lat, lng, name/display_name }
-    const item = Array.isArray(j?.results) ? j.results[0] : j?.result || j;
-    const lat = Number(item?.lat ?? item?.latitude);
-    const lng = Number(item?.lng ?? item?.longitude);
-    const name = String(item?.name ?? item?.display_name ?? query.trim());
-
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      // Aggiorna centro applicato e query applicata
-      setACenter({ lat, lng });
-      setAQuery(name);
-      // Rimani sul mese già scelto (aMonthISO) senza toccarlo
-    } else {
-      alert("Località non trovata. Riprova con un nome più specifico.");
-    }
-  } catch (e) {
-    console.error(e);
-    alert("Errore di geocoding. Controlla la connessione o riprova.");
-  }
-}
-  // prendi il primo match
-  const top = j.results[0];
-  return { label: top.name || name, center: { lat: top.lat, lng: top.lng } };
-}
-
-// === Reverse geocoding quando clicchi sulla mappa ===
-async function onMapClick(latlng: { lat: number; lng: number }) {
-  try {
-    const res = await fetch(`/api/external/reverse-geocode?lat=${latlng.lat}&lng=${latlng.lng}`);
-    // Se la tua API risponde sempre ok:true, gestisci qui; altrimenti usa semplicemente il pair lat,lng
-    let label = "";
-    if (res.ok) {
-      const j = await res.json();
-      label = String(j?.name ?? j?.display_name ?? "");
-    }
-    // Aggiorna il centro applicato e l’etichetta della query applicata
-    setACenter({ lat: latlng.lat, lng: latlng.lng });
-    setAQuery(label || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
-  } catch {
-    setACenter({ lat: latlng.lat, lng: latlng.lng });
-    setAQuery(`${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
-  }
-}
-async function reverseGeocode(lat: number, lng: number) {
-  const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`);
-  if (!r.ok) throw new Error("revgeo http");
-  const j = await r.json();
-  // atteso: { ok: true, name: "Pistoia", ... }
-  if (!j?.ok || !j.name) throw new Error("no_name");
-  return { label: j.name as string, center: { lat, lng } };
-}
-// 4A) Risolvi località da testo (preset → veloci; altrimenti chiama /geocode)
-const resolvePlace = useCallback(async (raw: string) => {
-  const trimmed = (raw || "").trim();
-  if (!trimmed) throw new Error("empty");
-
-  // 1) prova a trovare un preset (case-insensitive)
-  const preset = PRESETS.find(p => p.label.toLowerCase() === trimmed.toLowerCase());
-  if (preset) return preset;
-
-  // 2) altrimenti geocoding
-  return await geocodeByName(trimmed);
-}, []);
-
-// 4B) Risolvi località da click su mappa
-const resolvePlaceFromClick = useCallback(async (lat: number, lng: number) => {
-  return await reverseGeocode(lat, lng);
-}, []);
-/* =========================
-   CSV Parser + Normalizzazione con validazione
-========================= */
-function smartSplit(line:string, d:string) {
-  const out:string[] = [];
-  let cur = "", inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { inQuotes = !inQuotes; continue; }
-    if (ch === d && !inQuotes) { out.push(cur); cur = ""; }
-    else { cur += ch; }
-  }
-  out.push(cur);
-  return out
-    .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-    .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
-    .map(s => s.trim());
-}
-function parseCsv(text: string){
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-  if (lines.length === 0) return [];
-  const headerLine = lines[0].replace(/^\uFEFF/, "");
-  const count = (s:string, ch:string) => (s.match(new RegExp(`\\${ch}`, "g")) || []).length;
-  const delim = count(headerLine, ";") > count(headerLine, ",") ? ";" : ",";
-  const headersRaw = smartSplit(headerLine, delim);
-  const headers = headersRaw.map(h => h.toLowerCase().trim());
-  return lines.slice(1).map(line => {
-    const cells = smartSplit(line, delim);
-    const row:any = {};
-    headers.forEach((h, i) => { row[h] = (cells[i] ?? "").trim(); });
-    return row;
-  });
-}
-function toNumber(v: string, def=0){
-  if (v == null) return def;
-  const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : def;
-}
-function toDate(v: string){
-  if (!v) return null;
-  const s = String(v).trim();
-  const d1 = new Date(s);
-  if (!Number.isNaN(d1.getTime())) return d1;
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
-    const d2 = new Date(yy, mm, dd);
-    if (!Number.isNaN(d2.getTime())) return d2;
-  }
-  return null;
-}
-function getVal(row:any, keys:string[]){
-  const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
-  const map = new Map<string,any>();
-  Object.keys(row||{}).forEach(k => map.set(norm(k), row[k]));
-  for (const k of keys) {
-    const v = map.get(norm(k));
-    if (v != null && v !== "") return v;
-  }
-  return null;
-}
-
-function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
-  const issues: ValidationIssue[] = [];
-  const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
-
-  const valid: DataRow[] = rows.map((r:any, idx:number)=>{
-    const rowIndex = idx+2; // considerando intestazione
-    const dateV = String(getVal(r, ["date","data","giorno"]) ?? "");
-    const d = toDate(dateV);
-    if(!d) issues.push({ row: rowIndex, field: "date", reason: "data non valida", value: dateV });
-
-    const adrV = String(getVal(r, ["adr","adr_medio","prezzo_medio"]) ?? "");
-    const adr = toNumber(adrV, 0);
-    if(!Number.isFinite(adr)) issues.push({ row: rowIndex, field: "adr", reason: "numero non valido", value: adrV });
-
-    const occV = String(getVal(r, ["occ","occupazione","occ_rate"]) ?? "");
-    const occ = toNumber(occV, 0);
-
-    const losV = String(getVal(r, ["los","notti","soggiorno"]) ?? "");
-    const los = toNumber(losV, 0);
-
-    const channel = String(getVal(r, ["channel","canale"]) ?? "") || "Altro";
-    const provenance = String(getVal(r, ["provenance","country","nazione"]) ?? "") || "Altro";
-    const type = String(getVal(r, ["type","tipo"]) ?? "") || "";
-
-    const latV = String(getVal(r, ["lat","latitude"]) ?? "");
-    const lngV = String(getVal(r, ["lng","longitude"]) ?? "");
-    const lat = toNumber(latV, 0);
-    const lng = toNumber(lngV, 0);
-
-    return { date: d, adr, occ, los, channel, provenance, type, lat, lng };
-  }).filter(r=> !!r.date);
-
-  const stats: DataStats = {
-    total: rows.length,
-    valid: valid.length,
-    discarded: Math.max(0, rows.length - valid.length),
-    issuesByField: issues.reduce((acc, it)=> inc(acc, it.field), {} as Record<string,number>)
-  };
-
-  if (valid.length === 0) {
-    warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
-  }
-
-  return { valid, issues, stats };
-}
-
-/* =========================
-   Geocoding demo (validazione)
-========================= */
+/* ======= Geocoding di base (per fallback su nomi “noti”) ======= */
 const knownPlaces: Record<string,LatLng> = {
   "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
   "arezzo": { lat: 43.4633, lng: 11.8797 },
   "firenze": { lat: 43.7696, lng: 11.2558 },
   "siena": { lat: 43.3188, lng: 11.3308 },
 };
-function geocode(query: string, warnings: string[]): LatLng | null {
+function geocodeLocal(query: string, warnings: string[]): (LatLng & { label?: string }) | null {
   const key = (query||"").trim().toLowerCase();
   if(!key){
     warnings.push("Località mancante: inserisci una località per procedere");
     return null;
   }
-  if(knownPlaces[key]) return knownPlaces[key];
-  warnings.push(`Località non riconosciuta ("${query}"): inserisci un indirizzo valido`);
+  if(knownPlaces[key]) return { ...knownPlaces[key], label: query };
+  // se non è nota, lasciamo la risoluzione alle API e segnaliamo solo se manca del tutto
   return null;
 }
 
@@ -461,8 +231,14 @@ function replaceUrlWithState(
 }
 
 /* =========================
-   Calendario Heatmap
+   Calendario Heatmap (con badge meteo)
 ========================= */
+function isWithinNextDays(d: Date, n = 7) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const max   = new Date(today); max.setDate(today.getDate() + n);
+  const dd = new Date(d); dd.setHours(0,0,0,0);
+  return dd >= today && dd <= max;
+}
 function CalendarHeatmap({
   monthDate,
   data
@@ -512,7 +288,7 @@ function CalendarHeatmap({
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
 
-              {/* Badge Festività (in alto a destra) */}
+              {/* Badge Festività */}
               {dayData?.holidayName ? (
                 <div
                   className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
@@ -520,19 +296,19 @@ function CalendarHeatmap({
                 />
               ) : null}
 
-              {/* Temperatura — in basso a destra */}
+              {/* Temperatura */}
               {dayData?.wx?.t != null ? (
                 <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
                   {dayData.wx.t.toFixed(0)}°C
                 </div>
               ) : null}
 
-             {/* Icona meteo — solo prossimi 7 giorni, in basso a sinistra (SVG) */}
-{dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
-  <div className="absolute bottom-1 left-1" title="Previsione">
-    <WeatherIcon kind={codeToKind(dayData.wx.code)} className="h-[18px] w-[18px]" />
-  </div>
-) : null}
+              {/* Icona meteo (prossimi 7 giorni) */}
+              {dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
+                <div className="absolute bottom-1 left-1" title="Previsione">
+                  <WeatherIcon kind={codeToKind(dayData.wx.code)} className="h-[18px] w-[18px]" />
+                </div>
+              ) : null}
             </div>
           )
         })}
@@ -558,8 +334,6 @@ export default function App(){
   const [radius, setRadius] = useState<number>(20);
   const [monthISO, setMonthISO] = useState("2025-08-01");
   const [types, setTypes] = useState<string[]>(["agriturismo","b&b","hotel"]);
-  const [placeError, setPlaceError] = React.useState<string | null>(null);
-
 
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
@@ -572,186 +346,8 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // === Dati esterni ===
-// --- Reverse Geocode: coordinate -> nome località ---
-async function reverseGeocodeName(lat: number, lng: number): Promise<string> {
-  try {
-    const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`);
-    const j = await r.json();
-    if (j?.ok && j?.name) return j.name as string;
-  } catch {}
-  // fallback: stringa lat,lng
-  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-}
-
-// --- Gestore click mappa: aggiorna subito UI e "applicati" ---
-const onMapClick = async ({ lat, lng }: { lat: number; lng: number }) => {
-  const name = await reverseGeocodeName(lat, lng);
-
-  // aggiorna UI
-  setQuery(name);
-
-  // aggiorna "applicati" per far rigenerare subito la mappa/analisi
-  setAQuery(name);
-  setARadius(radius);
-  setAMonthISO(monthISO);
-  setATypes(types);
-  setAMode(mode);
-
-  // aggiorna l’URL condivisibile per riflettere la nuova località
-  const url = replaceUrlWithState(
-    router,
-    (typeof window !== "undefined" ? location.pathname : "/"),
-    {
-      q: name,
-      r: radius,
-      m: monthISO,
-      t: types,
-      mode,
-      dataSource,
-      csvUrl,
-      gsId,
-      gsGid,
-      gsSheet,
-    }
-  );
-  setShareUrl(url);
-};
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
-
-  // ===== Dropdown Multi-Select Tipologie =====
-  function TypesMultiSelect({
-    value,
-    onChange,
-    allTypes,
-    labels,
-  }: {
-    value: string[];
-    onChange: (next: string[]) => void;
-    allTypes: readonly string[];
-    labels: Record<string, string>;
-  }) {
-    const [open, setOpen] = React.useState(false);
-    const containerRef = React.useRef<HTMLDivElement | null>(null);
-
-    // Chiudi clic fuori
-    React.useEffect(() => {
-      function onClickOutside(e: MouseEvent) {
-        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-      }
-      document.addEventListener("mousedown", onClickOutside);
-      return () => document.removeEventListener("mousedown", onClickOutside);
-    }, []);
-
-    // Toggle singolo tipo
-    function toggle(t: string) {
-      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-    }
-
-    // Testo riepilogo (badge)
-    const summary =
-      value.length === 0
-        ? "Nessuna"
-        : value.length === allTypes.length
-        ? "Tutte"
-        : `${value.length} selezionate`;
-
-    return (
-      <div className="relative" ref={containerRef}>
-        <span className="block text-sm font-medium text-neutral-700 mb-1">
-          Tipologie
-        </span>
-
-        {/* Trigger */}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
-        >
-          <span className="truncate">
-            {summary}
-            {value.length > 0 && value.length < allTypes.length ? (
-              <span className="ml-2 text-xs text-neutral-500">
-                {value
-                  .slice()
-                  .sort()
-                  .map((t) => labels[t] || t)
-                  .slice(0, 2)
-                  .join(", ")}
-                {value.length > 2 ? "…" : ""}
-              </span>
-            ) : null}
-          </span>
-          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
-        </button>
-
-        {/* Panel */}
-        {open && (
-          <div
-            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-            role="listbox"
-            aria-label="Seleziona tipologie"
-          >
-            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
-              <ul className="space-y-1">
-                {allTypes.map((t) => {
-                  const active = value.includes(t);
-                  return (
-                    <li key={t}>
-                      <button
-                        type="button"
-                        onClick={() => toggle(t)}
-                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
-                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
-                        role="option"
-                        aria-selected={active}
-                      >
-                        <span
-                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
-                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
-                        >
-                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                        </span>
-                        <span className="text-neutral-800">{labels[t] || t}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            {/* Footer azioni rapide */}
-            <div className="mt-2 flex items-center justify-between border-t pt-2">
-              <button
-                type="button"
-                className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([])}
-              >
-                Pulisci
-              </button>
-              <div className="space-x-2">
-                <button
-                  type="button"
-                  className="text-xs text-neutral-600 hover:text-neutral-900"
-                  onClick={() => onChange([...allTypes])}
-                >
-                  Seleziona tutte
-                </button>
-                <button
-                  type="button"
-                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                  onClick={() => setOpen(false)}
-                >
-                  Applica
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
   const [aQuery, setAQuery] = useState(query);
@@ -760,8 +356,8 @@ const onMapClick = async ({ lat, lng }: { lat: number; lng: number }) => {
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
-// Centro applicato (se lo settiamo via geocoding o click mappa)
-const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null);
+  // Centro applicato (settato via geocoding o click mappa)
+  const [aCenter, setACenter] = useState<(LatLng & { label?: string }) | null>(null);
 
   const hasChanges = useMemo(() =>
     aQuery !== query ||
@@ -774,12 +370,13 @@ const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null
   // Validazione: stats/issues
   const [dataStats, setDataStats] = useState<DataStats | null>(null);
   const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
-  const [showIssueDetails, setShowIssueDetails] = useState(false);
+  const [showIssueDetails] = useState(false); // mantieni se avevi il dettaglio
 
   // Normalizzazione — usa gli *applicati*
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
-    const center = aCenter ?? geocode(aQuery, warnings);
+    const centerFromLocal = geocodeLocal(aQuery, warnings);
+    const center = aCenter ?? centerFromLocal;
     const safeR = safeRadius(aRadius, warnings);
     const safeT = safeTypes(aTypes, warnings);
     if(!center){
@@ -788,25 +385,9 @@ const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null
     const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
     const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
-  }, [aMonthISO, aQuery, aRadius, aTypes]);
+  }, [aMonthISO, aQuery, aRadius, aTypes, aCenter]);
 
-// Preset originali (aggiungi i tuoi qui)
-const PRESETS = [
-  { label: "Firenze", center: { lat: 43.7696, lng: 11.2558 } },
-  { label: "Castiglion Fiorentino", center: { lat: 43.3420, lng: 11.9160 } },
-  { label: "Arezzo", center: { lat: 43.4633, lng: 11.8794 } },
-];
-
-// Stato per la località digitata/dal click
-const [placeInput, setPlaceInput] = useState<string>("");
-// Ultima località “buona” (fallback se la nuova fallisce)
-const [lastGoodPlace, setLastGoodPlace] = useState<{ label: string; center: { lat: number; lng: number } } | null>(null);
-// Errori UI
-const [placeError, setPlaceError] = useState<string>("");
-// Busy flag per pulsanti
-const [isResolvingPlace, setIsResolvingPlace] = useState<boolean>(false);
-
-  // Avvisi
+  // Avvisi (UI)
   useEffect(()=>{
     const warningsKey = normalized.warnings.join("|");
     setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
@@ -815,6 +396,7 @@ const [isResolvingPlace, setIsResolvingPlace] = useState<boolean>(false);
   /* ---------- URL share ---------- */
   const router = useRouter();
   const search = useSearchParams();
+  const [shareUrl, setShareUrl] = useState<string>("");
 
   // Inizializza stato da URL al mount
   useEffect(() => {
@@ -845,6 +427,78 @@ const [isResolvingPlace, setIsResolvingPlace] = useState<boolean>(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* =========================
+     Azioni: geocoding & reverse geocoding
+  ========================== */
+  // Cerca località digitata → /api/external/geocode
+  const handleSearchLocation = useCallback(async () => {
+    const q = (query || "").trim();
+    if (!q) return;
+    try {
+      const res = await fetch(`/api/external/geocode?q=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json();
+
+      const item = Array.isArray(j?.results) ? j.results[0] : j?.result || j;
+      const lat = Number(item?.lat ?? item?.latitude);
+      const lng = Number(item?.lng ?? item?.longitude);
+      const name = String(item?.name ?? item?.display_name ?? q);
+
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        // Aggiorna centro applicato + query applicata (così la mappa ricalcola subito)
+        setACenter({ lat, lng, label: name });
+        setAQuery(name);
+        setARadius(radius);
+        setAMonthISO(monthISO);
+        setATypes(types);
+        setAMode(mode);
+
+        const url = replaceUrlWithState(
+          router,
+          (typeof window !== "undefined" ? location.pathname : "/"),
+          { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet }
+        );
+        setShareUrl(url);
+      } else {
+        alert("Località non trovata. Riprova con un nome più specifico.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Errore di geocoding. Controlla la connessione o riprova.");
+    }
+  }, [query, radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
+
+  // Reverse geocoding al click mappa → /api/external/reverse-geocode
+  const onMapClick = useCallback(async ({ lat, lng }: { lat: number; lng: number }) => {
+    let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    try {
+      const res = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`);
+      if (res.ok) {
+        const j = await res.json();
+        name = String(j?.name ?? j?.display_name ?? name);
+      }
+    } catch {/* ignore */}
+
+    // aggiorna UI e applicati
+    setQuery(name);
+    setACenter({ lat, lng, label: name });
+    setAQuery(name);
+    setARadius(radius);
+    setAMonthISO(monthISO);
+    setATypes(types);
+    setAMode(mode);
+
+    const url = replaceUrlWithState(
+      router,
+      (typeof window !== "undefined" ? location.pathname : "/"),
+      { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet }
+    );
+    setShareUrl(url);
+  }, [radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
+
+  /* =========================
+     Festività & Meteo
+  ========================== */
   // Festività IT per l'anno del mese selezionato (usa monthISO live)
   useEffect(() => {
     if (!monthISO) return;
@@ -860,30 +514,136 @@ const [isResolvingPlace, setIsResolvingPlace] = useState<boolean>(false);
       .catch(() => {});
   }, [monthISO]);
 
-  // Meteo per centro + mese **APPLICATO** (allineato al calendario dopo "Genera Analisi")
-useEffect(() => {
-  if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
-  const { lat, lng } = normalized.center;
+  // Meteo per centro + mese **APPLICATO** (allineato al calendario dopo "Genera Analisi" o dopo geocoding/click)
+  useEffect(() => {
+    if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
+    const { lat, lng } = normalized.center;
+    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(aMonthISO)}`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+        const daily = j.weather.daily;
+        const out: Record<string, { t?: number; p?: number; code?: number }> = {};
+        (daily.time || []).forEach((d: string, i: number) => {
+          out[d] = {
+            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+            code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined,
+          };
+        });
+        setWeatherByDate(out);
+      })
+      .catch(() => setWeatherByDate({}));
+  }, [normalized.center, aMonthISO]);
 
-  fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(aMonthISO)}`)
-    .then(r => r.json())
-    .then((j) => {
-      if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
-      const daily = j.weather.daily;
-      const out: Record<string, { t?: number; p?: number; code?: number }> = {};
-      (daily.time || []).forEach((d: string, i: number) => {
-        out[d] = {
-          t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
-          p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
-          code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined, // 👈 icona
-        };
-      });
-      setWeatherByDate(out);
-    })
-    .catch(() => setWeatherByDate({}));
-}, [normalized.center, aMonthISO]);
+  /* =========================
+     CSV / GSheet Loader
+  ========================== */
+  function smartSplit(line:string, d:string) {
+    const out:string[] = [];
+    let cur = "", inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (d === line[i] && !inQuotes) { out.push(cur); cur = ""; }
+      else { cur += ch; }
+    }
+    out.push(cur);
+    return out
+      .map(s => s.replace(/^\uFEFF/, ""))    // BOM
+      .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+      .map(s => s.trim());
+  }
+  function parseCsv(text: string){
+    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (lines.length === 0) return [];
+    const headerLine = lines[0].replace(/^\uFEFF/, "");
+    const count = (s:string, ch:string) => (s.match(new RegExp(`\\${ch}`, "g")) || []).length;
+    const delim = count(headerLine, ";") > count(headerLine, ",") ? ";" : ",";
+    const headersRaw = smartSplit(headerLine, delim);
+    const headers = headersRaw.map(h => h.toLowerCase().trim());
+    return lines.slice(1).map(line => {
+      const cells = smartSplit(line, delim);
+      const row:any = {};
+      headers.forEach((h, i) => { row[h] = (cells[i] ?? "").trim(); });
+      return row;
+    });
+  }
+  function toNumber(v: string, def=0){
+    if (v == null) return def;
+    const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
+    const n = Number(s);
+    return Number.isFinite(n) ? n : def;
+  }
+  function toDate(v: string){
+    if (!v) return null;
+    const s = String(v).trim();
+    const d1 = new Date(s);
+    if (!Number.isNaN(d1.getTime())) return d1;
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const dd = parseInt(m[1],10), mm = parseInt(m[2],10)-1, yy = parseInt(m[3],10);
+      const d2 = new Date(yy, mm, dd);
+      if (!Number.isNaN(d2.getTime())) return d2;
+    }
+    return null;
+  }
+  function getVal(row:any, keys:string[]){
+    const norm = (k:string)=> String(k||"").toLowerCase().replace(/^\uFEFF/,"").trim();
+    const map = new Map<string,any>();
+    Object.keys(row||{}).forEach(k => map.set(norm(k), row[k]));
+    for (const k of keys) {
+      const v = map.get(norm(k));
+      if (v != null && v !== "") return v;
+    }
+    return null;
+  }
+  function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
+    const issues: ValidationIssue[] = [];
+    const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
 
-  // Caricamento dati (CSV / Google Sheet)
+    const valid: DataRow[] = rows.map((r:any, idx:number)=>{
+      const rowIndex = idx+2;
+      const dateV = String(getVal(r, ["date","data","giorno"]) ?? "");
+      const d = toDate(dateV);
+      if(!d) issues.push({ row: rowIndex, field: "date", reason: "data non valida", value: dateV });
+
+      const adrV = String(getVal(r, ["adr","adr_medio","prezzo_medio"]) ?? "");
+      const adr = toNumber(adrV, 0);
+      if(!Number.isFinite(adr)) issues.push({ row: rowIndex, field: "adr", reason: "numero non valido", value: adrV });
+
+      const occV = String(getVal(r, ["occ","occupazione","occ_rate"]) ?? "");
+      const occ = toNumber(occV, 0);
+
+      const losV = String(getVal(r, ["los","notti","soggiorno"]) ?? "");
+      const los = toNumber(losV, 0);
+
+      const channel = String(getVal(r, ["channel","canale"]) ?? "") || "Altro";
+      const provenance = String(getVal(r, ["provenance","country","nazione"]) ?? "") || "Altro";
+      const type = String(getVal(r, ["type","tipo"]) ?? "") || "";
+
+      const latV = String(getVal(r, ["lat","latitude"]) ?? "");
+      const lngV = String(getVal(r, ["lng","longitude"]) ?? "");
+      const lat = toNumber(latV, 0);
+      const lng = toNumber(lngV, 0);
+
+      return { date: d, adr, occ, los, channel, provenance, type, lat, lng };
+    }).filter(r=> !!r.date);
+
+    const stats: DataStats = {
+      total: rows.length,
+      valid: valid.length,
+      discarded: Math.max(0, rows.length - valid.length),
+      issuesByField: issues.reduce((acc, it)=> inc(acc, it.field), {} as Record<string,number>)
+    };
+
+    if (valid.length === 0) {
+      warnings.push("CSV caricato ma senza colonne riconosciute (es. 'date'): controlla l'intestazione");
+    }
+
+    return { valid, issues, stats };
+  }
+
   function buildGSheetsCsvUrl(sheetId: string, sheetName: string, gid: string, strict: boolean){
     const id = (sheetId||"").trim();
     if(!id) return { url: "", error: "" };
@@ -1070,7 +830,134 @@ useEffect(() => {
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
   /* =========== UI =========== */
-  const [shareUrl, setShareUrl] = useState<string>("");
+  function TypesMultiSelect({
+    value,
+    onChange,
+    allTypes,
+    labels,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    allTypes: readonly string[];
+    labels: Record<string, string>;
+  }) {
+    const [open, setOpen] = useState(false);
+    const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+      function onClickOutside(e: MouseEvent) {
+        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      }
+      document.addEventListener("mousedown", onClickOutside);
+      return () => document.removeEventListener("mousedown", onClickOutside);
+    }, []);
+
+    function toggle(t: string) {
+      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+    }
+
+    const summary =
+      value.length === 0
+        ? "Nessuna"
+        : value.length === allTypes.length
+        ? "Tutte"
+        : `${value.length} selezionate`;
+
+    return (
+      <div className="relative" ref={containerRef}>
+        <span className="block text-sm font-medium text-neutral-700 mb-1">
+          Tipologie
+        </span>
+
+        {/* Trigger */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
+        >
+          <span className="truncate">
+            {summary}
+            {value.length > 0 && value.length < allTypes.length ? (
+              <span className="ml-2 text-xs text-neutral-500">
+                {value
+                  .slice()
+                  .sort()
+                  .map((t) => labels[t] || t)
+                  .slice(0, 2)
+                  .join(", ")}
+                {value.length > 2 ? "…" : ""}
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+        </button>
+
+        {/* Panel */}
+        {open && (
+          <div
+            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+            role="listbox"
+            aria-label="Seleziona tipologie"
+          >
+            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
+              <ul className="space-y-1">
+                {allTypes.map((t) => {
+                  const active = value.includes(t);
+                  return (
+                    <li key={t}>
+                      <button
+                        type="button"
+                        onClick={() => toggle(t)}
+                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
+                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                        role="option"
+                        aria-selected={active}
+                      >
+                        <span
+                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
+                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
+                        >
+                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                        </span>
+                        <span className="text-neutral-800">{labels[t] || t}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {/* Footer azioni rapide */}
+            <div className="mt-2 flex items-center justify-between border-t pt-2">
+              <button
+                type="button"
+                className="text-xs text-neutral-600 hover:text-neutral-900"
+                onClick={() => onChange([])}
+              >
+                Pulisci
+              </button>
+              <div className="space-x-2">
+                <button
+                  type="button"
+                  className="text-xs text-neutral-600 hover:text-neutral-900"
+                  onClick={() => onChange([...allTypes])}
+                >
+                  Seleziona tutte
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
+                  onClick={() => setOpen(false)}
+                >
+                  Applica
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -1149,28 +1036,30 @@ useEffect(() => {
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Località</label>
-              <div className="flex gap-2">
-  <input
-    className="border rounded px-2 py-1 w-full"
-    placeholder="Città o indirizzo"
-    value={query}
-    onChange={(e) => setQuery(e.target.value)}
-    onKeyDown={(e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        handleSearchLocation();
-      }
-    }}
-  />
-  <button
-    type="button"
-    className="px-3 py-1 rounded border bg-white hover:bg-slate-50"
-    onClick={handleSearchLocation}
-    title="Cerca località"
-  >
-    Cerca
-  </button>
-</div>
+              <div className="flex gap-2 w-full">
+                <input
+                  className="border rounded px-2 h-9 w-full"
+                  placeholder="Città o indirizzo"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSearchLocation();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="px-3 h-9 rounded border bg-white hover:bg-slate-50"
+                  onClick={handleSearchLocation}
+                  title="Cerca località"
+                >
+                  Cerca
+                </button>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2">
               <Route className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Raggio</label>
@@ -1178,6 +1067,7 @@ useEffect(() => {
                 {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
+
             <div className="flex items-center gap-2">
               <CalendarDays className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Mese</label>
@@ -1256,22 +1146,28 @@ useEffect(() => {
             </section>
           )}
 
-          {/* Qualità dati */}
-          {/* ... (sezione qualità dati invariata) ... */}
-          {/*** se nel tuo file avevi la tabella dettagli errori, lasciala uguale qui ***/}
+          {/* Qualità dati (sezione opzionale, lascia invariata se l’avevi già) */}
+          {dataStats && (
+            <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
+              <div className="text-sm font-semibold">Qualità dati</div>
+              <div className="text-xs text-slate-600">
+                Righe totali: {dataStats.total} · Valide: {dataStats.valid} · Scartate: {dataStats.discarded}
+              </div>
+            </section>
+          )}
         </aside>
 
         {/* MAIN */}
         <main className="space-y-6">
-          {/* MAPPA – riga intera */}
+          {/* MAPPA */}
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
                 <LocationMap
                   center={[normalized.center.lat, normalized.center.lng]}
                   radius={normalized.safeR*1000}
-                  label={aQuery || "Località"}
-                  onClick={(latlng) => onMapClick(latlng)}
+                  label={aQuery || normalized.center.label || "Località"}
+                  onClick={onMapClick}
                 />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
@@ -1281,7 +1177,7 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* CALENDARIO – riga intera */}
+          {/* CALENDARIO */}
           <div className="bg-white rounded-2xl border shadow-sm p-6">
             <div className="text-lg font-semibold mb-3 flex items-center gap-2">
               <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
@@ -1300,11 +1196,7 @@ useEffect(() => {
             )}
           </div>
 
-          {/* =========================
-              GRAFICI – blocco completo
-          ======================== */}
-
-          {/* Riga 1: Provenienza (Pie) + LOS (Bar) */}
+          {/* GRAFICI */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Provenienza */}
             <div className="bg-white rounded-2xl border shadow-sm p-4">
@@ -1398,7 +1290,7 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* Canali di Vendita */}
+          {/* Canali */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
             {Array.isArray(channels) && channels.length>0 ? (
