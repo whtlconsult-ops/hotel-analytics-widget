@@ -1164,11 +1164,11 @@ export default function App(){
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
                 <LocationMap
-                  center={[normalized.center.lat, normalized.center.lng]}
-                  radius={normalized.safeR*1000}
-                  label={aQuery || normalized.center.label || "Località"}
-                  onClick={onMapClick}
-                />
+  center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
+  radius={normalized.safeR*1000}
+  label={aQuery || normalized.center.label || "Località"}
+  onClick={onMapClick}
+/>
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
                   Inserisci una località valida per visualizzare la mappa e generare l'analisi
