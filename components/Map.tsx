@@ -12,19 +12,16 @@ function ResizeFix({ center }: { center: [number, number] }) {
   const map = useMap();
 
   useEffect(() => {
-    // riallinea la vista dopo il mount/resize
     const realign = () => {
-      const currentZoom = map.getZoom() || 12;
-      map.setView(center, currentZoom);
+      const z = map.getZoom() || 12;
+      map.setView(center, z);
       map.invalidateSize();
     };
 
-    // microtask per assicurare che il DOM sia pronto
     const id = setTimeout(realign, 0);
-
     const onResize = () => map.invalidateSize();
-    window.addEventListener("resize", onResize);
 
+    window.addEventListener("resize", onResize);
     return () => {
       clearTimeout(id);
       window.removeEventListener("resize", onResize);
@@ -34,15 +31,15 @@ function ResizeFix({ center }: { center: [number, number] }) {
   return null;
 }
 
-/** Disegna un cerchio in metri usando Leaflet “puro” (evita problemi di typings) */
+/** Disegna un cerchio in metri con Leaflet “puro” */
 function RadiusOverlay({
   center,
   radius,
   label,
 }: {
   center: [number, number];
-  radius?: number;
-  label?: string;
+  radius?: number | null;
+  label?: string | null;
 }) {
   const map = useMap();
 
@@ -53,8 +50,6 @@ function RadiusOverlay({
     if (label) circle.bindTooltip(label, { permanent: true });
 
     circle.addTo(map);
-
-    // cleanup quando cambiano props o si smonta
     return () => {
       circle.remove();
     };
@@ -63,7 +58,7 @@ function RadiusOverlay({
   return null;
 }
 
-/** Cattura i click sulla mappa e li propaga al prop onClick */
+/** Cattura i click sulla mappa e li propaga */
 function ClickCatcher({
   onClick,
 }: {
@@ -90,29 +85,35 @@ export default function LocationMap({
 }) {
   const mapRef = useRef<LeafletMap | null>(null);
 
-  // Converto l’oggetto in tuple per Leaflet, con fallback sicuro
+  // Converto in tuple [lat,lng] per Leaflet; fallback sicuro
   const ll = useMemo<[number, number]>(() => {
     return center ? [center.lat, center.lng] : [0, 0];
   }, [center?.lat, center?.lng]);
 
-  // Allinea la vista quando cambia il center
+  // Aggiorna vista quando cambia il center
   useEffect(() => {
-    const map = mapRef.current as unknown as LeafletMap | null;
+    const map = mapRef.current;
     if (!map || !center) return;
 
     const z = map.getZoom() || 12;
     map.setView(ll, z);
-    // dopo aver cambiato la view, invalidiamo la dimensione per evitare glitch
     setTimeout(() => map.invalidateSize(), 0);
   }, [center?.lat, center?.lng, ll]);
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        ref={mapRef as any}
-        center={ll}               // tuple richiesta da Leaflet
-        zoom={12}
-        scrollWheelZoom={true}
+        // Niente center/zoom/scrollWheelZoom qui: inizializziamo con whenCreated
+        whenCreated={(m: LeafletMap) => {
+          mapRef.current = m;
+          m.setView(ll, 12);
+          try {
+            // abilita zoom da rotella se disponibile
+            // @ts-ignore - alcune versioni non tipizzano correttamente il controllo
+            m.scrollWheelZoom?.enable?.();
+          } catch {/* ignore */}
+          setTimeout(() => m.invalidateSize(), 0);
+        }}
         style={{ height: "100%", width: "100%" }}
       >
         <ResizeFix center={ll} />
@@ -121,11 +122,7 @@ export default function LocationMap({
 
         <ClickCatcher onClick={onClick} />
 
-        <RadiusOverlay
-          center={ll}
-          radius={radius ?? undefined}
-          label={label ?? undefined}
-        />
+        <RadiusOverlay center={ll} radius={radius ?? undefined} label={label ?? undefined} />
       </MapContainer>
     </div>
   );
