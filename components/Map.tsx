@@ -7,7 +7,30 @@ import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 
-/** Mantiene la mappa “in forma”: riallinea la vista e invalida le dimensioni */
+/** Inizializza la mappa al mount (view, scroll, invalidate) senza usare whenReady/whenCreated */
+function MapInitializer({ center }: { center: [number, number] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    // setta vista iniziale
+    map.setView(center, 12);
+    // abilita scroll (alcune versioni non lo tipizzano)
+    try {
+      (map as any).scrollWheelZoom?.enable?.();
+    } catch {
+      /* ignore */
+    }
+    // forza il calcolo delle dimensioni
+    const id = setTimeout(() => map.invalidateSize(), 0);
+    return () => clearTimeout(id);
+    // esegui una sola volta al mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
+}
+
+/** Mantiene la mappa “in forma”: riallinea la vista e invalida le dimensioni quando cambia il center */
 function ResizeFix({ center }: { center: [number, number] }) {
   const map = useMap();
 
@@ -90,35 +113,24 @@ export default function LocationMap({
     return center ? [center.lat, center.lng] : [0, 0];
   }, [center?.lat, center?.lng]);
 
-  // Centra la vista quando cambia il center
+  // Se il center cambia dopo il mount, riallinea via API (ridondante ma innocuo grazie a ResizeFix)
   useEffect(() => {
     const m = mapRef.current;
     if (!m || !center) return;
-
     const z = m.getZoom() || 12;
     m.setView(ll, z);
-    setTimeout(() => m.invalidateSize(), 0);
+    const id = setTimeout(() => m.invalidateSize(), 0);
+    return () => clearTimeout(id);
   }, [center?.lat, center?.lng, ll]);
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        // Inizializzazione compatibile con la tua versione: whenReady
-        whenReady={(e) => {
-          const m = e.target as LeafletMap;
-          mapRef.current = m;
-          m.setView(ll, 12);
-          try {
-            // alcune versioni non tipizzano correttamente lo scrollWheelZoom
-            // @ts-ignore
-            m.scrollWheelZoom?.enable?.();
-          } catch {
-            /* ignore */
-          }
-          setTimeout(() => m.invalidateSize(), 0);
-        }}
+        // nessun center/zoom/whenReady/whenCreated: gestiamo tutto con i child components
+        ref={mapRef as any}
         style={{ height: "100%", width: "100%" }}
       >
+        <MapInitializer center={ll} />
         <ResizeFix center={ll} />
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <ClickCatcher onClick={onClick} />
