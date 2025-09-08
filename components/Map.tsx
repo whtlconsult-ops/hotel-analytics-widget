@@ -1,6 +1,6 @@
 "use client";
 
-import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Map as LeafletMap } from "leaflet";
 import L from "leaflet";
 import { useEffect, useRef } from "react";
@@ -52,16 +52,28 @@ function RadiusOverlay({
 
   return null;
 }
+/** Cattura i click sulla mappa e li propaga al prop onClick */
+function ClickCatcher({ onClick }: { onClick?: (latlng: { lat: number; lng: number }) => void }) {
+  useMapEvents({
+    click(e) {
+      if (onClick) onClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+    },
+  });
+  return null;
+}
 
 export default function LocationMap({
   center,
   radius,
   label,
+  onClick,
 }: {
-  center: [number, number];
-  radius?: number;
-  label?: string;
+  center: { lat: number; lng: number } | null;
+  radius?: number | null;
+  label?: string | null;
+  onClick?: (latlng: { lat: number; lng: number }) => void;
 }) {
+  
   const mapRef = useRef<LeafletMap | null>(null);
 
   // Config iniziale via API (evitiamo props center/zoom/scrollWheelZoom)
@@ -85,8 +97,9 @@ export default function LocationMap({
         <ResizeFix center={center} />
 
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
+        <ClickCatcher onClick={onClick} />
         <RadiusOverlay center={center} radius={radius} label={label} />
+
       </MapContainer>
     </div>
   );

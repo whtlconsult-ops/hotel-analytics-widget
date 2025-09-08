@@ -18,10 +18,12 @@ export default function MapInner({
   center,
   radius,
   label,
+  onClick,
 }: {
-  center: [number, number];
-  radius: number;
-  label: string;
+  center: { lat: number; lng: number } | null;
+  radius?: number | null;
+  label?: string | null;
+  onClick?: (latlng: { lat: number; lng: number }) => void;
 }) {
   const position: LatLngExpression = center;
 

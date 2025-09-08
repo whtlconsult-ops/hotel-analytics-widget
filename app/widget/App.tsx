@@ -13,6 +13,9 @@ import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO }
 import { it } from "date-fns/locale";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { useCallback, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+
 // Import mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
@@ -161,6 +164,32 @@ function safeTypes(ts:string[], warnings:string[]): string[]{
   return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
 }
 
+// --- Località predefinite + geocoding fallback ---
+const PRESETS: Record<string, { lat: number; lng: number; label: string }> = {
+  "firenze": { lat: 43.7696, lng: 11.2558, label: "Firenze" },
+  "castiglion fiorentino": { lat: 43.3423, lng: 11.9173, label: "Castiglion Fiorentino" },
+  "arezzo": { lat: 43.4633, lng: 11.8794, label: "Arezzo" },
+};
+
+async function resolvePlace(input: string): Promise<{ lat: number; lng: number; label: string } | null> {
+  const key = input.trim().toLowerCase();
+  if (!key) return null;
+
+  // 1) preset
+  if (PRESETS[key]) return PRESETS[key];
+
+  // 2) fallback geocoding
+  try {
+    const r = await fetch(`/api/external/geocode?q=${encodeURIComponent(input)}`);
+    const j = await r.json();
+    if (!j?.ok || !Array.isArray(j.results) || j.results.length === 0) return null;
+    const best = j.results[0];
+    return { lat: best.lat, lng: best.lng, label: best.name };
+  } catch {
+    return null;
+  }
+}
+
 /* ======= Meteo helpers ======= */
 function isWithinNextDays(d: Date, n = 7) {
   const today = new Date(); today.setHours(0,0,0,0);
@@ -168,7 +197,91 @@ function isWithinNextDays(d: Date, n = 7) {
   const dd = new Date(d); dd.setHours(0,0,0,0);
   return dd >= today && dd <= max;
 }
+async function geocodeByName(name: string) {
+  const r = await fetch(`/api/external/geocode?q=${encodeURIComponent(name)}`);
+  if (!r.ok) throw new Error("geocode http");
+  const j = await r.json();
+  // atteso: { ok: true, results: [{ name, lat, lng }, ...] }
+  if (!j?.ok || !Array.isArray(j.results) || j.results.length === 0) {
+    throw new Error("no_results");
+  }
+// === Geocoding via API per qualunque località ===
+// Usa la tua route /api/external/geocode?q=...
+async function handleSearchLocation() {
+  if (!query?.trim()) return;
 
+  try {
+    const res = await fetch(`/api/external/geocode?q=${encodeURIComponent(query.trim())}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+
+    // Aspettati un array o un singolo oggetto con { lat, lng, name/display_name }
+    const item = Array.isArray(j?.results) ? j.results[0] : j?.result || j;
+    const lat = Number(item?.lat ?? item?.latitude);
+    const lng = Number(item?.lng ?? item?.longitude);
+    const name = String(item?.name ?? item?.display_name ?? query.trim());
+
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      // Aggiorna centro applicato e query applicata
+      setACenter({ lat, lng });
+      setAQuery(name);
+      // Rimani sul mese già scelto (aMonthISO) senza toccarlo
+    } else {
+      alert("Località non trovata. Riprova con un nome più specifico.");
+    }
+  } catch (e) {
+    console.error(e);
+    alert("Errore di geocoding. Controlla la connessione o riprova.");
+  }
+}
+  // prendi il primo match
+  const top = j.results[0];
+  return { label: top.name || name, center: { lat: top.lat, lng: top.lng } };
+}
+
+// === Reverse geocoding quando clicchi sulla mappa ===
+async function onMapClick(latlng: { lat: number; lng: number }) {
+  try {
+    const res = await fetch(`/api/external/reverse-geocode?lat=${latlng.lat}&lng=${latlng.lng}`);
+    // Se la tua API risponde sempre ok:true, gestisci qui; altrimenti usa semplicemente il pair lat,lng
+    let label = "";
+    if (res.ok) {
+      const j = await res.json();
+      label = String(j?.name ?? j?.display_name ?? "");
+    }
+    // Aggiorna il centro applicato e l’etichetta della query applicata
+    setACenter({ lat: latlng.lat, lng: latlng.lng });
+    setAQuery(label || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
+  } catch {
+    setACenter({ lat: latlng.lat, lng: latlng.lng });
+    setAQuery(`${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
+  }
+}
+async function reverseGeocode(lat: number, lng: number) {
+  const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`);
+  if (!r.ok) throw new Error("revgeo http");
+  const j = await r.json();
+  // atteso: { ok: true, name: "Pistoia", ... }
+  if (!j?.ok || !j.name) throw new Error("no_name");
+  return { label: j.name as string, center: { lat, lng } };
+}
+// 4A) Risolvi località da testo (preset → veloci; altrimenti chiama /geocode)
+const resolvePlace = useCallback(async (raw: string) => {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) throw new Error("empty");
+
+  // 1) prova a trovare un preset (case-insensitive)
+  const preset = PRESETS.find(p => p.label.toLowerCase() === trimmed.toLowerCase());
+  if (preset) return preset;
+
+  // 2) altrimenti geocoding
+  return await geocodeByName(trimmed);
+}, []);
+
+// 4B) Risolvi località da click su mappa
+const resolvePlaceFromClick = useCallback(async (lat: number, lng: number) => {
+  return await reverseGeocode(lat, lng);
+}, []);
 /* =========================
    CSV Parser + Normalizzazione con validazione
 ========================= */
@@ -445,6 +558,8 @@ export default function App(){
   const [radius, setRadius] = useState<number>(20);
   const [monthISO, setMonthISO] = useState("2025-08-01");
   const [types, setTypes] = useState<string[]>(["agriturismo","b&b","hotel"]);
+  const [placeError, setPlaceError] = React.useState<string | null>(null);
+
 
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
@@ -458,6 +573,50 @@ export default function App(){
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // === Dati esterni ===
+// --- Reverse Geocode: coordinate -> nome località ---
+async function reverseGeocodeName(lat: number, lng: number): Promise<string> {
+  try {
+    const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`);
+    const j = await r.json();
+    if (j?.ok && j?.name) return j.name as string;
+  } catch {}
+  // fallback: stringa lat,lng
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+// --- Gestore click mappa: aggiorna subito UI e "applicati" ---
+const onMapClick = async ({ lat, lng }: { lat: number; lng: number }) => {
+  const name = await reverseGeocodeName(lat, lng);
+
+  // aggiorna UI
+  setQuery(name);
+
+  // aggiorna "applicati" per far rigenerare subito la mappa/analisi
+  setAQuery(name);
+  setARadius(radius);
+  setAMonthISO(monthISO);
+  setATypes(types);
+  setAMode(mode);
+
+  // aggiorna l’URL condivisibile per riflettere la nuova località
+  const url = replaceUrlWithState(
+    router,
+    (typeof window !== "undefined" ? location.pathname : "/"),
+    {
+      q: name,
+      r: radius,
+      m: monthISO,
+      t: types,
+      mode,
+      dataSource,
+      csvUrl,
+      gsId,
+      gsGid,
+      gsSheet,
+    }
+  );
+  setShareUrl(url);
+};
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
@@ -601,6 +760,9 @@ export default function App(){
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
+// Centro applicato (se lo settiamo via geocoding o click mappa)
+const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null);
+
   const hasChanges = useMemo(() =>
     aQuery !== query ||
     aRadius !== radius ||
@@ -617,7 +779,7 @@ export default function App(){
   // Normalizzazione — usa gli *applicati*
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
-    const center = geocode(aQuery, warnings);
+    const center = aCenter ?? geocode(aQuery, warnings);
     const safeR = safeRadius(aRadius, warnings);
     const safeT = safeTypes(aTypes, warnings);
     if(!center){
@@ -627,6 +789,22 @@ export default function App(){
     const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
     return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
   }, [aMonthISO, aQuery, aRadius, aTypes]);
+
+// Preset originali (aggiungi i tuoi qui)
+const PRESETS = [
+  { label: "Firenze", center: { lat: 43.7696, lng: 11.2558 } },
+  { label: "Castiglion Fiorentino", center: { lat: 43.3420, lng: 11.9160 } },
+  { label: "Arezzo", center: { lat: 43.4633, lng: 11.8794 } },
+];
+
+// Stato per la località digitata/dal click
+const [placeInput, setPlaceInput] = useState<string>("");
+// Ultima località “buona” (fallback se la nuova fallisce)
+const [lastGoodPlace, setLastGoodPlace] = useState<{ label: string; center: { lat: number; lng: number } } | null>(null);
+// Errori UI
+const [placeError, setPlaceError] = useState<string>("");
+// Busy flag per pulsanti
+const [isResolvingPlace, setIsResolvingPlace] = useState<boolean>(false);
 
   // Avvisi
   useEffect(()=>{
@@ -971,8 +1149,28 @@ useEffect(() => {
             <div className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Località</label>
-              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Città o indirizzo"/>
-            </div>
+              <div className="flex gap-2">
+  <input
+    className="border rounded px-2 py-1 w-full"
+    placeholder="Città o indirizzo"
+    value={query}
+    onChange={(e) => setQuery(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSearchLocation();
+      }
+    }}
+  />
+  <button
+    type="button"
+    className="px-3 py-1 rounded border bg-white hover:bg-slate-50"
+    onClick={handleSearchLocation}
+    title="Cerca località"
+  >
+    Cerca
+  </button>
+</div>
             <div className="flex items-center gap-2">
               <Route className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Raggio</label>
@@ -1073,6 +1271,7 @@ useEffect(() => {
                   center={[normalized.center.lat, normalized.center.lng]}
                   radius={normalized.safeR*1000}
                   label={aQuery || "Località"}
+                  onClick={(latlng) => onMapClick(latlng)}
                 />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
