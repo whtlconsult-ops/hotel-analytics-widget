@@ -7,67 +7,50 @@ import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 
-/** Inizializza la mappa al mount (view, scroll, invalidate) senza usare whenReady/whenCreated */
-function MapInitializer({ center }: { center: [number, number] }) {
+/** Mantiene la mappa “in forma” su cambi centro/bounds e su resize */
+function ResizeFix({
+  center,
+  bounds,
+}: {
+  center?: [number, number] | null;
+  bounds?: [[number, number], [number, number]] | null;
+}) {
   const map = useMap();
 
   useEffect(() => {
-    // setta vista iniziale
-    map.setView(center, 12);
-    // abilita scroll (alcune versioni non lo tipizzano)
-    try {
-      (map as any).scrollWheelZoom?.enable?.();
-    } catch {
-      /* ignore */
-    }
-    // forza il calcolo delle dimensioni
-    const id = setTimeout(() => map.invalidateSize(), 0);
-    return () => clearTimeout(id);
-    // esegui una sola volta al mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return null;
-}
-
-/** Mantiene la mappa “in forma”: riallinea la vista e invalida le dimensioni quando cambia il center */
-function ResizeFix({ center }: { center: [number, number] }) {
-  const map = useMap();
-
-  useEffect(() => {
-    const realign = () => {
-      const z = map.getZoom() || 12;
-      map.setView(center, z);
+    // piccolo defer per assicurarsi che il container sia montato
+    setTimeout(() => {
+      if (center && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
+        const currentZoom = map.getZoom() || 12;
+        map.setView(center, currentZoom);
+      } else if (bounds) {
+        map.fitBounds(bounds);
+      }
       map.invalidateSize();
-    };
+    }, 0);
 
-    const id = setTimeout(realign, 0);
     const onResize = () => map.invalidateSize();
-
     window.addEventListener("resize", onResize);
-    return () => {
-      clearTimeout(id);
-      window.removeEventListener("resize", onResize);
-    };
-  }, [map, center[0], center[1]]);
+    return () => window.removeEventListener("resize", onResize);
+  }, [map, center?.[0], center?.[1], bounds?.[0]?.[0], bounds?.[0]?.[1], bounds?.[1]?.[0], bounds?.[1]?.[1]]);
 
   return null;
 }
 
-/** Disegna un cerchio in metri con Leaflet “puro” */
+/** Disegna un cerchio in metri usando Leaflet “puro” */
 function RadiusOverlay({
   center,
   radius,
   label,
 }: {
-  center: [number, number];
+  center?: [number, number] | null;
   radius?: number | null;
   label?: string | null;
 }) {
   const map = useMap();
 
   useEffect(() => {
-    if (!radius || radius <= 0) return;
+    if (!center || !radius) return;
 
     const circle = L.circle(center, { radius });
     if (label) circle.bindTooltip(label, { permanent: true });
@@ -76,20 +59,16 @@ function RadiusOverlay({
     return () => {
       circle.remove();
     };
-  }, [map, center[0], center[1], radius, label]);
+  }, [map, center?.[0], center?.[1], radius, label]);
 
   return null;
 }
 
-/** Cattura i click sulla mappa e li propaga verso l’esterno */
-function ClickCatcher({
-  onClick,
-}: {
-  onClick?: (latlng: { lat: number; lng: number }) => void;
-}) {
+/** Cattura i click sulla mappa e li propaga */
+function ClickCatcher({ onClick }: { onClick?: (latlng: { lat: number; lng: number }) => void }) {
   useMapEvents({
     click(e) {
-      onClick?.({ lat: e.latlng.lat, lng: e.latlng.lng });
+      if (onClick) onClick({ lat: e.latlng.lat, lng: e.latlng.lng });
     },
   });
   return null;
@@ -100,41 +79,53 @@ export default function LocationMap({
   radius,
   label,
   onClick,
+  fallbackBounds,
 }: {
-  center: { lat: number; lng: number } | null;
+  center: { lat: number; lng: number } | null;                // centro “attivo” (se presente)
   radius?: number | null;
   label?: string | null;
   onClick?: (latlng: { lat: number; lng: number }) => void;
+  fallbackBounds?: [[number, number], [number, number]];      // bounds da usare quando center è null
 }) {
   const mapRef = useRef<LeafletMap | null>(null);
 
-  // Converto in tuple [lat,lng] per Leaflet; fallback sicuro
-  const ll = useMemo<[number, number]>(() => {
-    return center ? [center.lat, center.lng] : [0, 0];
-  }, [center?.lat, center?.lng]);
+  // tuple per Leaflet oppure nulla
+  const ll = useMemo<[number, number] | null>(() => {
+    if (!center) return null;
+    return [center.lat, center.lng];
+  }, [center]);
 
-  // Se il center cambia dopo il mount, riallinea via API (ridondante ma innocuo grazie a ResizeFix)
-  useEffect(() => {
-    const m = mapRef.current;
-    if (!m || !center) return;
-    const z = m.getZoom() || 12;
-    m.setView(ll, z);
-    const id = setTimeout(() => m.invalidateSize(), 0);
-    return () => clearTimeout(id);
-  }, [center?.lat, center?.lng, ll]);
+  // bounds di fallback (Italia) di default, se non passati
+  const fb = useMemo<[[number, number], [number, number]]>(() => {
+    return (
+      fallbackBounds || [
+        // Sud-Ovest (Sardegna/Sicilia basse)  , Nord-Est (Alpi/est)
+        [35.4897, 6.6267],
+        [47.0910, 18.5204],
+      ]
+    );
+  }, [fallbackBounds]);
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        // nessun center/zoom/whenReady/whenCreated: gestiamo tutto con i child components
-        ref={mapRef as any}
+        // Inizializziamo "neutro": niente center/zoom qui, gestiamo sotto
+        whenReady={(e) => {
+          const m = e.target as LeafletMap;
+          mapRef.current = m;
+          if (ll) {
+            m.setView(ll, 12);
+          } else {
+            m.fitBounds(fb);
+          }
+          setTimeout(() => m.invalidateSize(), 0);
+        }}
         style={{ height: "100%", width: "100%" }}
       >
-        <MapInitializer center={ll} />
-        <ResizeFix center={ll} />
+        <ResizeFix center={ll} bounds={fb} />
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <ClickCatcher onClick={onClick} />
-        <RadiusOverlay center={ll} radius={radius ?? undefined} label={label ?? undefined} />
+        <RadiusOverlay center={ll} radius={radius} label={label} />
       </MapContainer>
     </div>
   );

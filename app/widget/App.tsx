@@ -970,7 +970,44 @@ export default function App(){
           </div>
           <button
             className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            onClick={()=> location.reload()}
+            onClick={() => {
+  // UI (live)
+  setQuery("");
+  setRadius(20);
+  setMonthISO(new Date().toISOString().slice(0, 7) + "-01");
+  setTypes([...STRUCTURE_TYPES]);
+  setMode("zone");
+
+  // “Applicati” (analisi corrente)
+  setAQuery("");
+  setARadius(20);
+  setAMonthISO(new Date().toISOString().slice(0, 7) + "-01");
+  setATypes([...STRUCTURE_TYPES]);
+  setAMode("zone");
+
+  // Centro azzerato => la mappa si porta sull’Italia grazie a fallbackBounds
+  setACenter(null);
+
+  // Sorgente dati
+  setDataSource("none");
+  setCsvUrl("");
+  setGsId("");
+  setGsGid("");
+  setGsSheet("Sheet1");
+  setStrictSheet(true);
+
+  // Avvisi / meteo / share link
+  setNotices([]);
+  setWeatherByDate({});
+  setShareUrl("");
+
+  // Pulisci l’URL (niente querystring)
+  try {
+    const clean = (typeof window !== "undefined") ? location.pathname : "/";
+    router.replace(clean, { scroll: false });
+    if (typeof window !== "undefined") window.history.replaceState({}, "", clean);
+  } catch {}
+}}
             title="Reset"
           >
             <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
@@ -1163,12 +1200,18 @@ export default function App(){
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
-                <LocationMap
-  center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
-  radius={normalized.safeR*1000}
-  label={aQuery || normalized.center.label || "Località"}
-  onClick={onMapClick}
+               <LocationMap
+  center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
+  radius={normalized.safeR * 1000}
+  label={aQuery || "Località"}
+  onClick={(latlng) => onMapClick(latlng)}
+  // 👇 bounds Italia usati quando center è null
+  fallbackBounds={[
+    [35.4897, 6.6267],  // Sud-Ovest
+    [47.0910, 18.5204], // Nord-Est
+  ]}
 />
+
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
                   Inserisci una località valida per visualizzare la mappa e generare l'analisi
