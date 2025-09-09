@@ -7,7 +7,7 @@ import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 
-/** Mantiene la mappa “in forma” su cambi centro/bounds e su resize */
+/** Mantiene la mappa in forma su cambi center/bounds e su resize */
 function ResizeFix({
   center,
   bounds,
@@ -18,7 +18,7 @@ function ResizeFix({
   const map = useMap();
 
   useEffect(() => {
-    // piccolo defer per assicurarsi che il container sia montato
+    // defer per assicurare che il container sia montato
     setTimeout(() => {
       if (center && Number.isFinite(center[0]) && Number.isFinite(center[1])) {
         const currentZoom = map.getZoom() || 12;
@@ -81,45 +81,44 @@ export default function LocationMap({
   onClick,
   fallbackBounds,
 }: {
-  center: { lat: number; lng: number } | null;                // centro “attivo” (se presente)
+  center: { lat: number; lng: number } | null;
   radius?: number | null;
   label?: string | null;
   onClick?: (latlng: { lat: number; lng: number }) => void;
-  fallbackBounds?: [[number, number], [number, number]];      // bounds da usare quando center è null
+  fallbackBounds?: [[number, number], [number, number]];
 }) {
   const mapRef = useRef<LeafletMap | null>(null);
 
-  // tuple per Leaflet oppure nulla
+  // tuple per Leaflet oppure null
   const ll = useMemo<[number, number] | null>(() => {
     if (!center) return null;
     return [center.lat, center.lng];
   }, [center]);
 
-  // bounds di fallback (Italia) di default, se non passati
+  // bounds Italia di default (se non passati)
   const fb = useMemo<[[number, number], [number, number]]>(() => {
     return (
       fallbackBounds || [
-        // Sud-Ovest (Sardegna/Sicilia basse)  , Nord-Est (Alpi/est)
-        [35.4897, 6.6267],
-        [47.0910, 18.5204],
+        [35.4897, 6.6267],  // Sud-Ovest
+        [47.0910, 18.5204], // Nord-Est
       ]
     );
   }, [fallbackBounds]);
 
+  // Inizializzazione a mappa pronta (senza argomenti nella callback!)
+  const handleWhenReady = () => {
+    const m = mapRef.current;
+    if (!m) return;
+    if (ll) m.setView(ll, 12);
+    else m.fitBounds(fb);
+    setTimeout(() => m.invalidateSize(), 0);
+  };
+
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <MapContainer
-        // Inizializziamo "neutro": niente center/zoom qui, gestiamo sotto
-        whenReady={(e) => {
-          const m = e.target as LeafletMap;
-          mapRef.current = m;
-          if (ll) {
-            m.setView(ll, 12);
-          } else {
-            m.fitBounds(fb);
-          }
-          setTimeout(() => m.invalidateSize(), 0);
-        }}
+        ref={mapRef as any}
+        whenReady={handleWhenReady}           // 👈 niente parametro qui
         style={{ height: "100%", width: "100%" }}
       >
         <ResizeFix center={ll} bounds={fb} />
