@@ -374,18 +374,25 @@ export default function App(){
 
   // Normalizzazione — usa gli *applicati*
   const normalized: Normalized = useMemo(()=>{
-    const warnings: string[] = [];
-    const centerFromLocal = geocodeLocal(aQuery, warnings);
-    const center = aCenter ?? centerFromLocal;
-    const safeR = safeRadius(aRadius, warnings);
-    const safeT = safeTypes(aTypes, warnings);
-    if(!center){
-      return { warnings, safeMonthISO: "", safeDays: [], center: null, safeR, safeT, isBlocked: true };
-    }
-    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
-    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
-    return { warnings, safeMonthISO, safeDays, center, safeR, safeT, isBlocked: false };
-  }, [aMonthISO, aQuery, aRadius, aTypes, aCenter]);
+  const warnings: string[] = [];
+  const center = aCenter ?? geocode(aQuery, warnings);
+  const safeR = safeRadius(aRadius, warnings);
+  const safeT = safeTypes(aTypes, warnings);
+
+  // 👉 calcola SEMPRE mese e giorni, anche senza center
+  const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+  const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
+
+  return {
+    warnings,
+    safeMonthISO,
+    safeDays,
+    center: center ?? null,
+    safeR,
+    safeT,
+    isBlocked: !center,   // true solo per funzioni che richiedono il center (meteo, raggio)
+  };
+}, [aMonthISO, aQuery, aRadius, aTypes, aCenter]);
 
   // Avvisi (UI)
   useEffect(()=>{
@@ -718,7 +725,7 @@ export default function App(){
 
   // Calendario: domanda + ADR (+ festività/meteo)
   const calendarData = useMemo(() => {
-    if (normalized.isBlocked) return [];
+
 
     if (rawRows.length > 0) {
       const byDate = new Map<string, { date: Date; adrVals: number[]; pressVals: number[] }>();
@@ -1202,16 +1209,12 @@ export default function App(){
               {normalized.center ? (
                <LocationMap
   center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
-  radius={normalized.safeR * 1000}
+  radius={normalized.center ? normalized.safeR * 1000 : null}
   label={aQuery || "Località"}
-  onClick={(latlng) => onMapClick(latlng)}
-  // 👇 bounds Italia usati quando center è null
-  fallbackBounds={[
-    [35.4897, 6.6267],  // Sud-Ovest
-    [47.0910, 18.5204], // Nord-Est
-  ]}
+  onClick={onMapClick}
+  // 👉 bounds Italia: così al reset vedi subito la mappa
+  fallbackBounds={[[35.4897, 6.6267],[47.0910, 18.5204]]}
 />
-
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">
                   Inserisci una località valida per visualizzare la mappa e generare l'analisi
@@ -1230,13 +1233,8 @@ export default function App(){
                 </span>
               )}
             </div>
-            {normalized.isBlocked ? (
-              <div className="text-sm text-slate-500">
-                Nessuna analisi disponibile: inserisci una località valida.
-              </div>
-            ) : (
-              <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-            )}
+            <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+
           </div>
 
           {/* GRAFICI */}
