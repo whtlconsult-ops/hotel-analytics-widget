@@ -375,7 +375,7 @@ export default function App(){
   // Normalizzazione — usa gli *applicati*
   const normalized: Normalized = useMemo(()=>{
   const warnings: string[] = [];
-  const center = aCenter ?? geocode(aQuery, warnings);
+  const center = aCenter;
   const safeR = safeRadius(aRadius, warnings);
   const safeT = safeTypes(aTypes, warnings);
 
