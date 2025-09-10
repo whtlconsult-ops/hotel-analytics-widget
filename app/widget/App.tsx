@@ -330,7 +330,11 @@ function CalendarHeatmap({
 export default function App(){
   const [notices, setNotices] = useState<string[]>([]);
   const [mode, setMode] = useState<"zone"|"competitor">("zone");
-  const [query, setQuery] = useState("Castiglion Fiorentino");
+  const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 }; // Firenze
+  const DEFAULT_QUERY = "Firenze";
+
+  const [query, setQuery] = useState(DEFAULT_QUERY);
+
   const [radius, setRadius] = useState<number>(20);
   const [monthISO, setMonthISO] = useState("2025-08-01");
   const [types, setTypes] = useState<string[]>(["agriturismo","b&b","hotel"]);
@@ -350,14 +354,14 @@ export default function App(){
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
   // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
-  const [aQuery, setAQuery] = useState(query);
+  const [aQuery, setAQuery] = useState(DEFAULT_QUERY);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
   // Centro applicato (settato via geocoding o click mappa)
-  const [aCenter, setACenter] = useState<(LatLng & { label?: string }) | null>(null);
+  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
 
   const hasChanges = useMemo(() =>
     aQuery !== query ||
@@ -409,7 +413,7 @@ export default function App(){
   useEffect(() => {
     if (!search) return;
 
-    const q = search.get("q") ?? query;
+    const q = search.get("q") ?? DEFAULT_QUERY;
     const r = parseNumParam(search.get("r"), radius);
     const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
 
@@ -431,6 +435,7 @@ export default function App(){
 
     // Applicati
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
+    if (!search.get("q")) setACenter(DEFAULT_CENTER);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -977,20 +982,24 @@ export default function App(){
           </div>
           <button
             className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            onClick={() => {
-  // UI (live)
-  setQuery("");
+            onClick={handleReset}
+  title="Reset"
+>
+function handleReset() {
+ // UI
+  setQuery(DEFAULT_QUERY);
   setRadius(20);
-  setMonthISO(new Date().toISOString().slice(0, 7) + "-01");
+  setMonthISO(`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`);
   setTypes([...STRUCTURE_TYPES]);
   setMode("zone");
 
-  // “Applicati” (analisi corrente)
-  setAQuery("");
+  // Applicati
+  setAQuery(DEFAULT_QUERY);
   setARadius(20);
-  setAMonthISO(new Date().toISOString().slice(0, 7) + "-01");
+  setAMonthISO(`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`);
   setATypes([...STRUCTURE_TYPES]);
   setAMode("zone");
+  setACenter(DEFAULT_CENTER); // 👈 mantiene la mappa viva su Firenze
 
   // Centro azzerato => la mappa si porta sull’Italia grazie a fallbackBounds
   setACenter(null);
@@ -1008,13 +1017,24 @@ export default function App(){
   setWeatherByDate({});
   setShareUrl("");
 
-  // Pulisci l’URL (niente querystring)
-  try {
-    const clean = (typeof window !== "undefined") ? location.pathname : "/";
-    router.replace(clean, { scroll: false });
-    if (typeof window !== "undefined") window.history.replaceState({}, "", clean);
-  } catch {}
-}}
+  // Aggiorna URL condivisibile
+  replaceUrlWithState(
+    router,
+    (typeof window !== "undefined" ? location.pathname : "/"),
+    {
+      q: DEFAULT_QUERY,
+      r: 20,
+      m: `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`,
+      t: [...STRUCTURE_TYPES],
+      mode: "zone",
+      dataSource,
+      csvUrl,
+      gsId,
+      gsGid,
+      gsSheet,
+    }
+  );
+}
             title="Reset"
           >
             <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
@@ -1207,19 +1227,17 @@ export default function App(){
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               {normalized.center ? (
-               <LocationMap
-  center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
-  radius={normalized.center ? normalized.safeR * 1000 : null}
-  label={aQuery || "Località"}
-  onClick={onMapClick}
-  // 👉 bounds Italia: così al reset vedi subito la mappa
-  fallbackBounds={[[35.4897, 6.6267],[47.0910, 18.5204]]}
-/>
-              ) : (
-                <div className="h-full flex items-center justify-center text-sm text-slate-500">
-                  Inserisci una località valida per visualizzare la mappa e generare l'analisi
-                </div>
-              )}
+  <LocationMap
+    center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
+    radius={normalized.safeR * 1000}
+    label={aQuery || "Località"}
+    onClick={onMapClick}
+  />
+) : (
+  <div className="h-full flex items-center justify-center text-sm text-slate-500">
+    Inserisci una località valida per visualizzare la mappa e generare l'analisi
+  </div>
+)}
             </div>
           </div>
 
