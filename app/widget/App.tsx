@@ -841,168 +841,164 @@ export default function App(){
     )
   ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
 
-  /* =========== UI =========== */
-  function TypesMultiSelect({
-    value,
-    onChange,
-    allTypes,
-    labels,
-  }: {
-    value: string[];
-    onChange: (next: string[]) => void;
-    allTypes: readonly string[];
-    labels: Record<string, string>;
-  }) {
-    const [open, setOpen] = useState(false);
-    const containerRef = React.useRef<HTMLDivElement | null>(null);
+ /* =========== UI =========== */
 
-    useEffect(() => {
-      function onClickOutside(e: MouseEvent) {
-        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-      }
-      document.addEventListener("mousedown", onClickOutside);
-      return () => document.removeEventListener("mousedown", onClickOutside);
-    }, []);
+// Default “sicuri” per Reset e primo load
+const DEFAULT_QUERY = "Firenze";
+const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 };
 
-    function toggle(t: string) {
-      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+// Multi-select Tipologie (ok così)
+function TypesMultiSelect({
+  value,
+  onChange,
+  allTypes,
+  labels,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  allTypes: readonly string[];
+  labels: Record<string, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
     }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
 
-    const summary =
-      value.length === 0
-        ? "Nessuna"
-        : value.length === allTypes.length
-        ? "Tutte"
-        : `${value.length} selezionate`;
+  function toggle(t: string) {
+    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+  }
 
-    return (
-      <div className="relative" ref={containerRef}>
-        <span className="block text-sm font-medium text-neutral-700 mb-1">
-          Tipologie
+  const summary =
+    value.length === 0
+      ? "Nessuna"
+      : value.length === allTypes.length
+      ? "Tutte"
+      : `${value.length} selezionate`;
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <span className="block text-sm font-medium text-neutral-700 mb-1">
+        Tipologie
+      </span>
+
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
+      >
+        <span className="truncate">
+          {summary}
+          {value.length > 0 && value.length < allTypes.length ? (
+            <span className="ml-2 text-xs text-neutral-500">
+              {value
+                .slice()
+                .sort()
+                .map((t) => labels[t] || t)
+                .slice(0, 2)
+                .join(", ")}
+              {value.length > 2 ? "…" : ""}
+            </span>
+          ) : null}
         </span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+      </button>
 
-        {/* Trigger */}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
+      {/* Panel */}
+      {open && (
+        <div
+          className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+          role="listbox"
+          aria-label="Seleziona tipologie"
         >
-          <span className="truncate">
-            {summary}
-            {value.length > 0 && value.length < allTypes.length ? (
-              <span className="ml-2 text-xs text-neutral-500">
-                {value
-                  .slice()
-                  .sort()
-                  .map((t) => labels[t] || t)
-                  .slice(0, 2)
-                  .join(", ")}
-                {value.length > 2 ? "…" : ""}
-              </span>
-            ) : null}
-          </span>
-          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
-        </button>
-
-        {/* Panel */}
-        {open && (
-          <div
-            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-            role="listbox"
-            aria-label="Seleziona tipologie"
-          >
-            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
-              <ul className="space-y-1">
-                {allTypes.map((t) => {
-                  const active = value.includes(t);
-                  return (
-                    <li key={t}>
-                      <button
-                        type="button"
-                        onClick={() => toggle(t)}
-                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
-                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
-                        role="option"
-                        aria-selected={active}
+          <div className="pr-1 md:max_h-none md:overflow-visible max-h-none overflow-visible">
+            <ul className="space-y-1">
+              {allTypes.map((t) => {
+                const active = value.includes(t);
+                return (
+                  <li key={t}>
+                    <button
+                      type="button"
+                      onClick={() => toggle(t)}
+                      className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
+                        ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                      role="option"
+                      aria-selected={active}
+                    >
+                      <span
+                        className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
+                          ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
                       >
-                        <span
-                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
-                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
-                        >
-                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                        </span>
-                        <span className="text-neutral-800">{labels[t] || t}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+                        {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                      </span>
+                      <span className="text-neutral-800">{labels[t] || t}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
-            {/* Footer azioni rapide */}
-            <div className="mt-2 flex items-center justify-between border-t pt-2">
+          {/* Footer azioni rapide */}
+          <div className="mt-2 flex items-center justify-between border-t pt-2">
+            <button
+              type="button"
+              className="text-xs text-neutral-600 hover:text-neutral-900"
+              onClick={() => onChange([])}
+            >
+              Pulisci
+            </button>
+            <div className="space-x-2">
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([])}
+                onClick={() => onChange([...allTypes])}
               >
-                Pulisci
+                Seleziona tutte
               </button>
-              <div className="space-x-2">
-                <button
-                  type="button"
-                  className="text-xs text-neutral-600 hover:text-neutral-900"
-                  onClick={() => onChange([...allTypes])}
-                >
-                  Seleziona tutte
-                </button>
-                <button
-                  type="button"
-                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                  onClick={() => setOpen(false)}
-                >
-                  Applica
-                </button>
-              </div>
+              <button
+                type="button"
+                className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
+                onClick={() => setOpen(false)}
+              >
+                Applica
+              </button>
             </div>
           </div>
-        )}
-      </div>
-    );
-  }
+        </div>
+      )}
+    </div>
+  );
+}
 
-  return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Topbar */}
-      <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
-            <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
-          </div>
-          <button
-            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            onClick={handleReset}
-  title="Reset"
->
+// Link condivisibile
+const [shareUrl, setShareUrl] = useState<string>("");
+
+// RESET corretto (fuori dal JSX!)
 function handleReset() {
- // UI
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+
+  // Stato UI
   setQuery(DEFAULT_QUERY);
   setRadius(20);
-  setMonthISO(`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`);
+  setMonthISO(month);
   setTypes([...STRUCTURE_TYPES]);
   setMode("zone");
 
-  // Applicati
+  // Stato APPLICATO
   setAQuery(DEFAULT_QUERY);
   setARadius(20);
-  setAMonthISO(`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`);
+  setAMonthISO(month);
   setATypes([...STRUCTURE_TYPES]);
   setAMode("zone");
-  setACenter(DEFAULT_CENTER); // 👈 mantiene la mappa viva su Firenze
-
-  // Centro azzerato => la mappa si porta sull’Italia grazie a fallbackBounds
-  setACenter(null);
+  setACenter(DEFAULT_CENTER); // la mappa resta visibile su Firenze
 
   // Sorgente dati
   setDataSource("none");
@@ -1012,19 +1008,19 @@ function handleReset() {
   setGsSheet("Sheet1");
   setStrictSheet(true);
 
-  // Avvisi / meteo / share link
+  // Pulizie
   setNotices([]);
   setWeatherByDate({});
   setShareUrl("");
 
-  // Aggiorna URL condivisibile
+  // URL
   replaceUrlWithState(
     router,
     (typeof window !== "undefined" ? location.pathname : "/"),
     {
       q: DEFAULT_QUERY,
       r: 20,
-      m: `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}-01`,
+      m: month,
       t: [...STRUCTURE_TYPES],
       mode: "zone",
       dataSource,
@@ -1035,344 +1031,323 @@ function handleReset() {
     }
   );
 }
-            title="Reset"
-          >
-            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
-          </button>
+
+return (
+  <div className="min-h-screen bg-slate-50">
+    {/* Topbar */}
+    <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
+      <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
+          <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
         </div>
+        <button
+          className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+          onClick={handleReset}
+          title="Reset"
+        >
+          <span className="inline-flex items-center gap-2">
+            <RefreshCw className="w-4 h-4" /> Reset
+          </span>
+        </button>
       </div>
+    </div>
 
-      {/* Body */}
-      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-        {/* SIDEBAR CONTROLLI */}
-        <aside className="space-y-6">
-          {/* Sorgente dati */}
-          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <div className="text-sm font-semibold">Sorgente Dati</div>
+    {/* Body */}
+    <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+      {/* SIDEBAR CONTROLLI */}
+      <aside className="space-y-6">
+        {/* Sorgente dati */}
+        <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+          <div className="text-sm font-semibold">Sorgente Dati</div>
 
+          <div className="flex items-center gap-2">
+            <label className="w-28 text-sm text-slate-700">Tipo</label>
+            <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+              <option value="none">Nessuna (demo)</option>
+              <option value="csv">CSV URL</option>
+              <option value="gsheet">Google Sheet</option>
+            </select>
+          </div>
+
+          {dataSource === "csv" && (
             <div className="flex items-center gap-2">
-              <label className="w-28 text-sm text-slate-700">Tipo</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
-                <option value="none">Nessuna (demo)</option>
-                <option value="csv">CSV URL</option>
-                <option value="gsheet">Google Sheet</option>
-              </select>
+              <label className="w-28 text-sm text-slate-700">CSV URL</label>
+              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
             </div>
+          )}
 
-            {dataSource === "csv" && (
+          {dataSource === "gsheet" && (
+            <>
               <div className="flex items-center gap-2">
-                <label className="w-28 text-sm text-slate-700">CSV URL</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+                <label className="w-28 text-sm text-slate-700">Sheet ID</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
               </div>
-            )}
-
-            {dataSource === "gsheet" && (
-              <>
-                <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Sheet ID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Nome foglio</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Sheet GID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Modalità</label>
-                  <div className="flex items-center gap-2">
-                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
-                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
-            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
-          </section>
-
-          {/* Località / Raggio / Mese / Tipologie */}
-          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-slate-700"/>
-              <label className="w-28 text-sm text-slate-700">Località</label>
-              <div className="flex gap-2 w-full">
-                <input
-                  className="border rounded px-2 h-9 w-full"
-                  placeholder="Città o indirizzo"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleSearchLocation();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="px-3 h-9 rounded border bg-white hover:bg-slate-50"
-                  onClick={handleSearchLocation}
-                  title="Cerca località"
-                >
-                  Cerca
-                </button>
+              <div className="flex items-center gap-2">
+                <label className="w-28 text-sm text-slate-700">Nome foglio</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
               </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Route className="h-5 w-5 text-slate-700"/>
-              <label className="w-28 text-sm text-slate-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-slate-700"/>
-              <label className="w-28 text-sm text-slate-700">Mese</label>
-              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
-            </div>
-
-            {/* Tipologie */}
-            <TypesMultiSelect
-              value={types}
-              onChange={setTypes}
-              allTypes={STRUCTURE_TYPES}
-              labels={typeLabels}
-            />
-
-            {/* Modalità + Pulsante + Link condivisibile */}
-            <div className="grid grid-cols-1 gap-3 mt-2">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="w-28 text-sm text-slate-700">Sheet GID</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+              </div>
+              <div className="flex items-center gap-2">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
-                <div className="inline-flex rounded-xl border overflow-hidden">
-                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+                <div className="flex items-center gap-2">
+                  <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                  <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
                 </div>
               </div>
+            </>
+          )}
 
-              <div>
-                <button
-                  className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={normalized.isBlocked || !hasChanges}
-                  title={
-                    normalized.isBlocked
-                      ? "Inserisci la località per procedere"
-                      : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")
+          {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
+          {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+          {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+        </section>
+
+        {/* Località / Raggio / Mese / Tipologie */}
+        <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-slate-700"/>
+            <label className="w-28 text-sm text-slate-700">Località</label>
+            <div className="flex gap-2 w-full">
+              <input
+                className="border rounded px-2 h-9 w-full"
+                placeholder="Città o indirizzo"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSearchLocation();
                   }
-                  onClick={() => {
-                    const next = {
-                      q: query, r: radius, m: monthISO, t: types, mode,
-                      dataSource, csvUrl, gsId, gsGid, gsSheet
-                    };
-                    setAQuery(next.q);
-                    setARadius(next.r);
-                    setAMonthISO(next.m);
-                    setATypes(next.t);
-                    setAMode(next.mode);
+                }}
+              />
+              <button
+                type="button"
+                className="px-3 h-9 rounded border bg-white hover:bg-slate-50"
+                onClick={handleSearchLocation}
+                title="Cerca località"
+              >
+                Cerca
+              </button>
+            </div>
+          </div>
 
-                    const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
-                    setShareUrl(url);
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4 mr-2"/>
-                  {hasChanges ? "Genera Analisi" : "Aggiornato"}
-                </button>
+          <div className="flex items-center gap-2">
+            <Route className="h-5 w-5 text-slate-700"/>
+            <label className="w-28 text-sm text-slate-700">Raggio</label>
+            <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+              {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+            </select>
+          </div>
 
-                {/* Link condivisibile */}
-                {shareUrl && (
-                  <div className="mt-2">
-                    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
-                    <input
-                      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
-                      value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
-                      readOnly
-                      onFocus={(e)=> e.currentTarget.select()}
-                    />
-                  </div>
-                )}
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 text-slate-700"/>
+            <label className="w-28 text-sm text-slate-700">Mese</label>
+            <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+          </div>
+
+          {/* Tipologie */}
+          <TypesMultiSelect
+            value={types}
+            onChange={setTypes}
+            allTypes={STRUCTURE_TYPES}
+            labels={typeLabels}
+          />
+
+          {/* Modalità + Pulsante + Link condivisibile */}
+          <div className="grid grid-cols-1 gap-3 mt-2">
+            <div className="flex items-center gap-3">
+              <label className="w-28 text-sm text-slate-700">Modalità</label>
+              <div className="inline-flex rounded-xl border overflow-hidden">
+                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
               </div>
+            </div>
+
+            <div>
+              <button
+                className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={normalized.isBlocked || !hasChanges}
+                title={
+                  normalized.isBlocked
+                    ? "Inserisci la località per procedere"
+                    : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")
+                }
+                onClick={() => {
+                  const next = {
+                    q: query, r: radius, m: monthISO, t: types, mode,
+                    dataSource, csvUrl, gsId, gsGid, gsSheet
+                  };
+                  setAQuery(next.q);
+                  setARadius(next.r);
+                  setAMonthISO(next.m);
+                  setATypes(next.t);
+                  setAMode(next.mode);
+
+                  const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
+                  setShareUrl(url);
+                }}
+              >
+                <RefreshCw className="h-4 w-4 mr-2"/>
+                {hasChanges ? "Genera Analisi" : "Aggiornato"}
+              </button>
+
+              {shareUrl && (
+                <div className="mt-2">
+                  <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
+                  <input
+                    className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
+                    value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
+                    readOnly
+                    onFocus={(e)=> e.currentTarget.select()}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Avvisi */}
+        {notices.length>0 && (
+          <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+            <div className="text-sm font-semibold text-amber-900">Avvisi</div>
+            <ul className="list-disc ml-5 text-sm text-amber-900">
+              {notices.map((n,i)=> <li key={i}>{n}</li>)}
+            </ul>
+          </section>
+        )}
+
+        {/* Qualità dati (sezione opzionale) */}
+        {dataStats && (
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
+            <div className="text-sm font-semibold">Qualità dati</div>
+            <div className="text-xs text-slate-600">
+              Righe totali: {dataStats.total} · Valide: {dataStats.valid} · Scartate: {dataStats.discarded}
             </div>
           </section>
+        )}
+      </aside>
 
-          {/* Avvisi */}
-          {notices.length>0 && (
-            <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-              <div className="text-sm font-semibold text-amber-900">Avvisi</div>
-              <ul className="list-disc ml-5 text-sm text-amber-900">
-                {notices.map((n,i)=> <li key={i}>{n}</li>)}
-              </ul>
-            </section>
-          )}
-
-          {/* Qualità dati (sezione opzionale, lascia invariata se l’avevi già) */}
-          {dataStats && (
-            <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
-              <div className="text-sm font-semibold">Qualità dati</div>
-              <div className="text-xs text-slate-600">
-                Righe totali: {dataStats.total} · Valide: {dataStats.valid} · Scartate: {dataStats.discarded}
+      {/* MAIN */}
+      <main className="space-y-6">
+        {/* MAPPA */}
+        <div className="bg-white rounded-2xl border shadow-sm p-0">
+          <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
+            {normalized.center ? (
+              <LocationMap
+                center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
+                radius={normalized.safeR * 1000}
+                label={aQuery || "Località"}
+                onClick={onMapClick}
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-slate-500">
+                Inserisci una località valida per visualizzare la mappa e generare l'analisi
               </div>
-            </section>
-          )}
-        </aside>
-
-        {/* MAIN */}
-        <main className="space-y-6">
-          {/* MAPPA */}
-          <div className="bg-white rounded-2xl border shadow-sm p-0">
-            <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
-              {normalized.center ? (
-  <LocationMap
-    center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
-    radius={normalized.safeR * 1000}
-    label={aQuery || "Località"}
-    onClick={onMapClick}
-  />
-) : (
-  <div className="h-full flex items-center justify-center text-sm text-slate-500">
-    Inserisci una località valida per visualizzare la mappa e generare l'analisi
-  </div>
-)}
-            </div>
+            )}
           </div>
+        </div>
 
-          {/* CALENDARIO */}
-          <div className="bg-white rounded-2xl border shadow-sm p-6">
-            <div className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
-              {meteoCovered > 0 && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
-                  Meteo attivo · {meteoCovered} gg
-                </span>
-              )}
-            </div>
-            <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-
+        {/* CALENDARIO */}
+        <div className="bg-white rounded-2xl border shadow-sm p-6">
+          <div className="text-lg font-semibold mb-3 flex items-center gap-2">
+            <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
+            {meteoCovered > 0 && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                Meteo attivo · {meteoCovered} gg
+              </span>
+            )}
           </div>
+          <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+        </div>
 
-          {/* GRAFICI */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Provenienza */}
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-              {Array.isArray(provenance) && provenance.length>0 ? (
-                <ResponsiveContainer width="100%" height={360}>
-                  <PieChart margin={{ bottom: 24 }}>
-                    <defs>
-                      {provenance.map((_, i) => {
-                        const base = solidColor(i);
-                        return (
-                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.25)} />
-                            <stop offset="100%" stopColor={shade(base, -0.12)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-
-                    <Pie
-                      data={provenance}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={THEME.chart.pie.innerRadius}
-                      outerRadius={THEME.chart.pie.outerRadius}
-                      paddingAngle={THEME.chart.pie.paddingAngle}
-                      cornerRadius={THEME.chart.pie.cornerRadius}
-                      labelLine={false}
-                      label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
-                      isAnimationActive={true}
-                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
-                    >
-                      {provenance.map((_, i) => (
-                        <Cell
-                          key={i}
-                          fill={`url(#gradSlice-${i})`}
-                          stroke="#ffffff"
-                          strokeWidth={2}
-                        />
-                      ))}
-                    </Pie>
-
-                    <RTooltip
-                      formatter={(val: any, name: any, props: any) => {
-                        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
-                        const pct = total ? Math.round((props?.value / total) * 100) : 0;
-                        return [`${props?.value} (${pct}%)`, name];
-                      }}
-                    />
-                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="text-xs text-slate-500">Nessun dato</div>
-              )}
-            </div>
-
-            {/* LOS */}
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-              {Array.isArray(los) && los.length>0 ? (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={los} margin={THEME.chart.bar.margin}>
-                    <defs>
-                      {los.map((_, i) => {
-                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
-                        return (
-                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.2)} />
-                            <stop offset="100%" stopColor={shade(base, -0.15)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
-                    <YAxis />
-                    <RTooltip />
-                    <Bar dataKey="value" radius={[8,8,0,0]}>
-                      {los.map((_,i)=> (
-                        <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="text-xs text-slate-500">Nessun dato</div>
-              )}
-            </div>
-          </div>
-
-          {/* Canali */}
+        {/* GRAFICI */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Provenienza */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-            {Array.isArray(channels) && channels.length>0 ? (
+            <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+            {Array.isArray(provenance) && provenance.length>0 ? (
               <ResponsiveContainer width="100%" height={360}>
-                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                <PieChart margin={{ bottom: 24 }}>
                   <defs>
-                    {channels.map((_, i) => {
-                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                    {provenance.map((_, i) => {
+                      const base = solidColor(i);
                       return (
-                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.18)} />
+                        <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.25)} />
+                          <stop offset="100%" stopColor={shade(base, -0.12)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+
+                  <Pie
+                    data={provenance}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={THEME.chart.pie.innerRadius}
+                    outerRadius={THEME.chart.pie.outerRadius}
+                    paddingAngle={THEME.chart.pie.paddingAngle}
+                    cornerRadius={THEME.chart.pie.cornerRadius}
+                    labelLine={false}
+                    label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
+                    isAnimationActive={true}
+                    style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
+                  >
+                    {provenance.map((_, i) => (
+                      <Cell
+                        key={i}
+                        fill={`url(#gradSlice-${i})`}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                      />
+                    ))}
+                  </Pie>
+
+                  <RTooltip
+                    formatter={(val: any, name: any, props: any) => {
+                      const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+                      const pct = total ? Math.round((props?.value / total) * 100) : 0;
+                      return [`${props?.value} (${pct}%)`, name];
+                    }}
+                  />
+                  <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-xs text-slate-500">Nessun dato</div>
+            )}
+          </div>
+
+          {/* LOS */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+            {Array.isArray(los) && los.length>0 ? (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={los} margin={THEME.chart.bar.margin}>
+                  <defs>
+                    {los.map((_, i) => {
+                      const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                      return (
+                        <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.2)} />
                           <stop offset="100%" stopColor={shade(base, -0.15)} />
                         </linearGradient>
                       );
                     })}
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
+                  <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
                   <YAxis />
                   <RTooltip />
                   <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {channels.map((_,i)=> (
-                      <Cell key={i} fill={`url(#gradBarCH-${i})`} />
+                    {los.map((_,i)=> (
+                      <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -1381,48 +1356,82 @@ function handleReset() {
               <div className="text-xs text-slate-500">Nessun dato</div>
             )}
           </div>
+        </div>
 
-          {/* Andamento Domanda */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">
-              Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
-            </div>
-            {(!demand || demand.length===0) ? (
-              <div className="text-sm text-slate-500">In attesa di località valida…</div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={demand}>
-                  <defs>
-                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
-                    </linearGradient>
-                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
+        {/* Canali */}
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+          {Array.isArray(channels) && channels.length>0 ? (
+            <ResponsiveContainer width="100%" height={360}>
+              <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                <defs>
+                  {channels.map((_, i) => {
+                    const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                    return (
+                      <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={shade(base, 0.18)} />
+                        <stop offset="100%" stopColor={shade(base, -0.15)} />
+                      </linearGradient>
+                    );
+                  })}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
+                <YAxis />
+                <RTooltip />
+                <Bar dataKey="value" radius={[8,8,0,0]}>
+                  {channels.map((_,i)=> (
+                    <Cell key={i} fill={`url(#gradBarCH-${i})`} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="text-xs text-slate-500">Nessun dato</div>
+          )}
+        </div>
 
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
-                  <YAxis />
-                  <RTooltip />
-                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    stroke="url(#gradLineStroke)"
-                    strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
-                    isAnimationActive
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+        {/* Andamento Domanda */}
+        <div className="bg-white rounded-2xl border shadow-sm p-4">
+          <div className="text-sm font-semibold mb-2">
+            Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
           </div>
-        </main>
-      </div>
+          {(!demand || demand.length===0) ? (
+            <div className="text-sm text-slate-500">In attesa di località valida…</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={demand}>
+                <defs>
+                  <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
+                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
+                  </linearGradient>
+                  <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
+                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
+                <YAxis />
+                <RTooltip />
+                <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke="url(#gradLineStroke)"
+                  strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                  dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
+                  activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
+                  isAnimationActive
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </main>
     </div>
-  );
+  </div>
+);
 }
