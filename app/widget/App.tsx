@@ -867,12 +867,12 @@ export default function App(){
     const containerRef = React.useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
-      function onClickOutside(e: MouseEvent) {
-        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-      }
-      document.addEventListener("pointerdown", onClickOutside, { capture: true });
-return () => document.removeEventListener("pointerdown", onClickOutside, { capture: true } as any);
-    }, []);
+  function onClickOutside(e: MouseEvent) {
+    if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+  }
+  document.addEventListener("mousedown", onClickOutside); // 👈 niente capture
+  return () => document.removeEventListener("mousedown", onClickOutside);
+}, []);
 
     function toggle(t: string) {
       onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
@@ -922,6 +922,7 @@ return () => document.removeEventListener("pointerdown", onClickOutside, { captu
   aria-label="Seleziona tipologie"
   onMouseDown={(e) => e.stopPropagation()}   // 👈 evita che il “mousedown” arrivi al document
   onClick={(e) => e.stopPropagation()}       // 👈 extra-sicurezza
+  onPointerDown={(e) => e.stopPropagation()}
 >
             <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
               <ul className="space-y-1">
