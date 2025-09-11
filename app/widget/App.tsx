@@ -1095,6 +1095,14 @@ export default function App(){
               <input type="month" value={aMonthISO ? aMonthISO.slice(0,7) : ""} onChange={e=> setAMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
+{/* Tipologie */}
+<TypesMultiSelect
+  value={types}
+  onChange={setTypes}
+  allTypes={STRUCTURE_TYPES}
+  labels={typeLabels}
+/>
+
             {/* Modalità + Pulsante + Link condivisibile */}
             <div className="grid grid-cols-1 gap-3 mt-2">
               <div className="flex items-center gap-3">
