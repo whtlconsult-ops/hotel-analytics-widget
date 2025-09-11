@@ -127,6 +127,9 @@ function contrastColor(rgb:string){
   const brightness = 0.299*r + 0.587*g + 0.114*b;
   return brightness < 150 ? "#fff" : "#000";
 }
+/* =========================
+   Altre utility (date/parametri)
+========================= */
 function safeParseMonthISO(v:string|undefined|null, warnings:string[]): string{
   const now = new Date();
   const def = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
@@ -149,41 +152,22 @@ function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
   }
 }
 function safeRadius(r:number, warnings:string[]): number{
-  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){
+  const allowed = new Set<number>(RADIUS_OPTIONS as readonly number[]);
+  if(!allowed.has(r)){
     warnings.push("Raggio non valido: fallback 20km");
     return 20;
   }
   return r;
 }
 function safeTypes(ts:string[], warnings:string[]): string[]{
+  const all = STRUCTURE_TYPES as readonly string[];
   if(!Array.isArray(ts) || ts.length===0){
     warnings.push("Nessuna tipologia selezionata: fallback a Tutte");
-    return [...STRUCTURE_TYPES];
+    return [...all];
   }
-  return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
+  return ts.filter(t=> (all as readonly string[]).includes(t));
 }
 
-/* ======= Geocoding di base (per fallback su nomi “noti”) ======= */
-const knownPlaces: Record<string,LatLng> = {
-  "castiglion fiorentino": { lat: 43.3406, lng: 11.9177 },
-  "arezzo": { lat: 43.4633, lng: 11.8797 },
-  "firenze": { lat: 43.7696, lng: 11.2558 },
-  "siena": { lat: 43.3188, lng: 11.3308 },
-};
-function geocodeLocal(query: string, warnings: string[]): (LatLng & { label?: string }) | null {
-  const key = (query||"").trim().toLowerCase();
-  if(!key){
-    warnings.push("Località mancante: inserisci una località per procedere");
-    return null;
-  }
-  if(knownPlaces[key]) return { ...knownPlaces[key], label: query };
-  // se non è nota, lasciamo la risoluzione alle API e segnaliamo solo se manca del tutto
-  return null;
-}
-
-/* =========================
-   Helper URL share
-========================= */
 function parseListParam(s?: string | null) {
   if (!s) return [];
   return s.split(",").map(decodeURIComponent).map(v => v.trim()).filter(Boolean);
@@ -231,7 +215,7 @@ function replaceUrlWithState(
 }
 
 /* =========================
-   Calendario Heatmap (con badge meteo)
+   Calendario Heatmap (+ badge meteo)
 ========================= */
 function isWithinNextDays(d: Date, n = 7) {
   const today = new Date(); today.setHours(0,0,0,0);
@@ -255,12 +239,9 @@ function CalendarHeatmap({
 
   return (
     <div className="w-full">
-      {/* Intestazione giorni */}
       <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
         {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
       </div>
-
-      {/* Griglia */}
       <div className="grid grid-cols-7 gap-3">
         {Array.from({length: rows*7}).map((_,i)=>{
           const dayIndex = i - firstDow;
@@ -277,33 +258,21 @@ function CalendarHeatmap({
 
           return (
             <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
-              {/* Top half: giorno + settimana */}
               <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
                 <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
                 <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
               </div>
-
-              {/* Bottom half: ADR con sfondo domanda */}
               <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
                 <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
               </div>
-
-              {/* Badge Festività */}
               {dayData?.holidayName ? (
-                <div
-                  className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500"
-                  title={dayData.holidayName}
-                />
+                <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
               ) : null}
-
-              {/* Temperatura */}
               {dayData?.wx?.t != null ? (
                 <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">
                   {dayData.wx.t.toFixed(0)}°C
                 </div>
               ) : null}
-
-              {/* Icona meteo (prossimi 7 giorni) */}
               {dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
                 <div className="absolute bottom-1 left-1" title="Previsione">
                   <WeatherIcon kind={codeToKind(dayData.wx.code)} className="h-[18px] w-[18px]" />
@@ -313,8 +282,6 @@ function CalendarHeatmap({
           )
         })}
       </div>
-
-      {/* Legenda */}
       <div className="mt-3 flex items-center justify-center gap-4">
         <span className="text-xs">Bassa domanda</span>
         <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
@@ -325,20 +292,29 @@ function CalendarHeatmap({
 }
 
 /* =========================
-   APP
+   APP (stato + logica, fino a prima del JSX)
 ========================= */
 export default function App(){
+  // Default sicuri per reset/landing
+  const DEFAULT_QUERY = "Firenze";
+  const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 }; // Firenze
+
+  // Router + query
+  const router = useRouter();
+  const search = useSearchParams();
+
+  // Stato UI
   const [notices, setNotices] = useState<string[]>([]);
   const [mode, setMode] = useState<"zone"|"competitor">("zone");
-  const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 }; // Firenze
-  const DEFAULT_QUERY = "Firenze";
-
   const [query, setQuery] = useState(DEFAULT_QUERY);
-
   const [radius, setRadius] = useState<number>(20);
-  const [monthISO, setMonthISO] = useState("2025-08-01");
+  const [monthISO, setMonthISO] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+  });
   const [types, setTypes] = useState<string[]>(["agriturismo","b&b","hotel"]);
 
+  // Dati esterni
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
@@ -346,75 +322,27 @@ export default function App(){
   const [gsGid, setGsGid] = useState("");
   const [strictSheet, setStrictSheet] = useState(true);
 
+  // Dataset caricato
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Festività/meteo
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
-// RESET: porta i filtri allo stato base e mostra l’Italia intera in mappa
-function handleReset() {
-  const now = new Date();
-  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-
-  // UI
-  setQuery("");                 // campo località vuoto
-  setRadius(20);
-  setMonthISO(month);
-  setTypes([...STRUCTURE_TYPES]);
-  setMode("zone");
-
-  // Stato "applicato"
-  setAQuery("");
-  setARadius(20);
-  setAMonthISO(month);
-  setATypes([...STRUCTURE_TYPES]);
-  setAMode("zone");
-  setACenter(null);             // 👈 null = mappa su Italia (fallbackBounds)
-
-  // Sorgente dati
-  setDataSource("none");
-  setCsvUrl("");
-  setGsId("");
-  setGsGid("");
-  setGsSheet("Sheet1");
-  setStrictSheet(true);
-
-  // Varie
-  setNotices([]);
-  setWeatherByDate({});
-  setShareUrl("");
-
-  // Aggiorna URL
-  replaceUrlWithState(
-    router,
-    (typeof window !== "undefined" ? location.pathname : "/"),
-    {
-      q: "",
-      r: 20,
-      m: month,
-      t: [...STRUCTURE_TYPES],
-      mode: "zone",
-      dataSource: "none",
-      csvUrl: "",
-      gsId: "",
-      gsGid: "",
-      gsSheet: "Sheet1",
-    }
-  );
-}
-
-  // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
+  // Stato APPLICATO (si aggiorna con "Genera Analisi" o geocoding/click)
   const [aQuery, setAQuery] = useState(DEFAULT_QUERY);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
+  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
 
-  // Centro applicato (settato via geocoding o click mappa)
-  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null);
+  // Link condivisibile
+  const [shareUrl, setShareUrl] = useState<string>("");
 
+  // Cambi rispetto agli applicati
   const hasChanges = useMemo(() =>
     aQuery !== query ||
     aRadius !== radius ||
@@ -423,49 +351,37 @@ function handleReset() {
     aTypes.join(",") !== types.join(","),
   [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
 
-  // Validazione: stats/issues
-  const [dataStats, setDataStats] = useState<DataStats | null>(null);
-  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
-  const [showIssueDetails] = useState(false); // mantieni se avevi il dettaglio
-
-  // Normalizzazione — usa gli *applicati*
+  // Normalizzazione (usa sempre i valori APPLICATI)
   const normalized: Normalized = useMemo(()=>{
-  const warnings: string[] = [];
-  const center = aCenter;
-  const safeR = safeRadius(aRadius, warnings);
-  const safeT = safeTypes(aTypes, warnings);
+    const warnings: string[] = [];
+    const center = aCenter;
+    const safeR = safeRadius(aRadius, warnings);
+    const safeT = safeTypes(aTypes, warnings);
+    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
+    return {
+      warnings,
+      safeMonthISO,
+      safeDays,
+      center: center ?? null,
+      safeR,
+      safeT,
+      isBlocked: !center, // blocca solo cose che richiedono coordinate (meteo/mappa)
+    };
+  }, [aMonthISO, aRadius, aTypes, aCenter]);
 
-  // 👉 calcola SEMPRE mese e giorni, anche senza center
-  const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
-  const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
-
-  return {
-    warnings,
-    safeMonthISO,
-    safeDays,
-    center: center ?? null,
-    safeR,
-    safeT,
-    isBlocked: !center,   // true solo per funzioni che richiedono il center (meteo, raggio)
-  };
-}, [aMonthISO, aQuery, aRadius, aTypes, aCenter]);
-
-  // Avvisi (UI)
+  // Sincronizza avvisi
   useEffect(()=>{
-    const warningsKey = normalized.warnings.join("|");
-    setNotices(prev => (prev.join("|") === warningsKey ? prev : normalized.warnings));
+    const wKey = normalized.warnings.join("|");
+    setNotices(prev => (prev.join("|") === wKey ? prev : normalized.warnings));
   }, [normalized.warnings]);
 
-  /* ---------- URL share ---------- */
-  const router = useRouter();
-  const search = useSearchParams();
-
-  // Inizializza stato da URL al mount
+  /* ---------------- URL → stato (prima render) ---------------- */
   useEffect(() => {
     if (!search) return;
 
     const q = search.get("q") ?? DEFAULT_QUERY;
-    const r = parseNumParam(search.get("r"), radius);
+    const r = parseNumParam(search.get("r"), 20);
     const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
 
     const rawT = parseListParam(search.get("t"));
@@ -480,20 +396,19 @@ function handleReset() {
     const gid = search.get("gid") ?? gsGid;
     const sheet = search.get("sheet") ?? gsSheet;
 
-    // UI state
+    // UI
     setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
     setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
 
-    // Applicati
+    // APPLICATI
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
+
+    // Se non c'è una q nell'URL, centra su Firenze
     if (!search.get("q")) setACenter(DEFAULT_CENTER);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* =========================
-     Azioni: geocoding & reverse geocoding
-  ========================== */
-  // Cerca località digitata → /api/external/geocode
+  /* ---------------- Azioni: geocoding / reverse geocoding ---------------- */
   const handleSearchLocation = useCallback(async () => {
     const q = (query || "").trim();
     if (!q) return;
@@ -508,8 +423,7 @@ function handleReset() {
       const name = String(item?.name ?? item?.display_name ?? q);
 
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        // Aggiorna centro applicato + query applicata (così la mappa ricalcola subito)
-        setACenter({ lat, lng, label: name });
+        setACenter({ lat, lng });
         setAQuery(name);
         setARadius(radius);
         setAMonthISO(monthISO);
@@ -531,7 +445,6 @@ function handleReset() {
     }
   }, [query, radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
 
-  // Reverse geocoding al click mappa → /api/external/reverse-geocode
   const onMapClick = useCallback(async ({ lat, lng }: { lat: number; lng: number }) => {
     let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     try {
@@ -542,9 +455,8 @@ function handleReset() {
       }
     } catch {/* ignore */}
 
-    // aggiorna UI e applicati
     setQuery(name);
-    setACenter({ lat, lng, label: name });
+    setACenter({ lat, lng });
     setAQuery(name);
     setARadius(radius);
     setAMonthISO(monthISO);
@@ -559,10 +471,7 @@ function handleReset() {
     setShareUrl(url);
   }, [radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
 
-  /* =========================
-     Festività & Meteo
-  ========================== */
-  // Festività IT per l'anno del mese selezionato (usa monthISO live)
+  /* ---------------- Festività & Meteo ---------------- */
   useEffect(() => {
     if (!monthISO) return;
     const y = Number(monthISO.slice(0, 4));
@@ -577,7 +486,6 @@ function handleReset() {
       .catch(() => {});
   }, [monthISO]);
 
-  // Meteo per centro + mese **APPLICATO** (allineato al calendario dopo "Genera Analisi" o dopo geocoding/click)
   useEffect(() => {
     if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
     const { lat, lng } = normalized.center;
@@ -599,9 +507,7 @@ function handleReset() {
       .catch(() => setWeatherByDate({}));
   }, [normalized.center, aMonthISO]);
 
-  /* =========================
-     CSV / GSheet Loader
-  ========================== */
+  /* ---------------- CSV / Google Sheet loader ---------------- */
   function smartSplit(line:string, d:string) {
     const out:string[] = [];
     let cur = "", inQuotes = false;
@@ -613,8 +519,8 @@ function handleReset() {
     }
     out.push(cur);
     return out
-      .map(s => s.replace(/^\uFEFF/, ""))    // BOM
-      .map(s => s.replace(/^"(.*)"$/,"$1")) // virgolette attorno al campo
+      .map(s => s.replace(/^\uFEFF/, ""))
+      .map(s => s.replace(/^"(.*)"$/,"$1"))
       .map(s => s.trim());
   }
   function parseCsv(text: string){
@@ -661,6 +567,12 @@ function handleReset() {
     }
     return null;
   }
+  type ValidationIssue = { row:number; field:string; reason:string; value:string };
+  type DataStats = { total:number; valid:number; discarded:number; issuesByField:Record<string,number> };
+
+  const [dataStats, setDataStats] = useState<DataStats | null>(null);
+  const [dataIssues, setDataIssues] = useState<ValidationIssue[]>([]);
+
   function normalizeRowsWithValidation(rows: any[], warnings: string[]) {
     const issues: ValidationIssue[] = [];
     const inc = (obj:Record<string,number>, k:string)=> (obj[k] = (obj[k]||0)+1, obj);
@@ -773,16 +685,13 @@ function handleReset() {
     return ()=> controller.abort();
   }, [dataSource, csvUrl, gsId, gsSheet, gsGid, strictSheet]);
 
-  // Mese scelto (da applicati)
+  // Derivati per la UI
   const monthDate = useMemo(()=> {
     if(normalized.isBlocked || !normalized.safeMonthISO) return new Date();
     try { return parseISO(normalized.safeMonthISO); } catch { return new Date(); }
   }, [normalized.safeMonthISO, normalized.isBlocked]);
 
-  // Calendario: domanda + ADR (+ festività/meteo)
   const calendarData = useMemo(() => {
-
-
     if (rawRows.length > 0) {
       const byDate = new Map<string, { date: Date; adrVals: number[]; pressVals: number[] }>();
       for (const d of normalized.safeDays) {
@@ -828,15 +737,13 @@ function handleReset() {
         wx: weatherByDate[dISO] || undefined,
       };
     });
-  }, [normalized.safeDays, normalized.isBlocked, aMode, rawRows, holidays, weatherByDate]);
+  }, [normalized.safeDays, aMode, rawRows, holidays, weatherByDate]);
 
-  // Badge “meteo attivo” (quanti giorni nei prossimi 7 hanno icona)
   const meteoCovered = useMemo(
     () => calendarData.filter((d: any) => d?.wx?.code != null && isWithinNextDays(d.date, 7)).length,
     [calendarData]
   );
 
-  // Grafici
   const provenance = useMemo(()=> rawRows.length>0 ? (
     Object.entries(rawRows.reduce((acc:Record<string,number>, r)=> { const k=r.provenance||"Altro"; acc[k]=(acc[k]||0)+1; return acc; }, {}))
       .map(([name,value])=>({name,value}))
@@ -886,513 +793,534 @@ function handleReset() {
   ), [rawRows]);
 
   const demand = useMemo(()=> (
-    normalized.isBlocked ? [] : (rawRows.length>0
-      ? calendarData.map(d=> ({ date: format(d.date, "d MMM", {locale:it}), value: d.pressure }))
-      : normalized.safeDays.map(d=> ({ date: format(d, "d MMM", {locale:it}), value: pressureFor(d) + rand(-10,10) }))
-    )
-  ), [normalized.safeDays, normalized.isBlocked, calendarData, rawRows]);
+    normalized.safeDays.map(d=> ({ date: format(d, "d MMM", {locale:it}), value: pressureFor(d) }))
+  ), [normalized.safeDays]);
 
- /* =========== UI =========== */
+  /* ---------------- Reset (riporta Firenze + stato pulito) ---------------- */
+  const handleReset = useCallback(() => {
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 
-// Default “sicuri” per Reset e primo load
-const DEFAULT_QUERY = "Firenze";
-const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 };
+    // Stato UI
+    setQuery(DEFAULT_QUERY);
+    setRadius(20);
+    setMonthISO(month);
+    setTypes([...STRUCTURE_TYPES]);
+    setMode("zone");
 
-// Multi-select Tipologie (ok così)
-function TypesMultiSelect({
-  value,
-  onChange,
-  allTypes,
-  labels,
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  allTypes: readonly string[];
-  labels: Record<string, string>;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
+    // Stato APPLICATO
+    setAQuery(DEFAULT_QUERY);
+    setARadius(20);
+    setAMonthISO(month);
+    setATypes([...STRUCTURE_TYPES]);
+    setAMode("zone");
+    setACenter(DEFAULT_CENTER); // mappa viva su Firenze
 
-  useEffect(() => {
-    function onClickOutside(e: MouseEvent) {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    // Sorgente dati
+    setDataSource("none");
+    setCsvUrl("");
+    setGsId("");
+    setGsGid("");
+    setGsSheet("Sheet1");
+    setStrictSheet(true);
+
+    // Pulizie
+    setNotices([]);
+    setWeatherByDate({});
+    setShareUrl("");
+
+    // URL
+    replaceUrlWithState(
+      router,
+      (typeof window !== "undefined" ? location.pathname : "/"),
+      {
+        q: DEFAULT_QUERY,
+        r: 20,
+        m: month,
+        t: [...STRUCTURE_TYPES],
+        mode: "zone",
+        dataSource: "none",
+        csvUrl: "",
+        gsId: "",
+        gsGid: "",
+        gsSheet: "Sheet1",
+      }
+    );
+  }, [router]);
+  /* =========================
+     Mini-componente: Multi-select Tipologie
+  ========================== */
+  function TypesMultiSelect({
+    value,
+    onChange,
+    allTypes,
+    labels,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    allTypes: readonly string[];
+    labels: Record<string, string>;
+  }) {
+    const [open, setOpen] = useState(false);
+    const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+      function onClickOutside(e: MouseEvent) {
+        if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+      }
+      document.addEventListener("mousedown", onClickOutside);
+      return () => document.removeEventListener("mousedown", onClickOutside);
+    }, []);
+
+    function toggle(t: string) {
+      onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
     }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, []);
 
-  function toggle(t: string) {
-    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-  }
+    const summary =
+      value.length === 0
+        ? "Nessuna"
+        : value.length === allTypes.length
+        ? "Tutte"
+        : `${value.length} selezionate`;
 
-  const summary =
-    value.length === 0
-      ? "Nessuna"
-      : value.length === allTypes.length
-      ? "Tutte"
-      : `${value.length} selezionate`;
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <span className="block text-sm font-medium text-neutral-700 mb-1">
-        Tipologie
-      </span>
-
-      {/* Trigger */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
-      >
-        <span className="truncate">
-          {summary}
-          {value.length > 0 && value.length < allTypes.length ? (
-            <span className="ml-2 text-xs text-neutral-500">
-              {value
-                .slice()
-                .sort()
-                .map((t) => labels[t] || t)
-                .slice(0, 2)
-                .join(", ")}
-              {value.length > 2 ? "…" : ""}
-            </span>
-          ) : null}
+    return (
+      <div className="relative" ref={containerRef}>
+        <span className="block text-sm font-medium text-neutral-700 mb-1">
+          Tipologie
         </span>
-        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
-      </button>
 
-      {/* Panel */}
-      {open && (
-        <div
-          className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-          role="listbox"
-          aria-label="Seleziona tipologie"
+        {/* Trigger */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
         >
-          <div className="pr-1 md:max_h-none md:overflow-visible max-h-none overflow-visible">
-            <ul className="space-y-1">
-              {allTypes.map((t) => {
-                const active = value.includes(t);
-                return (
-                  <li key={t}>
-                    <button
-                      type="button"
-                      onClick={() => toggle(t)}
-                      className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
-                        ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
-                      role="option"
-                      aria-selected={active}
-                    >
-                      <span
-                        className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
-                          ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
-                      >
-                        {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
-                      </span>
-                      <span className="text-neutral-800">{labels[t] || t}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+          <span className="truncate">
+            {summary}
+            {value.length > 0 && value.length < allTypes.length ? (
+              <span className="ml-2 text-xs text-neutral-500">
+                {value
+                  .slice()
+                  .sort()
+                  .map((t) => labels[t] || t)
+                  .slice(0, 2)
+                  .join(", ")}
+                {value.length > 2 ? "…" : ""}
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+        </button>
 
-          {/* Footer azioni rapide */}
-          <div className="mt-2 flex items-center justify-between border-t pt-2">
-            <button
-              type="button"
-              className="text-xs text-neutral-600 hover:text-neutral-900"
-              onClick={() => onChange([])}
-            >
-              Pulisci
-            </button>
-            <div className="space-x-2">
+        {/* Panel */}
+        {open && (
+          <div
+            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+            role="listbox"
+            aria-label="Seleziona tipologie"
+          >
+            <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
+              <ul className="space-y-1">
+                {allTypes.map((t) => {
+                  const active = value.includes(t);
+                  return (
+                    <li key={t}>
+                      <button
+                        type="button"
+                        onClick={() => toggle(t)}
+                        className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition
+                          ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                        role="option"
+                        aria-selected={active}
+                      >
+                        <span
+                          className={`inline-flex h-5 w-5 items-center justify-center rounded-md border
+                            ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}
+                        >
+                          {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                        </span>
+                        <span className="text-neutral-800">{labels[t] || t}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {/* Footer azioni rapide */}
+            <div className="mt-2 flex items-center justify-between border-t pt-2">
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([...allTypes])}
+                onClick={() => onChange([])}
               >
-                Seleziona tutte
+                Pulisci
               </button>
-              <button
-                type="button"
-                className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                onClick={() => setOpen(false)}
-              >
-                Applica
-              </button>
+              <div className="space-x-2">
+                <button
+                  type="button"
+                  className="text-xs text-neutral-600 hover:text-neutral-900"
+                  onClick={() => onChange([...allTypes])}
+                >
+                  Seleziona tutte
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
+                  onClick={() => setOpen(false)}
+                >
+                  Applica
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Link condivisibile
-const [shareUrl, setShareUrl] = useState<string>("");
-
-// RESET corretto (fuori dal JSX!)
-function handleReset() {
-  const now = new Date();
-  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-
-  // Stato UI
-  setQuery(DEFAULT_QUERY);
-  setRadius(20);
-  setMonthISO(month);
-  setTypes([...STRUCTURE_TYPES]);
-  setMode("zone");
-
-  // Stato APPLICATO
-  setAQuery(DEFAULT_QUERY);
-  setARadius(20);
-  setAMonthISO(month);
-  setATypes([...STRUCTURE_TYPES]);
-  setAMode("zone");
-  setACenter(DEFAULT_CENTER); // la mappa resta visibile su Firenze
-
-  // Sorgente dati
-  setDataSource("none");
-  setCsvUrl("");
-  setGsId("");
-  setGsGid("");
-  setGsSheet("Sheet1");
-  setStrictSheet(true);
-
-  // Pulizie
-  setNotices([]);
-  setWeatherByDate({});
-  setShareUrl("");
-
-  // URL
-  replaceUrlWithState(
-    router,
-    (typeof window !== "undefined" ? location.pathname : "/"),
-    {
-      q: DEFAULT_QUERY,
-      r: 20,
-      m: month,
-      t: [...STRUCTURE_TYPES],
-      mode: "zone",
-      dataSource,
-      csvUrl,
-      gsId,
-      gsGid,
-      gsSheet,
-    }
-  );
-}
-
-return (
-  <div className="min-h-screen bg-slate-50">
-    {/* Topbar */}
-    <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
-      <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
-          <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
-        </div>
-        <button
-          className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-          onClick={handleReset}
-          title="Reset"
-        >
-          <span className="inline-flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" /> Reset
-          </span>
-        </button>
+        )}
       </div>
-    </div>
+    );
+  }
 
-    {/* Body */}
-    <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
-      {/* SIDEBAR CONTROLLI */}
-      <aside className="space-y-6">
-        {/* Sorgente dati */}
-        <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-          <div className="text-sm font-semibold">Sorgente Dati</div>
-
-          <div className="flex items-center gap-2">
-            <label className="w-28 text-sm text-slate-700">Tipo</label>
-            <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
-              <option value="none">Nessuna (demo)</option>
-              <option value="csv">CSV URL</option>
-              <option value="gsheet">Google Sheet</option>
-            </select>
+  /* =========================
+     JSX dell’App
+  ========================== */
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {/* Topbar */}
+      <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
+            <p className="text-sm text-slate-600">UI pulita: layout arioso, controlli chiari, grafici leggibili.</p>
           </div>
+          <button
+            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+            onClick={handleReset}
+            title="Reset"
+          >
+            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
+          </button>
+        </div>
+      </div>
 
-          {dataSource === "csv" && (
+      {/* Body */}
+      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+        {/* SIDEBAR CONTROLLI */}
+        <aside className="space-y-6">
+          {/* Sorgente dati */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="text-sm font-semibold">Sorgente Dati</div>
+
             <div className="flex items-center gap-2">
-              <label className="w-28 text-sm text-slate-700">CSV URL</label>
-              <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+              <label className="w-28 text-sm text-slate-700">Tipo</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+                <option value="none">Nessuna (demo)</option>
+                <option value="csv">CSV URL</option>
+                <option value="gsheet">Google Sheet</option>
+              </select>
             </div>
-          )}
 
-          {dataSource === "gsheet" && (
-            <>
+            {dataSource === "csv" && (
               <div className="flex items-center gap-2">
-                <label className="w-28 text-sm text-slate-700">Sheet ID</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                <label className="w-28 text-sm text-slate-700">CSV URL</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
               </div>
-              <div className="flex items-center gap-2">
-                <label className="w-28 text-sm text-slate-700">Nome foglio</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="w-28 text-sm text-slate-700">Sheet GID</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="w-28 text-sm text-slate-700">Modalità</label>
+            )}
+
+            {dataSource === "gsheet" && (
+              <>
                 <div className="flex items-center gap-2">
-                  <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
-                  <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  <label className="w-28 text-sm text-slate-700">Sheet ID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Nome foglio</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Sheet GID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Modalità</label>
+                  <div className="flex items-center gap-2">
+                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
+            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+          </section>
+
+          {/* Località / Raggio / Mese / Tipologie */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Località</label>
+              <div className="flex gap-2 w-full">
+                <input
+                  className="border rounded px-2 h-9 w-full"
+                  placeholder="Città o indirizzo"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleSearchLocation();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="px-3 h-9 rounded border bg-white hover:bg-slate-50"
+                  onClick={handleSearchLocation}
+                  title="Cerca località"
+                >
+                  Cerca
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Route className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Raggio</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(aRadius)} onChange={(e)=> setARadius(parseInt(e.target.value))}>
+                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Mese</label>
+              <input type="month" value={aMonthISO ? aMonthISO.slice(0,7) : ""} onChange={e=> setAMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+            </div>
+
+            {/* Tipologie */}
+            <TypesMultiSelect
+              value={aTypes}
+              onChange={setATypes}
+              allTypes={STRUCTURE_TYPES}
+              labels={typeLabels}
+            />
+
+            {/* Modalità + Pulsante + Link condivisibile */}
+            <div className="grid grid-cols-1 gap-3 mt-2">
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-slate-700">Modalità</label>
+                <div className="inline-flex rounded-xl border overflow-hidden">
+                  <button className={`px-3 py-1 text-sm ${aMode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setAMode("zone")}>Zona</button>
+                  <button className={`px-3 py-1 text-sm ${aMode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setAMode("competitor")}>Competitor</button>
                 </div>
               </div>
-            </>
+
+              <div>
+                <button
+                  className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!hasChanges}
+                  title={hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare"}
+                  onClick={() => {
+                    const next = {
+                      q: query, r: aRadius, m: aMonthISO, t: aTypes, mode: aMode,
+                      dataSource, csvUrl, gsId, gsGid, gsSheet
+                    };
+                    setAQuery(next.q);
+                    setARadius(next.r);
+                    setAMonthISO(next.m);
+                    setATypes(next.t);
+                    setAMode(next.mode);
+
+                    const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
+                    setShareUrl(url);
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2"/>
+                  {hasChanges ? "Genera Analisi" : "Aggiornato"}
+                </button>
+
+                {/* Link condivisibile */}
+                {shareUrl && (
+                  <div className="mt-2">
+                    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
+                    <input
+                      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
+                      value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
+                      readOnly
+                      onFocus={(e)=> e.currentTarget.select()}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Avvisi */}
+          {notices.length>0 && (
+            <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+              <div className="text-sm font-semibold text-amber-900">Avvisi</div>
+              <ul className="list-disc ml-5 text-sm text-amber-900">
+                {notices.map((n,i)=> <li key={i}>{n}</li>)}
+              </ul>
+            </section>
           )}
 
-          {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
-          {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-          {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
-        </section>
-
-        {/* Località / Raggio / Mese / Tipologie */}
-        <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-slate-700"/>
-            <label className="w-28 text-sm text-slate-700">Località</label>
-            <div className="flex gap-2 w-full">
-              <input
-                className="border rounded px-2 h-9 w-full"
-                placeholder="Città o indirizzo"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSearchLocation();
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="px-3 h-9 rounded border bg-white hover:bg-slate-50"
-                onClick={handleSearchLocation}
-                title="Cerca località"
-              >
-                Cerca
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Route className="h-5 w-5 text-slate-700"/>
-            <label className="w-28 text-sm text-slate-700">Raggio</label>
-            <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-              {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-5 w-5 text-slate-700"/>
-            <label className="w-28 text-sm text-slate-700">Mese</label>
-            <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
-          </div>
-
-          {/* Tipologie */}
-          <TypesMultiSelect
-            value={types}
-            onChange={setTypes}
-            allTypes={STRUCTURE_TYPES}
-            labels={typeLabels}
-          />
-
-          {/* Modalità + Pulsante + Link condivisibile */}
-          <div className="grid grid-cols-1 gap-3 mt-2">
-            <div className="flex items-center gap-3">
-              <label className="w-28 text-sm text-slate-700">Modalità</label>
-              <div className="inline-flex rounded-xl border overflow-hidden">
-                <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
-                <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+          {/* Qualità dati (opzionale) */}
+          {dataStats && (
+            <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
+              <div className="text-sm font-semibold">Qualità dati</div>
+              <div className="text-xs text-slate-600">
+                Righe totali: {dataStats.total} · Valide: {dataStats.valid} · Scartate: {dataStats.discarded}
               </div>
+            </section>
+          )}
+        </aside>
+
+        {/* MAIN */}
+        <main className="space-y-6">
+          {/* MAPPA */}
+          <div className="bg-white rounded-2xl border shadow-sm p-0">
+            <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
+              <LocationMap
+                center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
+                radius={normalized.safeR * 1000}
+                label={aQuery || "Località"}
+                onClick={onMapClick}
+              />
+            </div>
+          </div>
+
+          {/* CALENDARIO */}
+          <div className="bg-white rounded-2xl border shadow-sm p-6">
+            <div className="text-lg font-semibold mb-3 flex items-center gap-2">
+              <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
+              {meteoCovered > 0 && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                  Meteo attivo · {meteoCovered} gg
+                </span>
+              )}
+            </div>
+            <CalendarHeatmap monthDate={monthDate} data={calendarData} />
+          </div>
+
+          {/* GRAFICI */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Provenienza */}
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+              {Array.isArray(provenance) && provenance.length>0 ? (
+                <ResponsiveContainer width="100%" height={360}>
+                  <PieChart margin={{ bottom: 24 }}>
+                    <defs>
+                      {provenance.map((_, i) => {
+                        const base = THEME.palette.solid[i % THEME.palette.solid.length];
+                        return (
+                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.25)} />
+                            <stop offset="100%" stopColor={shade(base, -0.12)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+
+                    <Pie
+                      data={provenance}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={THEME.chart.pie.innerRadius}
+                      outerRadius={THEME.chart.pie.outerRadius}
+                      paddingAngle={THEME.chart.pie.paddingAngle}
+                      cornerRadius={THEME.chart.pie.cornerRadius}
+                      labelLine={false}
+                      label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
+                      isAnimationActive={true}
+                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
+                    >
+                      {provenance.map((_, i) => (
+                        <Cell
+                          key={i}
+                          fill={`url(#gradSlice-${i})`}
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </Pie>
+
+                    <RTooltip
+                      formatter={(val: any, name: any, props: any) => {
+                        const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
+                        const pct = total ? Math.round((props?.value / total) * 100) : 0;
+                        return [`${props?.value} (${pct}%)`, name];
+                      }}
+                    />
+                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-xs text-slate-500">Nessun dato</div>
+              )}
             </div>
 
-            <div>
-              <button
-                className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={normalized.isBlocked || !hasChanges}
-                title={
-                  normalized.isBlocked
-                    ? "Inserisci la località per procedere"
-                    : (hasChanges ? "Applica i filtri" : "Nessuna modifica da applicare")
-                }
-                onClick={() => {
-                  const next = {
-                    q: query, r: radius, m: monthISO, t: types, mode,
-                    dataSource, csvUrl, gsId, gsGid, gsSheet
-                  };
-                  setAQuery(next.q);
-                  setARadius(next.r);
-                  setAMonthISO(next.m);
-                  setATypes(next.t);
-                  setAMode(next.mode);
-
-                  const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
-                  setShareUrl(url);
-                }}
-              >
-                <RefreshCw className="h-4 w-4 mr-2"/>
-                {hasChanges ? "Genera Analisi" : "Aggiornato"}
-              </button>
-
-              {shareUrl && (
-                <div className="mt-2">
-                  <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
-                  <input
-                    className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
-                    value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
-                    readOnly
-                    onFocus={(e)=> e.currentTarget.select()}
-                  />
-                </div>
+            {/* LOS */}
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+              {Array.isArray(los) && los.length>0 ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={los} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      {los.map((_, i) => {
+                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                        return (
+                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.2)} />
+                            <stop offset="100%" stopColor={shade(base, -0.15)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" tick={{fontSize: 12}} />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value" radius={[8,8,0,0]}>
+                      {los.map((_,i)=> (
+                        <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="text-xs text-slate-500">Nessun dato</div>
               )}
             </div>
           </div>
-        </section>
 
-        {/* Avvisi */}
-        {notices.length>0 && (
-          <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-            <div className="text-sm font-semibold text-amber-900">Avvisi</div>
-            <ul className="list-disc ml-5 text-sm text-amber-900">
-              {notices.map((n,i)=> <li key={i}>{n}</li>)}
-            </ul>
-          </section>
-        )}
-
-        {/* Qualità dati (sezione opzionale) */}
-        {dataStats && (
-          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
-            <div className="text-sm font-semibold">Qualità dati</div>
-            <div className="text-xs text-slate-600">
-              Righe totali: {dataStats.total} · Valide: {dataStats.valid} · Scartate: {dataStats.discarded}
-            </div>
-          </section>
-        )}
-      </aside>
-
-      {/* MAIN */}
-      <main className="space-y-6">
-        {/* MAPPA */}
-        <div className="bg-white rounded-2xl border shadow-sm p-0">
-          <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
-            <LocationMap
-  center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
-  radius={normalized.safeR * 1000}
-  label={aQuery || "Località"}
-  onClick={onMapClick}
-/>
-          </div>
-        </div>
-
-        {/* CALENDARIO */}
-        <div className="bg-white rounded-2xl border shadow-sm p-6">
-          <div className="text-lg font-semibold mb-3 flex items-center gap-2">
-            <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
-            {meteoCovered > 0 && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
-                Meteo attivo · {meteoCovered} gg
-              </span>
-            )}
-          </div>
-          <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-        </div>
-
-        {/* GRAFICI */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Provenienza */}
+          {/* Canali */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-            {Array.isArray(provenance) && provenance.length>0 ? (
+            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+            {Array.isArray(channels) && channels.length>0 ? (
               <ResponsiveContainer width="100%" height={360}>
-                <PieChart margin={{ bottom: 24 }}>
+                <BarChart data={channels} margin={{ top: 8, right: 16, left: 0, bottom: 30 }}>
                   <defs>
-                    {provenance.map((_, i) => {
-                      const base = solidColor(i);
+                    {channels.map((_, i) => {
+                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
                       return (
-                        <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.25)} />
-                          <stop offset="100%" stopColor={shade(base, -0.12)} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-
-                  <Pie
-                    data={provenance}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={THEME.chart.pie.innerRadius}
-                    outerRadius={THEME.chart.pie.outerRadius}
-                    paddingAngle={THEME.chart.pie.paddingAngle}
-                    cornerRadius={THEME.chart.pie.cornerRadius}
-                    labelLine={false}
-                    label={({ percent }) => `${Math.round((percent || 0)*100)}%`}
-                    isAnimationActive={true}
-                    style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}
-                  >
-                    {provenance.map((_, i) => (
-                      <Cell
-                        key={i}
-                        fill={`url(#gradSlice-${i})`}
-                        stroke="#ffffff"
-                        strokeWidth={2}
-                      />
-                    ))}
-                  </Pie>
-
-                  <RTooltip
-                    formatter={(val: any, name: any, props: any) => {
-                      const total = (provenance || []).reduce((a, b) => a + (b.value as number), 0);
-                      const pct = total ? Math.round((props?.value / total) * 100) : 0;
-                      return [`${props?.value} (${pct}%)`, name];
-                    }}
-                  />
-                  <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="text-xs text-slate-500">Nessun dato</div>
-            )}
-          </div>
-
-          {/* LOS */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-            {Array.isArray(los) && los.length>0 ? (
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={los} margin={THEME.chart.bar.margin}>
-                  <defs>
-                    {los.map((_, i) => {
-                      const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
-                      return (
-                        <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.2)} />
+                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.18)} />
                           <stop offset="100%" stopColor={shade(base, -0.15)} />
                         </linearGradient>
                       );
                     })}
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
+                  <XAxis dataKey="channel" interval={0} tick={{fontSize: 12}} height={40} />
                   <YAxis />
                   <RTooltip />
                   <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {los.map((_,i)=> (
-                      <Cell key={i} fill={`url(#gradBarLOS-${i})`} />
+                    {channels.map((_,i)=> (
+                      <Cell key={i} fill={`url(#gradBarCH-${i})`} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -1401,82 +1329,48 @@ return (
               <div className="text-xs text-slate-500">Nessun dato</div>
             )}
           </div>
-        </div>
 
-        {/* Canali */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-          {Array.isArray(channels) && channels.length>0 ? (
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={channels} margin={THEME.chart.barWide.margin}>
-                <defs>
-                  {channels.map((_, i) => {
-                    const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
-                    return (
-                      <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={shade(base, 0.18)} />
-                        <stop offset="100%" stopColor={shade(base, -0.15)} />
-                      </linearGradient>
-                    );
-                  })}
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value" radius={[8,8,0,0]}>
-                  {channels.map((_,i)=> (
-                    <Cell key={i} fill={`url(#gradBarCH-${i})`} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="text-xs text-slate-500">Nessun dato</div>
-          )}
-        </div>
+          {/* Andamento Domanda */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">
+              Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
+            </div>
+            {(!demand || demand.length===0) ? (
+              <div className="text-sm text-slate-500">In attesa di località valida…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={demand}>
+                  <defs>
+                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
+                    </linearGradient>
+                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
 
-        {/* Andamento Domanda */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">
-            Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
+                  <YAxis />
+                  <RTooltip />
+                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="url(#gradLineStroke)"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, stroke: "#fff", strokeWidth: 1 }}
+                    activeDot={{ r: 4, stroke: "#fff", strokeWidth: 2 }}
+                    isAnimationActive
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
-          {(!demand || demand.length===0) ? (
-            <div className="text-sm text-slate-500">In attesa di località valida…</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={demand}>
-                <defs>
-                  <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
-                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
-                  </linearGradient>
-                  <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
-                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{fontSize: 12}} interval={3}/>
-                <YAxis />
-                <RTooltip />
-                <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="url(#gradLineStroke)"
-                  strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                  dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                  activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
-                  isAnimationActive
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
-  </div>
-);
-}
+  );
+} // ← chiusura App
