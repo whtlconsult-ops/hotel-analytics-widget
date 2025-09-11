@@ -852,7 +852,7 @@ export default function App(){
   /* =========================
      Mini-componente: Multi-select Tipologie
   ========================== */
-  function TypesMultiSelect({
+ function TypesMultiSelect({
   value,
   onChange,
   allTypes,
@@ -866,20 +866,12 @@ export default function App(){
   const [open, setOpen] = useState(false);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Click-outside robusto: usa composedPath per capire se il click è "dentro"
-  useEffect(() => {
-    function onDocMouseDown(e: MouseEvent) {
-      const path = (e.composedPath && e.composedPath()) || [];
-      const inside = containerRef.current && path.includes(containerRef.current);
-      if (!inside) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
+  // 🔒 NIENTE click-outside: il pannello resta aperto finché non premi "Applica"
+  // (Se in futuro lo vorrai, lo aggiungiamo di nuovo, ma ora lo rimuoviamo per evitare chiusure involontarie.)
 
   function toggle(t: string) {
+    // Cambia la selezione ma NON chiudere il pannello
     onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-    // NON chiudiamo qui: il pannello resta aperto finché non premi "Applica"
   }
 
   const summary =
@@ -922,10 +914,6 @@ export default function App(){
           className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
           role="listbox"
           aria-label="Seleziona tipologie"
-          // IMPORTANTISSIMO: questi 3 impediscono la chiusura mentre clicchi dentro
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="pr-1 max-h-[280px] overflow-auto">
             <ul className="space-y-1">
@@ -936,7 +924,6 @@ export default function App(){
                     <button
                       type="button"
                       onClick={() => toggle(t)}
-                      onMouseDown={(e) => e.stopPropagation()}
                       className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
                         active ? "bg-slate-50" : "hover:bg-neutral-50"
                       }`}
@@ -963,7 +950,6 @@ export default function App(){
             <button
               type="button"
               className="text-xs text-neutral-600 hover:text-neutral-900"
-              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onChange([])}
             >
               Pulisci
@@ -972,7 +958,6 @@ export default function App(){
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => onChange([...allTypes])}
               >
                 Seleziona tutte
@@ -980,7 +965,6 @@ export default function App(){
               <button
                 type="button"
                 className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setOpen(false)}
               >
                 Applica
@@ -1110,14 +1094,6 @@ export default function App(){
               <label className="w-28 text-sm text-slate-700">Mese</label>
               <input type="month" value={aMonthISO ? aMonthISO.slice(0,7) : ""} onChange={e=> setAMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
-
-            {/* Tipologie */}
-            <TypesMultiSelect
-              value={aTypes}
-              onChange={setATypes}
-              allTypes={STRUCTURE_TYPES}
-              labels={typeLabels}
-            />
 
             {/* Modalità + Pulsante + Link condivisibile */}
             <div className="grid grid-cols-1 gap-3 mt-2">
