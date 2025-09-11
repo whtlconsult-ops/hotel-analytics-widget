@@ -64,6 +64,7 @@ type DataStats = {
 ========================= */
 const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
 const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
+const DEFAULT_TYPES: string[] = ["hotel"];
 const RADIUS_OPTIONS = [10,20,30] as const;
 
 const typeLabels: Record<string,string> = {
@@ -312,7 +313,7 @@ export default function App(){
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
   });
-  const [types, setTypes] = useState<string[]>(["agriturismo","b&b","hotel"]);
+  const [types, setTypes] = useState<string[]>(DEFAULT_TYPES);
 
   // Dati esterni
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
@@ -335,7 +336,7 @@ export default function App(){
   const [aQuery, setAQuery] = useState(DEFAULT_QUERY);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
-  const [aTypes, setATypes] = useState<string[]>(types);
+  const [aTypes, setATypes] = useState<string[]>(DEFAULT_TYPES);
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
 
@@ -386,7 +387,7 @@ export default function App(){
 
     const rawT = parseListParam(search.get("t"));
     const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
-    const t = validT.length ? validT : types;
+    const t = validT.length ? validT : DEFAULT_TYPES;
 
     const modeParam = (search.get("mode") === "competitor" ? "competitor" : "zone") as "zone"|"competitor";
 
@@ -405,6 +406,7 @@ export default function App(){
 
     // Se non c'è una q nell'URL, centra su Firenze
     if (!search.get("q")) setACenter(DEFAULT_CENTER);
+    if (!search.get("t")) setATypes(DEFAULT_TYPES);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -805,14 +807,14 @@ export default function App(){
     setQuery(DEFAULT_QUERY);
     setRadius(20);
     setMonthISO(month);
-    setTypes([...STRUCTURE_TYPES]);
+    setTypes(DEFAULT_TYPES);
     setMode("zone");
 
     // Stato APPLICATO
     setAQuery(DEFAULT_QUERY);
     setARadius(20);
     setAMonthISO(month);
-    setATypes([...STRUCTURE_TYPES]);
+    setATypes(DEFAULT_TYPES);
     setAMode("zone");
     setACenter(DEFAULT_CENTER); // mappa viva su Firenze
 
@@ -837,7 +839,7 @@ export default function App(){
         q: DEFAULT_QUERY,
         r: 20,
         m: month,
-        t: [...STRUCTURE_TYPES],
+        t: DEFAULT_TYPES,
         mode: "zone",
         dataSource: "none",
         csvUrl: "",
@@ -868,8 +870,8 @@ export default function App(){
       function onClickOutside(e: MouseEvent) {
         if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
       }
-      document.addEventListener("mousedown", onClickOutside);
-      return () => document.removeEventListener("mousedown", onClickOutside);
+      document.addEventListener("pointerdown", onClickOutside, { capture: true });
+return () => document.removeEventListener("pointerdown", onClickOutside, { capture: true } as any);
     }, []);
 
     function toggle(t: string) {
@@ -915,10 +917,12 @@ export default function App(){
         {/* Panel */}
         {open && (
           <div
-            className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
-            role="listbox"
-            aria-label="Seleziona tipologie"
-          >
+  className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2"
+  role="listbox"
+  aria-label="Seleziona tipologie"
+  onMouseDown={(e) => e.stopPropagation()}   // 👈 evita che il “mousedown” arrivi al document
+  onClick={(e) => e.stopPropagation()}       // 👈 extra-sicurezza
+>
             <div className="pr-1 md:max-h-none md:overflow-visible max-h-none overflow-visible">
               <ul className="space-y-1">
                 {allTypes.map((t) => {
