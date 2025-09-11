@@ -353,6 +353,58 @@ export default function App(){
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
+// RESET: porta i filtri allo stato base e mostra l’Italia intera in mappa
+function handleReset() {
+  const now = new Date();
+  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+
+  // UI
+  setQuery("");                 // campo località vuoto
+  setRadius(20);
+  setMonthISO(month);
+  setTypes([...STRUCTURE_TYPES]);
+  setMode("zone");
+
+  // Stato "applicato"
+  setAQuery("");
+  setARadius(20);
+  setAMonthISO(month);
+  setATypes([...STRUCTURE_TYPES]);
+  setAMode("zone");
+  setACenter(null);             // 👈 null = mappa su Italia (fallbackBounds)
+
+  // Sorgente dati
+  setDataSource("none");
+  setCsvUrl("");
+  setGsId("");
+  setGsGid("");
+  setGsSheet("Sheet1");
+  setStrictSheet(true);
+
+  // Varie
+  setNotices([]);
+  setWeatherByDate({});
+  setShareUrl("");
+
+  // Aggiorna URL
+  replaceUrlWithState(
+    router,
+    (typeof window !== "undefined" ? location.pathname : "/"),
+    {
+      q: "",
+      r: 20,
+      m: month,
+      t: [...STRUCTURE_TYPES],
+      mode: "zone",
+      dataSource: "none",
+      csvUrl: "",
+      gsId: "",
+      gsGid: "",
+      gsSheet: "Sheet1",
+    }
+  );
+}
+
   // Stati APPLICATI (si aggiornano solo cliccando "Genera Analisi")
   const [aQuery, setAQuery] = useState(DEFAULT_QUERY);
   const [aRadius, setARadius] = useState(radius);
@@ -361,7 +413,7 @@ export default function App(){
   const [aMode, setAMode] = useState<"zone"|"competitor">(mode);
 
   // Centro applicato (settato via geocoding o click mappa)
-  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
+  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(null);
 
   const hasChanges = useMemo(() =>
     aQuery !== query ||
@@ -407,7 +459,6 @@ export default function App(){
   /* ---------- URL share ---------- */
   const router = useRouter();
   const search = useSearchParams();
-  const [shareUrl, setShareUrl] = useState<string>("");
 
   // Inizializza stato da URL al mount
   useEffect(() => {
@@ -1236,18 +1287,12 @@ return (
         {/* MAPPA */}
         <div className="bg-white rounded-2xl border shadow-sm p-0">
           <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
-            {normalized.center ? (
-              <LocationMap
-                center={{ lat: normalized.center.lat, lng: normalized.center.lng }}
-                radius={normalized.safeR * 1000}
-                label={aQuery || "Località"}
-                onClick={onMapClick}
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-sm text-slate-500">
-                Inserisci una località valida per visualizzare la mappa e generare l'analisi
-              </div>
-            )}
+            <LocationMap
+  center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
+  radius={normalized.safeR * 1000}
+  label={aQuery || "Località"}
+  onClick={onMapClick}
+/>
           </div>
         </div>
 
