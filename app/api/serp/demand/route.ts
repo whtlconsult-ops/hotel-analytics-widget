@@ -1,9 +1,10 @@
 // app/api/serp/demand/route.ts
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 
-// ---- Helpers ----
+// --- Helpers ---
 function parseTimeseries(json: any): { date: string; score: number }[] {
   const tl: any[] = json?.interest_over_time?.timeline_data || [];
   const out: { date: string; score: number }[] = [];
@@ -20,12 +21,7 @@ function parseTimeseries(json: any): { date: string; score: number }[] {
   return out;
 }
 
-type TryParams = {
-  topic: string;
-  geo: string;
-  date: string;
-  cat?: string;
-};
+type TryParams = { topic: string; geo: string; date: string; cat?: string };
 
 async function tryFetchSeries(key: string, tp: TryParams, debug = false) {
   const p = new URLSearchParams({
@@ -36,10 +32,12 @@ async function tryFetchSeries(key: string, tp: TryParams, debug = false) {
     date: tp.date,
     api_key: key,
   });
-  if (tp.cat) p.set("cat", tp.cat); // categoria: Hotels & Accommodations
+  if (tp.cat) p.set("cat", tp.cat); // 203 = Hotels & Accommodations
 
-  const res = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
+  const url = `https://serpapi.com/search.json?${p.toString()}`;
+  const res = await fetch(url, { cache: "no-store" });
   const text = await res.text();
+
   let json: any;
   try { json = JSON.parse(text); } catch { json = { _raw: text }; }
 
@@ -48,18 +46,16 @@ async function tryFetchSeries(key: string, tp: TryParams, debug = false) {
     ok: res.ok,
     series,
     rawMeta: (json?.search_metadata || json?.search_parameters || null),
-    lastUrl: `https://serpapi.com/search.json?${p.toString()}`,
+    lastUrl: url,
     httpStatus: res.status,
     body: debug ? json : undefined,
   };
 }
 
-// ---- Handler ----
+// --- Handler ---
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const qRaw = (url.searchParams.get("q") || "").trim();
-  const lat = Number(url.searchParams.get("lat"));
-  const lng = Number(url.searchParams.get("lng"));
   const debug = url.searchParams.get("debug") === "1";
 
   if (!qRaw) {
@@ -71,8 +67,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante." }, { status: 500 });
   }
 
-  // Costruiamo una lista di combinazioni da provare.
-  // - topic variants (IT)
+  // Topic (varie formulazioni)
   const topics = [
     /hotel/i.test(qRaw) ? qRaw : `${qRaw} hotel`,
     `hotel ${qRaw}`,
@@ -81,19 +76,14 @@ export async function GET(req: Request) {
     `${qRaw} b&b`,
   ];
 
-  // - periodi alternativi
-  const dates = [
-    "today 3-m",
-    "today 12-m",
-    "now 7-d",
-  ];
+  // Periodi alternativi
+  const dates = ["today 3-m", "today 12-m", "now 7-d"];
 
-  // - geo: partiamo da IT (stabile). In un secondo momento potremo aggiungere geo regionali (IT-52 per Toscana, ecc.)
+  // Geo: partiamo da IT (stabile); poi estenderemo a IT-xx
   const geos = ["IT"];
 
-  // - categoria: Hotels & Accommodations (Google Trends cats)
-  //   203 = Travel > Hotels & Accommodations (categoria comunemente usata)
-  const cats = [ "203", undefined ];
+  // Categoria: 203 = Travel > Hotels & Accommodations (aiuta Trends a “capire” il contesto)
+  const cats = ["203", undefined];
 
   const attempts: TryParams[] = [];
   for (const topic of topics) {
@@ -106,18 +96,15 @@ export async function GET(req: Request) {
     }
   }
 
-  let chosen: TryParams | null = null;
   let lastDebug: any = null;
 
   for (const tp of attempts) {
     try {
       const r = await tryFetchSeries(key, tp, debug);
-      lastDebug = r; // salvo l’ultimo tentativo (per debug)
-
+      lastDebug = r;
       if (r.ok && r.series.length > 0) {
-        chosen = tp;
         const trend = r.series.map(s => ({
-          dateLabel: s.date.slice(8,10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
+          dateLabel: s.date.slice(8, 10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
           value: s.score,
         }));
         return NextResponse.json({
@@ -129,17 +116,16 @@ export async function GET(req: Request) {
           trend,
           usage: r.rawMeta,
           debug: debug ? { lastUrl: r.lastUrl, httpStatus: r.httpStatus, body: r.body } : undefined,
-          note: (tp.cat ? undefined : "Serie trovata senza categoria. Se intermittente, prova con cat=203."),
+          note: tp.cat ? undefined : "Serie trovata senza categoria. Se intermittente, prova con cat=203.",
         });
       }
     } catch (e: any) {
-      // se un tentativo fallisce, proseguiamo col prossimo
       lastDebug = { error: String(e?.message || e), params: tp };
       continue;
     }
   }
 
-  // Se arriviamo qui, nessun tentativo ha prodotto serie.
+  // Nessun risultato utile, ma NIENTE 500: ritorniamo ok:false (200) per permettere il fallback lato UI
   return NextResponse.json({
     ok: false,
     error: "Nessuna serie disponibile per il topic/periodo selezionato (dopo vari tentativi).",
@@ -147,5 +133,3 @@ export async function GET(req: Request) {
     debug: debug ? lastDebug : undefined,
   }, { status: 200 });
 }
-
-
