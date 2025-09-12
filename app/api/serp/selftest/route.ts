@@ -11,13 +11,16 @@ export async function GET() {
   }
 
   try {
+    // NB: /account non scala il contatore ricerche.
     const r = await fetch(`https://serpapi.com/account?api_key=${encodeURIComponent(key)}`, { cache: "no-store" });
     const j = await r.json();
     return NextResponse.json({
       ok: true,
       hasKey: true,
       plan_searches_left: j?.plan_searches_left ?? null,
-      raw: j ?? null
+      plan_name: j?.plan_name ?? null,
+      this_month_usage: j?.this_month_usage ?? null
+      // niente api_key nel payload ✔️
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, hasKey: true, error: String(e?.message || e) }, { status: 500 });
