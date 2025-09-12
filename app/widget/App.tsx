@@ -844,8 +844,7 @@ export default function App(){
             <div className="flex items-center gap-2">
               <Route className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40"> 
-              <select value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value, 10))}>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value, 10))}>
                 {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
