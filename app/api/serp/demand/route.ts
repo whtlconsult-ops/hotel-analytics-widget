@@ -13,16 +13,18 @@ const ISO_REGION_IT: Record<string, string> = {
   "basilicata": "IT-77","molise": "IT-67","valle d'aosta": "IT-23","valle d’aosta": "IT-23"
 };
 
-async function guessGeoFromLatLng(lat?: number, lng?: number): Promise<string> {
-  if (!Number.isFinite(lat as number) || !Number.isFinite(lng as number)) return "IT";
+async function guessGeoFromLatLng(lat?: number, lng?: number, debug = false): Promise<{ geo: string; _dbg?: any }> {
+  if (!Number.isFinite(lat as number) || !Number.isFinite(lng as number)) return { geo: "IT" };
   try {
     const u = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=7&addressdetails=1`;
     const r = await fetch(u, { headers: { "User-Agent": "HospitalityWidget/1.0" }, cache: "no-store" });
-    const j = await r.json();
+    const j = await safeJson(r);
     const state: string = (j?.address?.state || j?.address?.region || j?.address?.county || "").toLowerCase();
-    for (const k of Object.keys(ISO_REGION_IT)) if (state.includes(k)) return ISO_REGION_IT[k];
-  } catch {}
-  return "IT";
+    for (const k of Object.keys(ISO_REGION_IT)) if (state.includes(k)) return { geo: ISO_REGION_IT[k], _dbg: debug ? j : undefined };
+    return { geo: "IT", _dbg: debug ? j : undefined };
+  } catch (e) {
+    return { geo: "IT", _dbg: debug ? String(e) : undefined };
+  }
 }
 
 function parseTimeseries(json: any): { date: string; score: number }[] {
@@ -52,7 +54,6 @@ function pickTopN(list: string[], n: number): string[] {
 
 function bucketsFromRelated(queries: string[]) {
   const q = queries.map(s=>s.toLowerCase());
-  // canali
   const channels: Record<string, number> = { booking:0, airbnb:0, diretto:0, expedia:0, altro:0 };
   q.forEach(s=>{
     if (s.includes("booking")) channels.booking++;
@@ -61,7 +62,6 @@ function bucketsFromRelated(queries: string[]) {
     else if (s.includes("diretto") || s.includes("sito") || s.includes("telefono")) channels.diretto++;
     else channels.altro++;
   });
-  // provenienza (euristica)
   const prov: Record<string, number> = { italia:0, germania:0, francia:0, usa:0, uk:0, altro:0 };
   q.forEach(s=>{
     if (/(italia|rome|milan|florence|napoli|torino|bologna)/.test(s)) prov.italia++;
@@ -71,7 +71,6 @@ function bucketsFromRelated(queries: string[]) {
     else if (/(uk|london|british|inghilterra)/.test(s)) prov.uk++;
     else prov.altro++;
   });
-  // LOS
   const los: Record<string, number> = { "1 notte":0, "2-3 notti":0, "4-6 notti":0, "7+ notti":0 };
   q.forEach(s=>{
     if (/(1 notte|una notte|weekend)/.test(s)) los["1 notte"]++;
@@ -79,33 +78,40 @@ function bucketsFromRelated(queries: string[]) {
     else if (/(4|5|6).*(nott[ei])/.test(s)) los["4-6 notti"]++;
     else if (/(7|settimana|14|due settimane)/.test(s)) los["7+ notti"]++;
   });
-
   const toArr = (o: Record<string, number>) => Object.entries(o).map(([label,value])=>({ label, value }));
   return { channels: toArr(channels), provenance: toArr(prov), los: toArr(los) };
+}
+
+function mapScoreToPressure(s: number) { return Math.round(50 + (s/100)*110); } // 50..160
+function mapScoreToADR(s: number) { return Math.round(80 + (s/100)*100); }     // 80..180
+
+async function safeJson(r: Response) {
+  const text = await r.text();
+  try { return JSON.parse(text); } catch { return { _raw: text }; }
 }
 
 /* ---------- Handler ---------- */
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
   const key = process.env.SERPAPI_KEY;
-  if (!key) return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante" }, { status: 500 });
+  if (!key) {
+    return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante (Vercel → Project → Settings → Environment Variables)" }, { status: 500 });
+  }
 
   const qRaw = (url.searchParams.get("q") || "").trim();
-  const lat = Number(url.searchParams.get("lat"));
-  const lng = Number(url.searchParams.get("lng"));
-  const monthISO = (url.searchParams.get("monthISO") || "").trim();   // "YYYY-MM-01"
-  const radiusKm = Number(url.searchParams.get("radiusKm") || "20");
-  const mode = (url.searchParams.get("mode") || "zone").trim();
-  const types = (url.searchParams.get("types") || "").split(",").filter(Boolean);
-
   if (!qRaw) return NextResponse.json({ ok: false, error: "Parametro 'q' mancante" }, { status: 400 });
 
-  // topic: aggiungo "hotel" se non presente per “intenzione” più specifica
-  const topic = /hotel/i.test(qRaw) ? qRaw : `${qRaw} hotel`;
-  const geo = await guessGeoFromLatLng(lat, lng);
-  const dateRange = "today 3-m"; // puoi cambiarlo
+  const lat = Number(url.searchParams.get("lat"));
+  const lng = Number(url.searchParams.get("lng"));
+  const monthISO = (url.searchParams.get("monthISO") || "").trim();
 
-  // 1) TIMESERIES
+  const topic = /hotel/i.test(qRaw) ? qRaw : `${qRaw} hotel`;
+  const { geo, _dbg: geoDbg } = await guessGeoFromLatLng(lat, lng, debug);
+  const dateRange = "today 3-m";
+
+  // --- 1) TIMESERIES ---
   const p = new URLSearchParams({
     engine: "google_trends",
     data_type: "TIMESERIES",
@@ -115,15 +121,23 @@ export async function GET(req: Request) {
     api_key: key,
   });
 
-  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
-  const j = await r.json();
+  let j: any;
+  try {
+    const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
+    if (!r.ok) {
+      const body = await safeJson(r);
+      return NextResponse.json({ ok: false, error: "SerpAPI TIMESERIES non OK", status: r.status, body, debug: { geo, topic, dateRange, geoDbg } }, { status: 502 });
+    }
+    j = await safeJson(r);
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: `Errore fetch SerpAPI TIMESERIES: ${String(e?.message||e)}`, debug: { geo, topic, dateRange, geoDbg } }, { status: 502 });
+  }
 
   const series = parseTimeseries(j);
-  // related dal primo colpo (se c’è)
   let relatedQueries: string[] =
     j?.related_queries?.flatMap((g: any) => (g?.queries || []).map((x: any) => String(x?.query || ""))) || [];
 
-  // 2) fallback RELATED_QUERIES se vuote → seconda chiamata
+  // --- 2) RELATED_QUERIES (fallback) ---
   if (relatedQueries.length === 0) {
     try {
       const rq = new URLSearchParams({
@@ -135,58 +149,61 @@ export async function GET(req: Request) {
         api_key: key,
       });
       const r2 = await fetch(`https://serpapi.com/search.json?${rq.toString()}`, { cache: "no-store" });
-      const j2 = await r2.json();
-      relatedQueries =
-        j2?.related_queries?.flatMap((g: any) => (g?.queries || []).map((x: any) => String(x?.query || ""))) || [];
+      if (r2.ok) {
+        const j2 = await safeJson(r2);
+        relatedQueries =
+          j2?.related_queries?.flatMap((g: any) => (g?.queries || []).map((x: any) => String(x?.query || ""))) || [];
+      }
     } catch {}
   }
 
-  // ---- Normalizzazione per il frontend ----
-  // a) trend (grafico linea)
+  // --- Trend (grafico linea) ---
   const trend = series.map(s => ({
     dateLabel: s.date.slice(8,10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
     value: s.score
   }));
 
-  // b) calendario (per il mese selezionato): proietto il punteggio 0..100 in "pressione" 50..160 e ADR 80..180
-  //    + se monthISO manca, uso il mese corrente
-  const monthStart = monthISO && /^\d{4}-\d{2}-\d{2}$/.test(monthISO) ? new Date(monthISO) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth()+1, 0);
+  // --- Calendario ---
+  const now = new Date();
+  const mStart = monthISO && /^\d{4}-\d{2}-\d{2}$/.test(monthISO)
+    ? new Date(monthISO)
+    : new Date(now.getFullYear(), now.getMonth(), 1);
+  const mEnd = new Date(mStart.getFullYear(), mStart.getMonth()+1, 0);
+
   const days: string[] = [];
-  for (let d = new Date(monthStart); d <= monthEnd; d.setDate(d.getDate()+1)) {
-    days.push(new Date(d).toISOString().slice(0,10));
+  for (let d = new Date(mStart.getTime()); d <= mEnd; d.setDate(d.getDate()+1)) {
+    days.push(new Date(d.getTime()).toISOString().slice(0,10));
   }
 
-  // mappa veloce serie → score by day
   const scoreByDay = new Map(series.map(s => [s.date, s.score]));
-  function mapScoreToPressure(s: number) { return Math.round(50 + (s/100)*110); } // 50..160
-  function mapScoreToADR(s: number) { return Math.round(80 + (s/100)*100); }     // 80..180
-
   const byDate = days.map(iso => {
-    const score = scoreByDay.get(iso) ?? 50;
-    return {
-      dateISO: iso,
-      pressure: mapScoreToPressure(score),
-      adr: mapScoreToADR(score)
-    };
+    const s = scoreByDay.get(iso) ?? 50;
+    return { dateISO: iso, pressure: mapScoreToPressure(s), adr: mapScoreToADR(s) };
+    // volendo: pressure potrebbe pesare weekend ecc.
   });
 
-  // c) buckets da related queries
+  // --- Buckets da related queries ---
   const buckets = relatedQueries.length ? bucketsFromRelated(pickTopN(relatedQueries, 100)) : null;
 
-  const payload = {
+  const payload: any = {
     ok: series.length > 0,
     topic,
     geo,
     dateRange,
-    byDate,                                    // ← calendario
+    byDate,
     channels: buckets ? buckets.channels.map(x=>({ channel: x.label, value: x.value })) : [],
-    origins: buckets ? buckets.provenance.map(x=>({ name: x.label[0].toUpperCase()+x.label.slice(1), value: x.value })) : [],
-    losDist: buckets ? buckets.los.map(x=>({ bucket: x.label, value: x.value })) : [],
-    trend,                                     // ← grafico “Andamento Domanda”
-    usage: j?.search_metadata || j?.search_parameters || undefined,
-    note: relatedQueries.length ? undefined : "Dati Trends senza related queries (campioni ridotti).",
+    origins:  buckets ? buckets.provenance.map(x=>({ name: x.label[0].toUpperCase()+x.label.slice(1), value: x.value })) : [],
+    losDist:  buckets ? buckets.los.map(x=>({ bucket: x.label, value: x.value })) : [],
+    trend,
+    note: relatedQueries.length ? undefined : "Dati Trends senza related queries (campioni ridotti)."
   };
+
+  if (debug) payload._debug = { geoDbg, serp_meta: j?.search_metadata || j?.search_parameters || null };
+
+  if (!payload.ok) {
+    // serie vuota → informo con dettaglio
+    return NextResponse.json({ ok: false, error: "Nessuna serie disponibile dai Trends per questo topic/periodo.", debug: payload._debug ?? { topic, geo, dateRange } }, { status: 200 });
+  }
 
   return NextResponse.json(payload, { status: 200 });
 }
