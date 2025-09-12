@@ -7,13 +7,16 @@ export async function GET(req: Request) {
   try {
     const u = new URL(req.url);
     const params = Object.fromEntries(u.searchParams.entries());
+
+    const hasKey = !!process.env.SERPAPI_KEY;
     return NextResponse.json({
       ok: true,
-      message: "Demand route minimal OK",
-      echo: params,
-      // NON usiamo env né fetch esterni qui
+      message: "Demand route env OK",
+      hasKey,
+      params,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, step: "STEP1", error: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json({ ok: false, step: "STEP2", error: String(e?.message || e) }, { status: 500 });
   }
 }
+
