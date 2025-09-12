@@ -144,21 +144,27 @@ export async function GET(req: Request) {
       const r = await tryFetchSeries(key, tp, debug);
       lastDebug = r;
       if (r.ok && r.series.length > 0) {
-        const trend = r.series.map(s => ({
-          dateLabel: s.date.slice(8, 10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
-          value: s.score,
-        }));
-        return NextResponse.json({
-          ok: true,
-          topic: tp.topic,
-          geo: tp.geo,
-          dateRange: tp.date,
-          cat: tp.cat || null,
-          trend,
-          usage: r.rawMeta,
-          debug: debug ? { lastUrl: r.lastUrl, httpStatus: r.httpStatus, body: r.body } : undefined,
-        });
-      }
+  // Serie per il grafico (etichette "08 set", etc.)
+  const trend = r.series.map(s => ({
+    dateLabel: s.date.slice(8, 10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
+    value: s.score,
+  }));
+
+  // Serie ISO per il calendario (la userà il frontend)
+  const seriesISO = r.series; // [{ date: "YYYY-MM-DD", score: 0..100 }]
+
+  return NextResponse.json({
+    ok: true,
+    topic: tp.topic,
+    geo: tp.geo,
+    dateRange: tp.date,
+    cat: tp.cat || null,
+    trend,
+    seriesISO,
+    usage: r.rawMeta,
+    debug: debug ? { lastUrl: r.lastUrl, httpStatus: r.httpStatus, body: r.body } : undefined,
+  });
+}
     } catch (e: any) {
       lastDebug = { error: String(e?.message || e), params: tp };
       continue;
