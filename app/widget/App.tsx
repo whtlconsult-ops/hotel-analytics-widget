@@ -557,6 +557,55 @@ export default function App(){
       setSerpOrigins(j.origins || []);
       setSerpLOS(j.losDist || []);
       setSerpTrend(j.trend || []);
+// --- Costruzione calendario giornaliero dai Trends ---
+try {
+  const seriesISO: Array<{ date: string; score: number }> = Array.isArray((j as any).seriesISO) ? (j as any).seriesISO : [];
+
+  if (seriesISO.length > 0) {
+    // Mappa YYYY-MM-DD -> score
+    const m = new Map<string, number>();
+    seriesISO.forEach(pt => {
+      if (pt?.date && Number.isFinite(pt?.score)) m.set(pt.date, Math.max(0, Math.min(100, pt.score)));
+    });
+
+    // Giorni del mese selezionato
+    const days = safeDaysOfMonth(aMonthISO, []);
+    const byDate = days.map(d => {
+      const iso = format(d, "yyyy-MM-dd");
+      // usiamo il valore esatto se c'è, altrimenti il "più vicino" precedente
+      let score = m.get(iso);
+      if (score == null) {
+        // cerca il massimo <= iso
+        const prev = Array.from(m.keys())
+          .filter(k => k <= iso)
+          .sort()
+          .pop();
+        if (prev) score = m.get(prev)!;
+      }
+      if (score == null) {
+        // fallback: minimo 10 per non "appiattire" tutto
+        score = 10;
+      }
+
+      // Conversione euristica Trends(0..100) → pressure/adr per il calendario:
+      // pressure base 40..120
+      const pressure = Math.round(40 + (score / 100) * 80);
+
+      // ADR base: 80..160 + piccola stagionalità (come prima, ma modulata dal trend)
+      const baseAdr = 80 + Math.round((score / 100) * 80);
+      const adr = baseAdr;
+
+      return { dateISO: iso, pressure, adr };
+    });
+
+    setSerpByDate(byDate);
+  } else {
+    // Nessuna serie ISO → svuotiamo byDate per forzare i fallback grafici
+    setSerpByDate([]);
+  }
+} catch {
+  setSerpByDate([]);
+}
       if (j.usage) setSerpUsage({ used: j.usage.searches_used, total: j.usage.searches_total, left: j.usage.searches_left });
       if (j.note) setNotices(prev => Array.from(new Set([...prev, j.note!])));
     } catch {
