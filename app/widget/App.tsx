@@ -132,14 +132,24 @@ function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
     return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
   }
 }
-function safeRadius(r: number, warnings: string[]): number {
-  const n = Number(r);
-  const allowed = [10, 20, 30];
-  if (!Number.isFinite(n) || !allowed.includes(n)) {
+function safeRadius(r: any, warnings: string[]): number {
+  const n = typeof r === "string"
+    ? Number((r.replace(/[^0-9.]/g, "") || ""))
+    : Number(r);
+
+  const options = [10, 20, 30]; // deve combaciare con RADIUS_OPTIONS
+  if (!Number.isFinite(n)) {
     warnings.push("Raggio non valido: fallback 20km");
     return 20;
   }
-  return n;
+  if (options.includes(n)) return n;
+
+  // se non è un’opzione, scegli quella più vicina e segnala una sola volta
+  const nearest = options.reduce((best, cur) =>
+    Math.abs(cur - n) < Math.abs(best - n) ? cur : best, options[0]
+  );
+  warnings.push(`Raggio non valido: adattato a ${nearest}km`);
+  return nearest;
 }
 function safeTypes(ts:string[], warnings:string[]): string[]{
   if(!Array.isArray(ts) || ts.length===0){ warnings.push("Nessuna tipologia selezionata: fallback a Hotel"); return ["hotel"]; }
