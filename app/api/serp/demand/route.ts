@@ -1,27 +1,16 @@
 // app/api/serp/demand/route.ts
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 
 /**
  * INPUT (GET):
- *  - q: string               // tema/chiave (es: "hotel firenze")
- *  - lat, lng: number        // per dedurre la regione IT (geo)
- *  - date: string (opz.)     // es. "today 3-m", "now 7-d" — default "today 3-m"
+ *  - q: string                 // es: "hotel firenze"
+ *  - lat, lng: number          // per dedurre la regione IT (geo)
+ *  - monthISO: string          // es: "2025-09-01" (usato per costruire il calendario mensile)
+ *  - radiusKm, mode, types     // facoltativi (li ignoriamo per ora)
  *
- * OUTPUT:
- *  {
- *    ok: boolean,
- *    topic: string,
- *    geo: string,            // "IT" o "IT-52" ecc
- *    dateRange: string,
- *    series: { date: string, score: number }[],
- *    related?: {
- *      channels: { label: string, value: number }[],
- *      provenance: { label: string, value: number }[],
- *      los: { label: string, value: number }[],
- *    },
- *    usage?: any,            // echo SerpAPI usage quando disponibile
- *    note?: string
- *  }
+ * OUTPUT: schema atteso dal frontend (SerpDemandPayload)
  */
 
 const ISO_REGION_IT: Record<string, string> = {
@@ -34,6 +23,34 @@ const ISO_REGION_IT: Record<string, string> = {
   "basilicata": "IT-77", "molise": "IT-67",
   "valle d'aosta": "IT-23", "valle d’aosta": "IT-23"
 };
+
+// ---------- helpers ----------
+function daysOfMonthISO(monthISO: string): string[] {
+  // monthISO formato "YYYY-MM-01"
+  try {
+    const y = Number(monthISO.slice(0, 4));
+    const m = Number(monthISO.slice(5, 7)) - 1;
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    const out: string[] = [];
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  } catch {
+    // mese corrente fallback
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    const out: string[] = [];
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  }
+}
 
 async function guessGeoFromLatLng(lat?: number, lng?: number): Promise<string> {
   if (!Number.isFinite(lat as number) || !Number.isFinite(lng as number)) return "IT";
@@ -50,19 +67,16 @@ async function guessGeoFromLatLng(lat?: number, lng?: number): Promise<string> {
     for (const k of Object.keys(ISO_REGION_IT)) {
       if (state.includes(k)) return ISO_REGION_IT[k];
     }
-  } catch {
-    // ignore
-  }
+  } catch {/* ignore */}
   return "IT";
 }
 
-function parseTimeseries(json: any): { date: string; score: number }[] {
-  // SerpAPI trends: interest_over_time.timeline_data[].time / formattedTime / values[0].value
+function parseTimeseries(json: any): { dateISO: string; score: number }[] {
   const tl: any[] =
     json?.interest_over_time?.timeline_data ||
     json?.timeseries ||
     [];
-  const out: { date: string; score: number }[] = [];
+  const out: { dateISO: string; score: number }[] = [];
   for (const row of tl) {
     const when =
       row?.time
@@ -77,10 +91,10 @@ function parseTimeseries(json: any): { date: string; score: number }[] {
         ? Number(row.values[0].value)
         : Number(row?.value ?? row?.score ?? 0);
     if (when && !Number.isNaN(v)) {
-      // YYYY-MM-DD
-      const d = new Date(when);
-      const iso = d.toISOString().slice(0, 10);
-      out.push({ date: iso, score: Math.max(0, Math.min(100, Math.round(v))) });
+      out.push({
+        dateISO: new Date(when).toISOString().slice(0, 10),
+        score: Math.max(0, Math.min(100, Math.round(v))),
+      });
     }
   }
   return out;
@@ -94,7 +108,6 @@ function pickTopN(list: string[], n: number): string[] {
     .slice(0, n);
 }
 
-// mapping molto semplice da related queries → bucket fittizi utili a grafici
 function bucketsFromRelated(queries: string[]) {
   const q = queries.map((s) => s.toLowerCase());
 
@@ -108,18 +121,18 @@ function bucketsFromRelated(queries: string[]) {
     else channels.altro++;
   });
 
-  // provenienza (greedy, euristica)
+  // provenienza (molto euristico)
   const prov: Record<string, number> = { italia: 0, germania: 0, francia: 0, usa: 0, uk: 0, altro: 0 };
   q.forEach((s) => {
-    if (/(italia|rome|milan|florence|napoli)/.test(s)) prov.italia++;
+    if (/(italia|rome|milan|florence|napoli|torino|bologna|venezia)/.test(s)) prov.italia++;
     else if (/(german|berlin|munich|deutsch)/.test(s)) prov.germania++;
-    else if (/(france|paris|francese)/.test(s)) prov.francia++;
-    else if (/(usa|new york|los angeles|miami)/.test(s)) prov.usa++;
-    else if (/(uk|london|british|inghilterra)/.test(s)) prov.uk++;
+    else if (/(france|paris|francese|marseille|lyon)/.test(s)) prov.francia++;
+    else if (/(usa|new york|los angeles|miami|san francisco)/.test(s)) prov.usa++;
+    else if (/(uk|london|british|inghilterra|manchester)/.test(s)) prov.uk++;
     else prov.altro++;
   });
 
-  // LOS (parole chiave tipiche)
+  // LOS
   const los: Record<string, number> = { "1 notte": 0, "2-3 notti": 0, "4-6 notti": 0, "7+ notti": 0 };
   q.forEach((s) => {
     if (/(1 notte|una notte|weekend)/.test(s)) los["1 notte"]++;
@@ -138,31 +151,30 @@ function bucketsFromRelated(queries: string[]) {
   };
 }
 
+// ---------- handler ----------
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
   const topic = (url.searchParams.get("q") || "").trim();
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
-  const dateRange = (url.searchParams.get("date") || "today 3-m").trim(); // default
+  const monthISO = (url.searchParams.get("monthISO") || "").trim();
+  const mode = (url.searchParams.get("mode") || "zone").trim(); // per ADR sintetico
 
   if (!topic) {
-    return NextResponse.json(
-      { ok: false, error: "Missing 'q' (query topic)." },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "Missing 'q'." }, { status: 400 });
   }
 
+  // ⚠️ Nome variabile d'ambiente: usa SERPAPI_KEY
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { ok: false, error: "Missing SERPAPI_KEY env." },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "Missing SERPAPI_KEY env." }, { status: 500 });
   }
 
   const geo = await guessGeoFromLatLng(lat, lng);
+  const dateRange = "today 3-m"; // sufficiente per trend recente
 
-  // --- 1) TIMESERIES ---
+  // --- 1) Timeseries Google Trends ---
   const p = new URLSearchParams({
     engine: "google_trends",
     data_type: "TIMESERIES",
@@ -171,18 +183,17 @@ export async function GET(req: Request) {
     date: dateRange,
     api_key: apiKey,
   });
-  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, {
-    cache: "no-store",
-  });
-  const j = await r.json();
 
-  const series = parseTimeseries(j);
+  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
+  const j = await r.json();
+  const series = parseTimeseries(j); // [{dateISO, score}]
+
+  // --- 2) Related queries (per bucket) ---
   let relatedQueries: string[] =
     j?.related_queries?.flatMap((g: any) =>
       (g?.queries || []).map((x: any) => String(x?.query || ""))
     ) || [];
 
-  // --- 2) fallback RELATED_QUERIES se vuote ---
   if (relatedQueries.length === 0) {
     try {
       const rq = new URLSearchParams({
@@ -193,40 +204,59 @@ export async function GET(req: Request) {
         date: dateRange,
         api_key: apiKey,
       });
-      const r2 = await fetch(
-        `https://serpapi.com/search.json?${rq.toString()}`,
-        { cache: "no-store" }
-      );
+      const r2 = await fetch(`https://serpapi.com/search.json?${rq.toString()}`, { cache: "no-store" });
       const j2 = await r2.json();
       relatedQueries =
         j2?.related_queries?.flatMap((g: any) =>
           (g?.queries || []).map((x: any) => String(x?.query || ""))
         ) || [];
-    } catch {
-      // ignore
-    }
+    } catch {/* ignore */}
   }
 
-  // Bucketizzazione euristica (se qualcosa c'è)
-  const related =
-    relatedQueries.length > 0
-      ? bucketsFromRelated(pickTopN(relatedQueries, 100))
-      : undefined;
+  // --- 3) Trasformazioni allo schema del frontend ---
+  // trend per LineChart (dateLabel breve IT)
+  const trend = series.map((pt) => {
+    const d = new Date(pt.dateISO + "T00:00:00Z");
+    const label = d.toLocaleDateString("it-IT", { day: "numeric", month: "short" });
+    return { dateLabel: label, value: pt.score };
+  });
 
+  // calendario byDate (mese selezionato): mappo lo score 0..100 → "pressure" 60..160
+  // e ADR sintetico: 90 + score*0.6 (+15 se competitor)
+  const days = daysOfMonthISO(monthISO || (series[0]?.dateISO ?? new Date().toISOString().slice(0, 10)));
+  const scoreByISO = new Map(series.map((s) => [s.dateISO, s.score]));
+  const byDate = days.map((iso) => {
+    const score = scoreByISO.get(iso) ?? 50; // neutro se manca
+    const pressure = 60 + Math.round(score);       // scala semplice
+    const adr = Math.round(90 + score * 0.6 + (mode === "competitor" ? 15 : 0));
+    return { dateISO: iso, pressure, adr };
+  });
+
+  // bucket euristici dai related
+  const rel = relatedQueries.length > 0 ? bucketsFromRelated(pickTopN(relatedQueries, 100)) : null;
+
+  const channels = (rel?.channels || []).map((x) => ({ channel: x.label.charAt(0).toUpperCase() + x.label.slice(1), value: x.value }));
+  const origins = (rel?.provenance || []).map((x) => ({
+    name: x.label === "usa" ? "USA" : x.label.toUpperCase().replace("ITALIA", "Italia").replace("GERMANIA","Germania").replace("FRANCIA","Francia").replace("UK","UK"),
+    value: x.value
+  }));
+  const losDist = (rel?.los || []).map((x) => ({ bucket: x.label, value: x.value }));
+
+  // --- 4) Esito ---
   const payload: any = {
     ok: true,
-    topic,
-    geo,
-    dateRange,
-    series,
-    related,
+    byDate,
+    channels,
+    origins,
+    losDist,
+    trend,
     usage: j?.search_metadata || j?.search_parameters || undefined,
   };
 
   if (series.length === 0) {
     payload.ok = false;
     payload.error = "Nessuna serie disponibile per il topic/periodo selezionato.";
-  } else if (!related) {
+  } else if (!rel) {
     payload.note = "Dati Trends senza related queries (campioni ridotti).";
   }
 

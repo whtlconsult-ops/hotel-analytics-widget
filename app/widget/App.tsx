@@ -132,9 +132,14 @@ function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
     return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
   }
 }
-function safeRadius(r:number, warnings:string[]): number{
-  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){ warnings.push("Raggio non valido: fallback 20km"); return 20; }
-  return r;
+function safeRadius(r: number, warnings: string[]): number {
+  const n = Number(r);
+  const allowed = [10, 20, 30];
+  if (!Number.isFinite(n) || !allowed.includes(n)) {
+    warnings.push("Raggio non valido: fallback 20km");
+    return 20;
+  }
+  return n;
 }
 function safeTypes(ts:string[], warnings:string[]): string[]{
   if(!Array.isArray(ts) || ts.length===0){ warnings.push("Nessuna tipologia selezionata: fallback a Hotel"); return ["hotel"]; }
@@ -829,7 +834,7 @@ export default function App(){
             <div className="flex items-center gap-2">
               <Route className="h-5 w-5 text-slate-700"/>
               <label className="w-28 text-sm text-slate-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value, 10))}>
                 {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
