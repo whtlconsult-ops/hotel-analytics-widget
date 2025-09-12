@@ -1,184 +1,234 @@
 // app/api/serp/demand/route.ts
 import { NextResponse } from "next/server";
 
-type SerpDemandPayload = {
-  ok: boolean;
-  byDate: Array<{ dateISO: string; pressure: number; adr: number }>;
-  channels: Array<{ channel: string; value: number }>;
-  origins: Array<{ name: string; value: number }>;
-  losDist: Array<{ bucket: string; value: number }>;
-  trend: Array<{ dateLabel: string; value: number }>;
-  usage?: { searches_used?: number; searches_total?: number; searches_left?: number };
-  note?: string;
+/**
+ * INPUT (GET):
+ *  - q: string               // tema/chiave (es: "hotel firenze")
+ *  - lat, lng: number        // per dedurre la regione IT (geo)
+ *  - date: string (opz.)     // es. "today 3-m", "now 7-d" — default "today 3-m"
+ *
+ * OUTPUT:
+ *  {
+ *    ok: boolean,
+ *    topic: string,
+ *    geo: string,            // "IT" o "IT-52" ecc
+ *    dateRange: string,
+ *    series: { date: string, score: number }[],
+ *    related?: {
+ *      channels: { label: string, value: number }[],
+ *      provenance: { label: string, value: number }[],
+ *      los: { label: string, value: number }[],
+ *    },
+ *    usage?: any,            // echo SerpAPI usage quando disponibile
+ *    note?: string
+ *  }
+ */
+
+const ISO_REGION_IT: Record<string, string> = {
+  "toscana": "IT-52", "lombardia": "IT-25", "lazio": "IT-62", "sicilia": "IT-82",
+  "piemonte": "IT-21", "veneto": "IT-34", "emilia-romagna": "IT-45", "puglia": "IT-75",
+  "campania": "IT-72", "liguria": "IT-42", "marche": "IT-57", "umbria": "IT-55",
+  "abruzzo": "IT-65", "calabria": "IT-78", "sardegna": "IT-88",
+  "friuli-venezia giulia": "IT-36", "trentino-alto adige": "IT-32",
+  "alto adige": "IT-32", "trentino": "IT-32",
+  "basilicata": "IT-77", "molise": "IT-67",
+  "valle d'aosta": "IT-23", "valle d’aosta": "IT-23"
 };
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
+async function guessGeoFromLatLng(lat?: number, lng?: number): Promise<string> {
+  if (!Number.isFinite(lat as number) || !Number.isFinite(lng as number)) return "IT";
+  try {
+    const u = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=7&addressdetails=1`;
+    const r = await fetch(u, {
+      headers: { "User-Agent": "HospitalityWidget/1.0 (+contact:owner)" },
+      cache: "no-store",
+    });
+    const j = await r.json();
+    const state: string =
+      (j?.address?.state || j?.address?.region || j?.address?.county || "")
+        .toLowerCase();
+    for (const k of Object.keys(ISO_REGION_IT)) {
+      if (state.includes(k)) return ISO_REGION_IT[k];
+    }
+  } catch {
+    // ignore
+  }
+  return "IT";
 }
-function map0to100To0to200(x: number) {
-  // Trends è 0..100 – alziamo la dinamica per la heatmap
-  return Math.round((x || 0) * 2);
-}
-function guessChannelsFromQueries(queries: string[]) {
-  const buckets: Record<string, number> = { Booking: 0, Airbnb: 0, Diretto: 0, Expedia: 0, Altro: 0 };
-  queries.forEach(q => {
-    const s = q.toLowerCase();
-    if (s.includes("booking")) buckets.Booking += 1;
-    else if (s.includes("airbnb")) buckets.Airbnb += 1;
-    else if (s.includes("expedia")) buckets.Expedia += 1;
-    else if (s.includes("sito") || s.includes("hotel") || s.includes("diretto")) buckets.Diretto += 1;
-    else buckets.Altro += 1;
-  });
-  const out = Object.entries(buckets).map(([channel, value]) => ({ channel, value }));
-  if (out.every(x => x.value === 0)) return [
-    { channel:"Booking", value:36 },{ channel:"Airbnb", value:26 },{ channel:"Diretto", value:22 },{ channel:"Expedia", value:11 },{ channel:"Altro", value:5 },
-  ];
+
+function parseTimeseries(json: any): { date: string; score: number }[] {
+  // SerpAPI trends: interest_over_time.timeline_data[].time / formattedTime / values[0].value
+  const tl: any[] =
+    json?.interest_over_time?.timeline_data ||
+    json?.timeseries ||
+    [];
+  const out: { date: string; score: number }[] = [];
+  for (const row of tl) {
+    const when =
+      row?.time
+        ? new Date(Number(row.time) * 1000)
+        : row?.timestamp
+        ? new Date(row.timestamp)
+        : row?.formattedTime
+        ? new Date(row.formattedTime)
+        : null;
+    const v =
+      Array.isArray(row?.values) && row.values[0]?.value != null
+        ? Number(row.values[0].value)
+        : Number(row?.value ?? row?.score ?? 0);
+    if (when && !Number.isNaN(v)) {
+      // YYYY-MM-DD
+      const d = new Date(when);
+      const iso = d.toISOString().slice(0, 10);
+      out.push({ date: iso, score: Math.max(0, Math.min(100, Math.round(v))) });
+    }
+  }
   return out;
 }
-function guessOriginsFromQueries(queries: string[]) {
-  const map: Record<string, number> = {};
-  const known = ["italia","germania","francia","usa","stati uniti","uk","regno unito","svizzera","olanda","austria","spagna"];
-  queries.forEach(q => {
-    const s = q.toLowerCase();
-    for (const k of known) if (s.includes(k)) map[k] = (map[k] || 0) + 1;
-  });
-  const normName = (k: string) =>
-    k === "stati uniti" ? "USA" :
-    k === "regno unito" ? "UK" :
-    k.charAt(0).toUpperCase() + k.slice(1);
-  const out = Object.entries(map).map(([k,v]) => ({ name: normName(k), value: v }));
-  if (out.length === 0) return [
-    { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 }
-  ];
-  return out.sort((a,b)=>b.value-a.value).slice(0,6);
+
+function pickTopN(list: string[], n: number): string[] {
+  return list
+    .filter(Boolean)
+    .map((s) => s.trim())
+    .filter((s, i, a) => s.length > 1 && a.indexOf(s) === i)
+    .slice(0, n);
 }
-function guessLOSFromQueries(queries: string[]) {
-  // Heuristica molto semplice
-  const buckets: Record<string, number> = {"1 notte":0, "2-3 notti":0, "4-6 notti":0, "7+ notti":0};
-  queries.forEach(q => {
-    const s = q.toLowerCase();
-    if (s.match(/\b1\b|\buna notte\b/)) buckets["1 notte"]++;
-    else if (s.match(/\b2\b|\b3\b|weekend/)) buckets["2-3 notti"]++;
-    else if (s.match(/\b4\b|\b5\b|\b6\b/)) buckets["4-6 notti"]++;
-    else if (s.match(/\b7\b|settiman/i)) buckets["7+ notti"]++;
+
+// mapping molto semplice da related queries → bucket fittizi utili a grafici
+function bucketsFromRelated(queries: string[]) {
+  const q = queries.map((s) => s.toLowerCase());
+
+  // canali
+  const channels: Record<string, number> = { booking: 0, airbnb: 0, diretto: 0, expedia: 0, altro: 0 };
+  q.forEach((s) => {
+    if (s.includes("booking")) channels.booking++;
+    else if (s.includes("airbnb")) channels.airbnb++;
+    else if (s.includes("expedia")) channels.expedia++;
+    else if (s.includes("diretto") || s.includes("sito") || s.includes("telefono")) channels.diretto++;
+    else channels.altro++;
   });
-  const out = Object.entries(buckets).map(([bucket,value])=>({bucket, value}));
-  if (out.every(x=>x.value===0)) return [
-    { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
-  ];
-  return out;
+
+  // provenienza (greedy, euristica)
+  const prov: Record<string, number> = { italia: 0, germania: 0, francia: 0, usa: 0, uk: 0, altro: 0 };
+  q.forEach((s) => {
+    if (/(italia|rome|milan|florence|napoli)/.test(s)) prov.italia++;
+    else if (/(german|berlin|munich|deutsch)/.test(s)) prov.germania++;
+    else if (/(france|paris|francese)/.test(s)) prov.francia++;
+    else if (/(usa|new york|los angeles|miami)/.test(s)) prov.usa++;
+    else if (/(uk|london|british|inghilterra)/.test(s)) prov.uk++;
+    else prov.altro++;
+  });
+
+  // LOS (parole chiave tipiche)
+  const los: Record<string, number> = { "1 notte": 0, "2-3 notti": 0, "4-6 notti": 0, "7+ notti": 0 };
+  q.forEach((s) => {
+    if (/(1 notte|una notte|weekend)/.test(s)) los["1 notte"]++;
+    else if (/(2|3).*(nott[ei])/.test(s)) los["2-3 notti"]++;
+    else if (/(4|5|6).*(nott[ei])/.test(s)) los["4-6 notti"]++;
+    else if (/(7|settimana|14|due settimane)/.test(s)) los["7+ notti"]++;
+  });
+
+  const toArr = (o: Record<string, number>) =>
+    Object.entries(o).map(([label, value]) => ({ label, value }));
+
+  return {
+    channels: toArr(channels),
+    provenance: toArr(prov),
+    los: toArr(los),
+  };
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
+  const url = new URL(req.url);
+  const topic = (url.searchParams.get("q") || "").trim();
+  const lat = Number(url.searchParams.get("lat"));
+  const lng = Number(url.searchParams.get("lng"));
+  const dateRange = (url.searchParams.get("date") || "today 3-m").trim(); // default
+
+  if (!topic) {
+    return NextResponse.json(
+      { ok: false, error: "Missing 'q' (query topic)." },
+      { status: 400 }
+    );
+  }
+
   const apiKey = process.env.SERPAPI_KEY;
-  const q        = searchParams.get("q") || "Firenze";
-  const monthISO = searchParams.get("monthISO") || "";
-  const lat      = Number(searchParams.get("lat") || "0");
-  const lng      = Number(searchParams.get("lng") || "0");
-  const radiusKm = Number(searchParams.get("radiusKm") || "20");
-  const mode     = searchParams.get("mode") || "zone";
-  const types    = (searchParams.get("types") || "").split(",").filter(Boolean);
+  if (!apiKey) {
+    return NextResponse.json(
+      { ok: false, error: "Missing SERPAPI_KEY env." },
+      { status: 500 }
+    );
+  }
 
-  // Periodo Trends: mese selezionato
-  let timeRange = "";
-  try {
-    if (monthISO && /^\d{4}-\d{2}-\d{2}$/.test(monthISO)) {
-      const d = new Date(monthISO);
-      const start = new Date(d.getFullYear(), d.getMonth(), 1);
-      const end = new Date(d.getFullYear(), d.getMonth()+1, 0);
-      const fmt = (x: Date) => x.toISOString().slice(0,10);
-      timeRange = `${fmt(start)} ${fmt(end)}`;
+  const geo = await guessGeoFromLatLng(lat, lng);
+
+  // --- 1) TIMESERIES ---
+  const p = new URLSearchParams({
+    engine: "google_trends",
+    data_type: "TIMESERIES",
+    q: topic,
+    geo,
+    date: dateRange,
+    api_key: apiKey,
+  });
+  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, {
+    cache: "no-store",
+  });
+  const j = await r.json();
+
+  const series = parseTimeseries(j);
+  let relatedQueries: string[] =
+    j?.related_queries?.flatMap((g: any) =>
+      (g?.queries || []).map((x: any) => String(x?.query || ""))
+    ) || [];
+
+  // --- 2) fallback RELATED_QUERIES se vuote ---
+  if (relatedQueries.length === 0) {
+    try {
+      const rq = new URLSearchParams({
+        engine: "google_trends",
+        data_type: "RELATED_QUERIES",
+        q: topic,
+        geo,
+        date: dateRange,
+        api_key: apiKey,
+      });
+      const r2 = await fetch(
+        `https://serpapi.com/search.json?${rq.toString()}`,
+        { cache: "no-store" }
+      );
+      const j2 = await r2.json();
+      relatedQueries =
+        j2?.related_queries?.flatMap((g: any) =>
+          (g?.queries || []).map((x: any) => String(x?.query || ""))
+        ) || [];
+    } catch {
+      // ignore
     }
-  } catch {}
+  }
 
-  // Geo: Trends accetta codici (es. IT), non lat/lng; useremo IT come fallback
-  // e aggiungiamo la località nella query
-  const geo = "IT";
-  const topic = [q, ...(types.length? [types[0]]: [])].join(" ");
+  // Bucketizzazione euristica (se qualcosa c'è)
+  const related =
+    relatedQueries.length > 0
+      ? bucketsFromRelated(pickTopN(relatedQueries, 100))
+      : undefined;
 
-  const payload: SerpDemandPayload = {
-    ok: false,
-    byDate: [],
-    channels: [],
-    origins: [],
-    losDist: [],
-    trend: [],
+  const payload: any = {
+    ok: true,
+    topic,
+    geo,
+    dateRange,
+    series,
+    related,
+    usage: j?.search_metadata || j?.search_parameters || undefined,
   };
 
-  if (!apiKey) {
-    payload.note = "SERPAPI_KEY mancante: restituisco dati demo.";
-    return NextResponse.json(payload);
+  if (series.length === 0) {
+    payload.ok = false;
+    payload.error = "Nessuna serie disponibile per il topic/periodo selezionato.";
+  } else if (!related) {
+    payload.note = "Dati Trends senza related queries (campioni ridotti).";
   }
 
-  try {
-    // 1) TIMELINE (Google Trends)
-    const params = new URLSearchParams({
-      engine: "google_trends",
-      data_type: "TIMESERIES",
-      q: topic,
-      geo,
-      ...(timeRange ? { date: timeRange } : {}),
-      api_key: apiKey,
-    });
-    const url = `https://serpapi.com/search.json?${params.toString()}`;
-    const r = await fetch(url, { cache: "no-store" });
-    const j = await r.json() as any;
-
-    const values: Array<{time: string; value: number}> =
-      j?.interest_over_time?.timeline_data?.map((t: any) => ({
-        time: t?.time, value: Number(t?.values?.[0]?.extracted_value ?? t?.values?.[0]?.value ?? 0)
-      })) || [];
-
-    // Serie giorno → pressione e ADR stimato
-    const byDate = values.map(v => {
-      const dateISO = v.time?.slice(0,10) || "";
-      const pressure = clamp(map0to100To0to200(v.value), 0, 200);
-      const adr = Math.round(70 + (pressure/200)*80); // 70–150 eur
-      return { dateISO, pressure, adr };
-    });
-
-    // Trend per grafico linea (etichetta “d MMM”)
-    const trend = values.map(v => ({
-      dateLabel: new Date(v.time).toLocaleDateString("it-IT", { day:"2-digit", month:"short" }),
-      value: clamp(map0to100To0to200(v.value) + (mode==="competitor"?8:0), 0, 200)
-    }));
-
-    // 2) RELATED QUERIES → euristiche per canali/provenienza/LOS
-    const rel = j?.related_queries || [];
-    const relQueries: string[] = rel.flatMap((g: any) =>
-      (g?.queries || []).map((x: any) => String(x?.query || ""))
-    );
-
-    const channels = guessChannelsFromQueries(relQueries);
-    const origins  = guessOriginsFromQueries(relQueries);
-    const losDist  = guessLOSFromQueries(relQueries);
-
-    // 3) Usage
-    let usage: SerpDemandPayload["usage"] | undefined = undefined;
-    try {
-      const u = await fetch(`https://serpapi.com/account?api_key=${apiKey}`, { cache: "no-store" }).then(r=>r.json());
-      if (u && typeof u.quota_searches_used === "number") {
-        usage = {
-          searches_used: u.quota_searches_used,
-          searches_total: u.quota_searches_total,
-          searches_left: u.plan_searches_left ?? (u.quota_searches_total - u.quota_searches_used),
-        };
-      }
-    } catch {}
-
-    payload.ok = true;
-    payload.byDate = byDate;
-    payload.trend = trend;
-    payload.channels = channels;
-    payload.origins = origins;
-    payload.losDist = losDist;
-    if (usage) payload.usage = usage;
-    payload.note = relQueries.length === 0 ? "Dati Trends senza related queries (campioni ridotti)." : undefined;
-
-    return NextResponse.json(payload);
-  } catch (e: any) {
-    payload.note = `Errore SERPAPI: ${String(e?.message || e)}`;
-    return NextResponse.json(payload);
-  }
+  return NextResponse.json(payload, { status: 200 });
 }

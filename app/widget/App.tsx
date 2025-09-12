@@ -45,17 +45,14 @@ type Normalized = {
 type ValidationIssue = { row: number; field: string; reason: string; value: string; };
 type DataStats = { total: number; valid: number; discarded: number; issuesByField: Record<string, number>; };
 
-/** Risposte sintetiche (le tue route /api/serp/* dovranno restituire così) */
+/** Risposte sintetiche (route /api/serp/demand) */
 type SerpDemandPayload = {
   ok: boolean;
-  // calendario
   byDate: Array<{ dateISO: string; pressure: number; adr: number }>;
-  // grafici
   channels: Array<{ channel: string; value: number }>;
   origins: Array<{ name: string; value: number }>;
   losDist: Array<{ bucket: string; value: number }>;
   trend: Array<{ dateLabel: string; value: number }>;
-  // contatore
   usage?: { searches_used?: number; searches_total?: number; searches_left?: number };
   note?: string;
 };
@@ -179,7 +176,8 @@ function isWithinNextDays(d: Date, n = 7) {
 /* ---------- Default iniziali ---------- */
 const DEFAULT_QUERY = "Firenze";
 const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 };
-/* ---------- Calendario Heatmap (con badge meteo) ---------- */
+
+/* ---------- Calendario Heatmap ---------- */
 function CalendarHeatmap({
   monthDate,
   data
@@ -250,33 +248,20 @@ function CalendarHeatmap({
   );
 }
 
-/* ---------- Multi-select Tipologie (rimane aperto finché non premi “Applica”) ---------- */
+/* ---------- Multi-select Tipologie ---------- */
 function TypesMultiSelect({
-  value,
-  onChange,
-  allTypes,
-  labels,
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  allTypes: readonly string[];
-  labels: Record<string, string>;
-}) {
+  value, onChange, allTypes, labels,
+}: { value: string[]; onChange: (next: string[]) => void; allTypes: readonly string[]; labels: Record<string, string>; }) {
   const [open, setOpen] = useState(false);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const onClickOutside = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-    };
+    const onClickOutside = (e: MouseEvent) => { if (!containerRef.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  const toggle = (t: string) => {
-    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-    // ❌ niente setOpen(false) qui: resta aperto
-  };
+  const toggle = (t: string) => { onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]); };
 
   const summary =
     value.length === 0 ? "Nessuna" :
@@ -362,10 +347,10 @@ export default function App(){
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
   });
-  // Default richiesto: SOLO Hotel
+  // Default: solo Hotel
   const [types, setTypes] = useState<string[]>(["hotel"]);
 
-  // Dati esterni già presenti nel tuo widget
+  // Dati esterni
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
@@ -373,16 +358,31 @@ export default function App(){
   const [gsGid, setGsGid] = useState("");
   const [strictSheet, setStrictSheet] = useState(true);
 
-  // Caricamenti CSV/GSheet (come prima, lascio hook pronti)
+  // CSV/GSheet
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Festività + Meteo (già implementati)
+  // Festività + Meteo
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
-  // Stato APPLICATO (si aggiorna con “Genera Analisi” o quando arrivano le SERP API)
+  /* ==== SerpAPI: quota, serie e bucket (già aggiunta nel tuo punto 1) ==== */
+  const [quotaLeft, setQuotaLeft] = useState<number | null>(null);
+  const [trendSeries, setTrendSeries] = useState<{ date: string; score: number }[]>([]);
+  const [trendNote, setTrendNote] = useState<string | null>(null);
+  const [trendBuckets, setTrendBuckets] = useState<{
+    channels: { label: string; value: number }[];
+    provenance: { label: string; value: number }[];
+    los: { label: string; value: number }[];
+  } | null>(null);
+  const trendIndexByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    trendSeries.forEach((p) => m.set(p.date, p.score));
+    return m;
+  }, [trendSeries]);
+
+  // Stato APPLICATO
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
@@ -390,22 +390,18 @@ export default function App(){
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
 
-  // Contatore SerpAPI (opzionale)
+  // SERP aggregati
   const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
-
-  // Stato per i grafici “SERP”
   const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
   const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
   const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
   const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
   const [serpByDate, setSerpByDate] = useState<Array<{ dateISO: string; pressure: number; adr: number }>>([]);
 
-  // Flag utili
   const hasChanges = useMemo(() =>
     aQuery !== query || aRadius !== radius || aMonthISO !== monthISO || aMode !== mode || aTypes.join(",") !== types.join(","),
   [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
 
-  // Normalizzazione (non blocchiamo il calendario se manca center: riempiamo con fallback)
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = aCenter;
@@ -416,13 +412,12 @@ export default function App(){
     return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
   }, [aMonthISO, aRadius, aTypes, aCenter]);
 
-  // Avvisi
   useEffect(() => {
     const key = normalized.warnings.join("|");
     setNotices(prev => (prev.join("|") === key ? prev : normalized.warnings));
   }, [normalized.warnings]);
 
-  // Leggi stato da URL al mount
+  // Leggi URL al mount
   useEffect(() => {
     if (!search) return;
     const q = search.get("q") ?? DEFAULT_QUERY;
@@ -430,7 +425,7 @@ export default function App(){
     const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
     const rawT = parseListParam(search.get("t"));
     const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
-    const t = validT.length ? validT : ["hotel"]; // default solo hotel
+    const t = validT.length ? validT : ["hotel"];
     const modeParam: Mode = (search.get("mode") === "competitor" ? "competitor" : "zone");
 
     const src = (search.get("src") as "none"|"csv"|"gsheet") ?? dataSource;
@@ -447,7 +442,7 @@ export default function App(){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ----- Geocoding “testo → coord” ----- */
+  /* ----- Geocoding text → coord ----- */
   const handleSearchLocation = useCallback(async () => {
     const q = (query || "").trim();
     if (!q) return;
@@ -493,7 +488,7 @@ export default function App(){
       .catch(() => {});
   }, [aMonthISO]);
 
-  /* ----- Meteo (per icone/temperatura) ----- */
+  /* ----- Meteo ----- */
   useEffect(() => {
     if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
     const { lat, lng } = normalized.center;
@@ -514,8 +509,7 @@ export default function App(){
       })
       .catch(() => setWeatherByDate({}));
   }, [normalized.center, aMonthISO]);
-
-  /* ----- SERPAPI: domanda/ADR + canali/origini/LOS/trend + usage ----- */
+  /* ----- SERP: domanda/ADR + canali/origini/LOS/trend + usage ----- */
   const fetchSerp = useCallback(async () => {
     if (!aCenter) return;
     try {
@@ -533,7 +527,6 @@ export default function App(){
 
       if (!j?.ok) {
         setNotices(prev => Array.from(new Set([...prev, "SERPAPI non configurata: uso dati dimostrativi."])));
-        // fallback sintetico
         const days = safeDaysOfMonth(aMonthISO, []);
         setSerpByDate(days.map(d => ({ dateISO: format(d,"yyyy-MM-dd"), pressure: pressureFor(d), adr: adrFromCompetitors(d, aMode) })));
         setSerpChannels([{channel:"Booking",value:36},{channel:"Airbnb",value:26},{channel:"Diretto",value:22},{channel:"Expedia",value:11},{channel:"Altro",value:5}]);
@@ -556,12 +549,45 @@ export default function App(){
     }
   }, [aQuery, aCenter, aMonthISO, aRadius, aMode, aTypes]);
 
-  // trigger SERP quando cambi applicati
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
 
-  /* ----- CSV / GSheet loader (invariato ma abbreviato) ----- */
+  // Quota SerpAPI (badge)
   useEffect(() => {
-    // se non usi CSV/GS, esci
+    fetch("/api/serp/quota")
+      .then((r) => r.json())
+      .then((j) => { if (j?.ok) setQuotaLeft(j.plan_searches_left ?? null); })
+      .catch(() => {});
+  }, []);
+
+  // Serie domanda + bucket (channels/provenance/los) dalla route /api/serp/demand (variante Trends)
+  useEffect(() => {
+    if (!normalized.center || !aMonthISO || !aQuery) {
+      setTrendSeries([]); setTrendBuckets(null); setTrendNote(null);
+      return;
+    }
+    const { lat, lng } = normalized.center;
+    const topic = `${aQuery} hotel`;
+    const url = `/api/serp/demand?q=${encodeURIComponent(topic)}&lat=${lat}&lng=${lng}&date=today 3-m`;
+    fetch(url)
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.ok) {
+          setTrendSeries(Array.isArray(j.series) ? j.series : []);
+          setTrendBuckets(j.related ?? null);
+          setTrendNote(j.note ?? null);
+        } else {
+          setTrendSeries([]); setTrendBuckets(null);
+          setTrendNote(j?.error || "Nessun dato Trends disponibile.");
+        }
+      })
+      .catch(() => {
+        setTrendSeries([]); setTrendBuckets(null);
+        setTrendNote("Nessun dato Trends disponibile.");
+      });
+  }, [normalized.center, aMonthISO, aQuery]);
+
+  /* ----- CSV / GSheet loader (abbreviato) ----- */
+  useEffect(() => {
     if (dataSource === "none") return;
     setLoading(true);
     (async () => {
@@ -575,7 +601,6 @@ export default function App(){
             : `https://docs.google.com/spreadsheets/d/${gsId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(gsSheet||"Sheet1")}`;
         }
         const txt = await fetch(url).then(r=>r.text());
-        // parser super breve, puoi mantenere il tuo completo
         const lines = txt.split(/\r?\n/).filter(Boolean);
         if (lines.length < 2) { setRawRows([]); return; }
         const delim = lines[0].includes(";") ? ";" : ",";
@@ -612,40 +637,74 @@ export default function App(){
     try { return parseISO(aMonthISO); } catch { return new Date(); }
   }, [aMonthISO]);
 
-  // Costruiamo i dati calendario partendo da SERP (se disponibili) altrimenti fallback/CSV
+  // Calendario: preferisci SERP; poi moduli con Trends (se c’è)
   const calendarData = useMemo(() => {
-    const base: Array<{date: Date; pressure:number; adr:number; holidayName?:string; wx?:{t?:number;p?:number;code?:number}}> = [];
+    const out: Array<{date: Date; pressure:number; adr:number; holidayName?:string; wx?:{t?:number;p?:number;code?:number}}> = [];
     const byISO = new Map(serpByDate.map(d=>[d.dateISO, d]));
     const days = safeDaysOfMonth(aMonthISO, []);
     for (const d of days) {
       const iso = format(d,"yyyy-MM-dd");
       const serp = byISO.get(iso);
-      base.push({
+      let pressure = serp?.pressure ?? pressureFor(d);
+      let adr = serp?.adr ?? adrFromCompetitors(d, aMode);
+
+      // Modula con Trends se disponibile
+      const s = trendIndexByDate.get(iso); // 0..100
+      if (s != null) {
+        // media tra base e curva 60..140 circa
+        const trendP = Math.round(60 + s * 0.8);
+        pressure = Math.round((pressure + trendP) / 2);
+        // elasticità ADR 0.9..1.4
+        adr = Math.round(adr * (0.9 + s / 200));
+      }
+
+      out.push({
         date: d,
-        pressure: serp?.pressure ?? pressureFor(d),
-        adr: serp?.adr ?? adrFromCompetitors(d, aMode),
+        pressure,
+        adr,
         holidayName: holidays[iso],
         wx: weatherByDate[iso] || undefined,
       });
     }
-    return base;
-  }, [aMonthISO, serpByDate, holidays, weatherByDate, aMode]);
+    return out;
+  }, [aMonthISO, serpByDate, holidays, weatherByDate, aMode, trendIndexByDate]);
 
-  const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : [
-    { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 }
-  ]), [serpOrigins]);
+  // Grafici: usa bucket Trends se presenti, altrimenti SERP aggregati o DEMO
+  const provenance = useMemo(() => {
+    if (trendBuckets?.provenance?.length) {
+      return trendBuckets.provenance.map(({ label, value }) => ({
+        name: label.charAt(0).toUpperCase() + label.slice(1),
+        value,
+      }));
+    }
+    return serpOrigins.length>0 ? serpOrigins : [
+      { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 }
+    ];
+  }, [trendBuckets, serpOrigins]);
 
-  const los = useMemo(()=> (serpLOS.length>0 ? serpLOS : [
-    { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
-  ]), [serpLOS]);
+  const los = useMemo(() => {
+    if (trendBuckets?.los?.length) return trendBuckets.los.map(({ label, value }) => ({ bucket: label, value }));
+    return serpLOS.length>0 ? serpLOS : [
+      { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
+    ];
+  }, [trendBuckets, serpLOS]);
 
-  const channels = useMemo(()=> (serpChannels.length>0 ? serpChannels : [
-    { channel:"Booking", value:36 },{ channel:"Airbnb", value:26 },{ channel:"Diretto", value:22 },{ channel:"Expedia", value:11 },{ channel:"Altro", value:5 },
-  ]), [serpChannels]);
+  const channels = useMemo(() => {
+    if (trendBuckets?.channels?.length) {
+      return trendBuckets.channels.map(({ label, value }) => ({
+        channel: label.charAt(0).toUpperCase() + label.slice(1),
+        value,
+      }));
+    }
+    return serpChannels.length>0 ? serpChannels : [
+      { channel:"Booking", value:36 },{ channel:"Airbnb", value:26 },{ channel:"Diretto", value:22 },{ channel:"Expedia", value:11 },{ channel:"Altro", value:5 },
+    ];
+  }, [trendBuckets, serpChannels]);
 
-  const demand = useMemo(()=> (serpTrend.length>0
-    ? serpTrend
-    : safeDaysOfMonth(aMonthISO,[]).map(d=> ({ dateLabel: format(d,"d MMM",{locale:it}), value: pressureFor(d)+rand(-10,10) }))
+  const demand = useMemo(()=> (
+    serpTrend.length>0
+      ? serpTrend
+      : safeDaysOfMonth(aMonthISO,[]).map(d=> ({ dateLabel: format(d,"d MMM",{locale:it}), value: pressureFor(d)+rand(-10,10) }))
   ), [serpTrend, aMonthISO]);
 
   const meteoCovered = useMemo(
@@ -662,14 +721,14 @@ export default function App(){
     // APPLICATI
     setAQuery(DEFAULT_QUERY); setARadius(20); setAMonthISO(m); setATypes(["hotel"]); setAMode("zone"); setACenter(DEFAULT_CENTER);
     // Extra
-    setNotices([]); setWeatherByDate({}); 
+    setNotices([]); setWeatherByDate({});
     replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), {
       q: DEFAULT_QUERY, r: 20, m, t: ["hotel"], mode: "zone", dataSource, csvUrl, gsId, gsGid, gsSheet
     });
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
-
   // Share link
   const [shareUrl, setShareUrl] = useState<string>("");
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
@@ -681,6 +740,11 @@ export default function App(){
               <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border bg-white">
                 <TrendingUp className="h-3.5 w-3.5" />
                 SERP {serpUsage.used ?? "?"}/{serpUsage.total ?? "?"} (rimasti {serpUsage.left ?? "?"})
+              </span>
+            )}
+            {quotaLeft != null && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700" title="Ricerche SerpAPI residue nel mese">
+                Quota: {quotaLeft}
               </span>
             )}
           </div>
@@ -698,7 +762,7 @@ export default function App(){
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
         {/* SIDEBAR */}
         <aside className="space-y-6">
-          {/* Sorgente dati (opzionale, come prima) */}
+          {/* Sorgente dati */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="text-sm font-semibold">Sorgente Dati</div>
             <div className="flex items-center gap-2">
@@ -847,13 +911,18 @@ export default function App(){
                   Meteo attivo · {meteoCovered} gg
                 </span>
               )}
+              {trendNote && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                  {trendNote}
+                </span>
+              )}
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
 
           {/* Grafici: Provenienza + LOS */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="bg-white rounded-2xl border shadow_sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
               <ResponsiveContainer width="100%" height={360}>
                 <PieChart margin={{ bottom: 24 }}>
