@@ -2,38 +2,18 @@
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const lat = searchParams.get("lat");
+  const lng = searchParams.get("lng");
+  if (!lat || !lng) return NextResponse.json({ ok:false, error:"missing lat/lng" }, { status: 400 });
+
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=12&addressdetails=1`;
   try {
-    const { searchParams } = new URL(req.url);
-    const lat = searchParams.get("lat");
-    const lng = searchParams.get("lng");
-    if (!lat || !lng) {
-      return NextResponse.json({ ok: false, error: "Missing lat/lng" }, { status: 400 });
-    }
-
-    const url = new URL("https://nominatim.openstreetmap.org/reverse");
-    url.searchParams.set("lat", lat);
-    url.searchParams.set("lon", lng);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("zoom", "10");
-    url.searchParams.set("addressdetails", "1");
-    url.searchParams.set("accept-language", "it");
-
-    const res = await fetch(url.toString(), {
-      headers: {
-        "User-Agent": "hotel-analytics-widget/1.0 (contatto@tuodominio.it)",
-      },
-      next: { revalidate: 86400 },
-    });
-
-    const raw = await res.json();
-    const name =
-      raw?.display_name ||
-      [raw?.address?.city, raw?.address?.town, raw?.address?.village, raw?.address?.county]
-        .filter(Boolean)
-        .join(", ");
-
-    return NextResponse.json({ ok: true, name: name || "Località" });
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: "REVERSE_ERROR" }, { status: 500 });
+    const r = await fetch(url, { headers: { "User-Agent": "HospitalityWidget/1.0" }, cache: "no-store" });
+    const j = await r.json();
+    const name = j?.display_name || `${lat},${lng}`;
+    return NextResponse.json({ ok:true, name });
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error:String(e?.message||e) }, { status: 500 });
   }
 }
