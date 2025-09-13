@@ -1,7 +1,7 @@
 // app/widget/App.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
-// Mappa senza SSR
+// Mappa (no SSR)
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
 /* ---------- Tipi ---------- */
@@ -42,20 +42,15 @@ type Normalized = {
   isBlocked: boolean;
 };
 
-type ValidationIssue = { row: number; field: string; reason: string; value: string; };
-type DataStats = { total: number; valid: number; discarded: number; issuesByField: Record<string, number>; };
-
-/** Risposte sintetiche route /api/serp/demand */
 type SerpDemandPayload = {
   ok: boolean;
-  byDate?: Array<{ dateISO: string; pressure: number; adr: number }>;
-  channels: Array<{ channel: string; value: number }>;
-  origins: Array<{ name: string; value: number }>;
-  losDist: Array<{ bucket: string; value: number }>;
-  trend: Array<{ dateLabel: string; value: number }>;
-  /** Aggiunta: serie “pura” ISO da Trends per costruire calendario/ADR */
-  seriesISO?: Array<{ date: string; score: number }>;
-  usage?: { searches_used?: number; searches_total?: number; searches_left?: number } | null;
+  series?: Array<{ date: string; score: number }>;
+  related?: {
+    channels: Array<{ label: string; value: number }>;
+    provenance: Array<{ label: string; value: number }>;
+    los: Array<{ label: string; value: number }>;
+  };
+  usage?: any;
   note?: string;
 };
 
@@ -167,7 +162,6 @@ function replaceUrlWithState(
   try { if (typeof window !== "undefined") window.history.replaceState({}, "", url); } catch {}
   return url;
 }
-
 function isWithinNextDays(d: Date, n = 7) {
   const today = new Date(); today.setHours(0,0,0,0);
   const max   = new Date(today); max.setDate(today.getDate() + n);
@@ -175,11 +169,11 @@ function isWithinNextDays(d: Date, n = 7) {
   return dd >= today && dd <= max;
 }
 
-/* ---------- Default iniziali ---------- */
+/* ---------- Default ---------- */
 const DEFAULT_QUERY = "Firenze";
 const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 };
 
-/* ---------- Calendario Heatmap (con badge meteo) ---------- */
+/* ---------- Calendario Heatmap ---------- */
 function CalendarHeatmap({
   monthDate,
   data
@@ -249,7 +243,6 @@ function CalendarHeatmap({
     </div>
   );
 }
-
 /* ---------- Multi-select Tipologie ---------- */
 function TypesMultiSelect({
   value,
@@ -275,7 +268,6 @@ function TypesMultiSelect({
 
   const toggle = (t: string) => {
     onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
-    // resta aperto finché non premi "Applica"
   };
 
   const summary =
@@ -346,13 +338,15 @@ function TypesMultiSelect({
     </div>
   );
 }
+
 /* ---------- APP ---------- */
 export default function App(){
   const router = useRouter();
   const search = useSearchParams();
 
-  // Notifiche / avvisi
+  // Avvisi (silenzio "raggio non valido" al primo mount)
   const [notices, setNotices] = useState<string[]>([]);
+  const firstMountRef = useRef(true);
 
   // Filtri UI
   const [mode, setMode] = useState<Mode>("zone");
@@ -362,10 +356,14 @@ export default function App(){
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
   });
-  // Default: SOLO Hotel
+  // Default richiesto: SOLO Hotel
   const [types, setTypes] = useState<string[]>(["hotel"]);
 
-  // Dati esterni
+  // Selettori SERP (risparmio query)
+  const [askTrend, setAskTrend] = useState<boolean>(true);
+  const [askRelated, setAskRelated] = useState<boolean>(false);
+
+  // Sorgenti CSV/GS (opzionali)
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
@@ -373,7 +371,6 @@ export default function App(){
   const [gsGid, setGsGid] = useState("");
   const [strictSheet, setStrictSheet] = useState(true);
 
-  // Caricamenti CSV/GSheet
   const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -382,24 +379,16 @@ export default function App(){
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
-  /* ==== SerpAPI: quota, serie e bucket ==== */
-  const [quotaLeft, setQuotaLeft] = useState<number | null>(null);
-  const [trendSeries, setTrendSeries] = useState<{ date: string; score: number }[]>([]);
-  const [trendNote, setTrendNote] = useState<string | null>(null);
-  const [trendBuckets, setTrendBuckets] = useState<{
-    channels: { label: string; value: number }[];
-    provenance: { label: string; value: number }[];
-    los: { label: string; value: number }[];
-  } | null>(null);
+  // Quota/badge
+  const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
 
-  /* Map veloce: data ISO -> score 0..100 */
-  const trendIndexByDate = useMemo(() => {
-    const m = new Map<string, number>();
-    trendSeries.forEach((p) => m.set(p.date, p.score));
-    return m;
-  }, [trendSeries]);
+  // SERP buckets/serie
+  const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
+  const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
+  const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
+  const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
 
-  // Stato APPLICATO
+  // Stato applicato
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
   const [aMonthISO, setAMonthISO] = useState(monthISO);
@@ -407,20 +396,9 @@ export default function App(){
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
 
-  // Contatore SerpAPI (dalla route /api/serp/demand se disponibile)
-  const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
-
-  // Stato per i grafici “SERP”
-  const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
-  const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
-  const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
-  const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
-  const [serpByDate, setSerpByDate] = useState<Array<{ dateISO: string; pressure: number; adr: number }>>([]);
-
-  // Flag utili
   const hasChanges = useMemo(() =>
-    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO || aMode !== mode || aTypes.join(",") !== types.join(","),
-  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types]);
+    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO || aMode !== mode || aTypes.join(",") !== types.join(",") || askTrend !== true || askRelated !== false,
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types, askTrend, askRelated]);
 
   // Normalizzazione
   const normalized: Normalized = useMemo(()=>{
@@ -433,10 +411,12 @@ export default function App(){
     return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
   }, [aMonthISO, aRadius, aTypes, aCenter]);
 
-  // Avvisi
+  // Avvisi (silenzia “Raggio non valido…” al primo render)
   useEffect(() => {
-    const key = normalized.warnings.join("|");
-    setNotices(prev => (prev.join("|") === key ? prev : normalized.warnings));
+    let list = normalized.warnings.slice();
+    if (firstMountRef.current) list = list.filter(w => !w.toLowerCase().includes("raggio non valido"));
+    setNotices(prev => (prev.join("|") === list.join("|") ? prev : list));
+    if (firstMountRef.current) firstMountRef.current = false;
   }, [normalized.warnings]);
 
   // Leggi stato da URL al mount
@@ -447,24 +427,14 @@ export default function App(){
     const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
     const rawT = parseListParam(search.get("t"));
     const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
-    const t = validT.length ? validT : ["hotel"];
+    const t = validT.length ? validT : ["hotel"]; // default solo hotel
     const modeParam: Mode = (search.get("mode") === "competitor" ? "competitor" : "zone");
-
-    const src = (search.get("src") as "none"|"csv"|"gsheet") ?? dataSource;
-    const csv = search.get("csv") ?? csvUrl;
-    const id  = search.get("id")  ?? gsId;
-    const gid = search.get("gid") ?? gsGid;
-    const sheet = search.get("sheet") ?? gsSheet;
-
     setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
-    setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
-
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
     setACenter(DEFAULT_CENTER);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* ----- Geocoding ----- */
+  /* ----- Geocoding: input → coord ----- */
   const handleSearchLocation = useCallback(async () => {
     const q = (query || "").trim();
     if (!q) return;
@@ -532,130 +502,107 @@ export default function App(){
       .catch(() => setWeatherByDate({}));
   }, [normalized.center, aMonthISO]);
 
-  /* ----- SERPAPI: domanda/ADR + canali/origini/LOS/trend + usage ----- */
+  /* ----- Utility: ricampionamento giornaliero (mese-1, mese, mese+1) ----- */
+  function resampleToDays(weekly: Array<{date:string; score:number}>, monthISO: string) {
+    const monthDate = parseISO(monthISO);
+    const prevStart = startOfMonth(new Date(monthDate.getFullYear(), monthDate.getMonth()-1, 1));
+    const nextEnd   = endOfMonth(new Date(monthDate.getFullYear(), monthDate.getMonth()+1, 1));
+    const days = eachDayOfInterval({ start: prevStart, end: nextEnd });
+    const pts = weekly.map(p => ({ t: new Date(p.date).getTime(), v: p.score })).sort((a,b)=> a.t-b.t);
+    if (pts.length === 0) return days.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
+    return days.map(d => {
+      const t = d.getTime();
+      let i = 0;
+      while (i < pts.length && pts[i].t <= t) i++;
+      if (i === 0)  return { dateLabel: format(d,"d MMM",{locale:it}), value: pts[0].v };
+      if (i >= pts.length) return { dateLabel: format(d,"d MMM",{locale:it}), value: pts[pts.length-1].v };
+      const p0 = pts[i-1], p1 = pts[i];
+      const ratio = (t - p0.t) / (p1.t - p0.t);
+      const val = Math.round(p0.v + (p1.v - p0.v) * Math.max(0, Math.min(1, ratio)));
+      return { dateLabel: format(d,"d MMM",{locale:it}), value: val };
+    });
+  }
+
+  /* ----- Fetch SERP: serie & buckets + merge quota ----- */
   const fetchSerp = useCallback(async () => {
-    if (!aCenter) return;
+    if (!aCenter || (!askTrend && !askRelated)) return;
+
     try {
-      const qs = new URLSearchParams({
-        q: aQuery,
+      const params = new URLSearchParams({
+        q: `${aQuery} hotel`,
         lat: String(aCenter.lat),
         lng: String(aCenter.lng),
         monthISO: aMonthISO,
-        radiusKm: String(aRadius),
-        mode: aMode,
-        types: aTypes.join(","),
+        date: "today 12-m",
+        cat: "203",
+        parts: [askTrend ? "trend" : "", askRelated ? "related" : ""].filter(Boolean).join(","),
       });
-      const r = await fetch(`/api/serp/demand?${qs.toString()}`);
+
+      const r = await fetch(`/api/serp/demand?${params.toString()}`);
       const j: SerpDemandPayload = await r.json();
 
       if (!j?.ok) {
-        setNotices(prev => Array.from(new Set([...prev, "SERPAPI non configurata o dati insufficienti: uso dati dimostrativi."])));
-        // fallback sintetico
-        const days = safeDaysOfMonth(aMonthISO, []);
-        setSerpByDate(days.map(d => ({ dateISO: format(d,"yyyy-MM-dd"), pressure: pressureFor(d), adr: adrFromCompetitors(d, aMode) })));
-        setSerpChannels([{channel:"Booking",value:36},{channel:"Airbnb",value:26},{channel:"Diretto",value:22},{channel:"Expedia",value:11},{channel:"Altro",value:5}]);
-        setSerpOrigins([{name:"Italia",value:42},{name:"Germania",value:22},{name:"Francia",value:14},{name:"USA",value:10},{name:"UK",value:12}]);
-        setSerpLOS([{bucket:"1 notte",value:15},{bucket:"2-3 notti",value:46},{bucket:"4-6 notti",value:29},{bucket:"7+ notti",value:10}]);
-        setSerpTrend(safeDaysOfMonth(aMonthISO,[]).map(d=>({dateLabel:format(d,"d MMM",{locale:it}), value: pressureFor(d)+rand(-10,10)})));
-        setSerpUsage(null);
+        setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."])));
         return;
       }
 
-      // Serie ISO (0..100) → costruisco calendario giornaliero e ADR con coeff tipologia
-      try {
-        const seriesISO = Array.isArray(j.seriesISO) ? j.seriesISO : [];
-        const map = new Map<string, number>();
-        seriesISO.forEach(pt => { if (pt?.date && Number.isFinite(pt?.score)) map.set(pt.date, Math.max(0, Math.min(100, pt.score))); });
+      // Badge quota: prova da usage; poi merge con /api/serp/quota
+      let badge = {
+        used: j.usage?.this_month_usage,
+        total: j.usage?.searches_per_month,
+        left: j.usage?.plan_searches_left
+      } as any;
 
-        const days = safeDaysOfMonth(aMonthISO, []);
-        const main = (aTypes[0] || "hotel").toLowerCase();
-        const mult: Record<string, number> = {
-          hotel: 1.00,
-          agriturismo: 0.85,
-          "b&b": 0.75,
-          casa_vacanza: 0.90,
-          villaggio_turistico: 1.05,
-          resort: 1.20,
-          affittacamere: 0.70,
-        };
-        const k = mult[main] ?? 1;
+      // Serie → ricampionamento
+      if (askTrend && Array.isArray(j.series)) {
+        setSerpTrend(resampleToDays(j.series, aMonthISO));
+      }
 
-        const byDate = days.map(d => {
-          const iso = format(d, "yyyy-MM-dd");
-          let score = map.get(iso);
-          if (score == null) {
-            const prev = Array.from(map.keys()).filter(k => k <= iso).sort().pop();
-            if (prev) score = map.get(prev)!;
-          }
-          if (score == null) score = 10;
+      // Buckets
+      if (askRelated && j.related) {
+        const rel = j.related;
+        setSerpChannels([
+          { channel: "Booking",  value: rel.channels.find((x)=>x.label==="booking")?.value || 0 },
+          { channel: "Airbnb",   value: rel.channels.find((x)=>x.label==="airbnb")?.value || 0 },
+          { channel: "Diretto",  value: rel.channels.find((x)=>x.label==="diretto")?.value || 0 },
+          { channel: "Expedia",  value: rel.channels.find((x)=>x.label==="expedia")?.value || 0 },
+          { channel: "Altro",    value: rel.channels.find((x)=>x.label==="altro")?.value || 0 },
+        ]);
+        setSerpOrigins([
+          { name: "Italia",   value: rel.provenance.find((x)=>x.label==="italia")?.value || 0 },
+          { name: "Germania", value: rel.provenance.find((x)=>x.label==="germania")?.value || 0 },
+          { name: "Francia",  value: rel.provenance.find((x)=>x.label==="francia")?.value || 0 },
+          { name: "USA",      value: rel.provenance.find((x)=>x.label==="usa")?.value || 0 },
+          { name: "UK",       value: rel.provenance.find((x)=>x.label==="uk")?.value || 0 },
+        ]);
+        setSerpLOS([
+          { bucket: "1 notte",  value: rel.los.find((x)=>x.label==="1 notte")?.value || 0 },
+          { bucket: "2-3 notti",value: rel.los.find((x)=>x.label==="2-3 notti")?.value || 0 },
+          { bucket: "4-6 notti",value: rel.los.find((x)=>x.label==="4-6 notti")?.value || 0 },
+          { bucket: "7+ notti", value: rel.los.find((x)=>x.label==="7+ notti")?.value || 0 },
+        ]);
+      }
 
-          const pressure = Math.round(40 + (score / 100) * 80); // 40..120
-          const adr = Math.round((80 + (score / 100) * 80) * k); // 80..160 * coeff tipo
-          return { dateISO: iso, pressure, adr };
-        });
-
-        setSerpByDate(byDate);
-      } catch { setSerpByDate([]); }
-
-      setSerpChannels(j.channels || []);
-      setSerpOrigins(j.origins || []);
-      setSerpLOS(j.losDist || []);
-      setSerpTrend(j.trend || []);
-      if (j.usage) setSerpUsage({ used: (j.usage as any).searches_used, total: (j.usage as any).searches_total, left: (j.usage as any).searches_left });
       if (j.note) setNotices(prev => Array.from(new Set([...prev, j.note!])));
+
+      // Merge badge con /api/serp/quota (unifica dati mancanti)
+      try {
+        const q = await fetch("/api/serp/quota").then(r=>r.json());
+        if (q?.ok) {
+          badge.used  = badge.used  ?? q.this_month_usage;
+          badge.total = badge.total ?? q.raw?.searches_per_month ?? q.searches_per_month;
+          badge.left  = badge.left  ?? q.plan_searches_left ?? q.raw?.plan_searches_left;
+        }
+      } catch {}
+      setSerpUsage(badge);
     } catch {
       setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
     }
-  }, [aQuery, aCenter, aMonthISO, aRadius, aMode, aTypes]);
+  }, [aQuery, aCenter, aMonthISO, askTrend, askRelated]);
 
-  // trigger SERP quando cambi applicati
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
 
-  // Quota SerpAPI (counter in topbar)
-  useEffect(() => {
-    fetch("/api/serp/quota")
-      .then((r) => r.json())
-      .then((j) => {
-        if (j?.ok) setQuotaLeft(j.plan_searches_left ?? null);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Serie domanda + bucket (facoltativo – lascio invariate queste chiamate “di comodo”)
-  useEffect(() => {
-    if (!normalized.center || !aMonthISO || !aQuery) {
-      setTrendSeries([]);
-      setTrendBuckets(null);
-      setTrendNote(null);
-      return;
-    }
-    const { lat, lng } = normalized.center;
-    const topic = `${aQuery} hotel`;
-    const url =
-      `/api/serp/demand?q=${encodeURIComponent(topic)}` +
-      `&lat=${lat}&lng=${lng}&date=today 3-m`;
-
-    fetch(url)
-      .then((r) => r.json())
-      .then((j) => {
-        if (j?.ok) {
-          setTrendSeries(Array.isArray(j.series) ? j.series : []);
-          setTrendBuckets(j.related ?? null);
-          setTrendNote(j.note ?? null);
-        } else {
-          setTrendSeries([]);
-          setTrendBuckets(null);
-          setTrendNote(j?.error || "Nessun dato Trends disponibile.");
-        }
-      })
-      .catch(() => {
-        setTrendSeries([]);
-        setTrendBuckets(null);
-        setTrendNote("Nessun dato Trends disponibile.");
-      });
-  }, [normalized.center, aMonthISO, aQuery]);
-
-  /* ----- CSV / GSheet loader (abbreviato) ----- */
+  // CSV / GSheet loader (breve)
   useEffect(() => {
     if (dataSource === "none") return;
     setLoading(true);
@@ -699,30 +646,48 @@ export default function App(){
       } finally { setLoading(false); }
     })();
   }, [dataSource, csvUrl, gsId, gsGid, gsSheet, strictSheet]);
+
   /* ----- Derivate per UI ----- */
   const monthDate = useMemo(()=> {
     if(!aMonthISO) return new Date();
     try { return parseISO(aMonthISO); } catch { return new Date(); }
   }, [aMonthISO]);
 
-  // Dati calendario: usa serpByDate (se presenti), altrimenti fallback
+  // domanda (line chart): se non arriva SERP, usa fallback
+  const demand = useMemo(()=> (serpTrend.length>0
+    ? serpTrend
+    : safeDaysOfMonth(aMonthISO,[]).map(d=> ({ dateLabel: format(d,"d MMM",{locale:it}), value: pressureFor(d)+rand(-10,10) }))
+  ), [serpTrend, aMonthISO]);
+
+  // ADR factors per tipologia
+  const ADR_FACTORS: Record<string, number> = {
+    hotel: 1.00, resort: 1.15, "casa_vacanza": 0.95, agriturismo: 0.92, "b&b": 0.88,
+    affittacamere: 0.90, "villaggio_turistico": 1.05,
+  };
+  const selectedFactor = (aTypes.length ? aTypes : ["hotel"])
+    .map(t => ADR_FACTORS[t] ?? 1.0)
+    .reduce((a,b)=> a+b, 0) / (aTypes.length || 1);
+
   const calendarData = useMemo(() => {
     const base: Array<{date: Date; pressure:number; adr:number; holidayName?:string; wx?:{t?:number;p?:number;code?:number}}> = [];
-    const byISO = new Map(serpByDate.map(d=>[d.dateISO, d]));
     const days = safeDaysOfMonth(aMonthISO, []);
     for (const d of days) {
       const iso = format(d,"yyyy-MM-dd");
-      const serp = byISO.get(iso);
+      // prendo valore domanda del grafico (già ricampionato)
+      const demandVal = demand.find(x => x.dateLabel === format(d,"d MMM",{locale:it}))?.value;
+      const press = demandVal != null ? demandVal : pressureFor(d);
+      const adrBase = adrFromCompetitors(d, aMode);
+      const adr = Math.round(adrBase * selectedFactor);
       base.push({
         date: d,
-        pressure: serp?.pressure ?? pressureFor(d),
-        adr: serp?.adr ?? adrFromCompetitors(d, aMode),
+        pressure: press,
+        adr,
         holidayName: holidays[iso],
         wx: weatherByDate[iso] || undefined,
       });
     }
     return base;
-  }, [aMonthISO, serpByDate, holidays, weatherByDate, aMode]);
+  }, [aMonthISO, aMode, aTypes, holidays, weatherByDate, demand]);
 
   const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : [
     { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 }
@@ -736,30 +701,6 @@ export default function App(){
     { channel:"Booking", value:36 },{ channel:"Airbnb", value:26 },{ channel:"Diretto", value:22 },{ channel:"Expedia", value:11 },{ channel:"Altro", value:5 },
   ]), [serpChannels]);
 
-  // >>> Andamento domanda = mese selezionato ±1
-  const demand = useMemo(() => {
-    if (serpByDate.length > 0) {
-      const month = parseISO(aMonthISO);
-      const start = new Date(month); start.setMonth(start.getMonth() - 1);
-      const end = new Date(month); end.setMonth(end.getMonth() + 1);
-      const arr = serpByDate
-        .filter(d => {
-          const cur = parseISO(d.dateISO);
-          return cur >= start && cur <= end;
-        })
-        .map(d => ({
-          dateLabel: format(parseISO(d.dateISO), "d MMM", { locale: it }),
-          value: d.pressure,
-        }));
-      if (arr.length > 0) return arr;
-    }
-    // fallback sintetico
-    return safeDaysOfMonth(aMonthISO,[]).map(d=> ({
-      dateLabel: format(d,"d MMM",{locale:it}),
-      value: pressureFor(d)+rand(-10,10),
-    }));
-  }, [serpByDate, aMonthISO]);
-
   const meteoCovered = useMemo(
     () => calendarData.filter((d: any) => d?.wx?.code != null && isWithinNextDays(d.date, 7)).length,
     [calendarData]
@@ -769,17 +710,15 @@ export default function App(){
   const handleReset = useCallback(() => {
     const now = new Date();
     const m = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
-    // UI
     setQuery(DEFAULT_QUERY); setRadius(20); setMonthISO(m); setTypes(["hotel"]); setMode("zone");
-    // APPLICATI
     setAQuery(DEFAULT_QUERY); setARadius(20); setAMonthISO(m); setATypes(["hotel"]); setAMode("zone"); setACenter(DEFAULT_CENTER);
-    // Extra
-    setNotices([]); setWeatherByDate({}); 
+    setNotices([]); setWeatherByDate({});
+    setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]); setSerpTrend([]);
+    setSerpUsage(null); setAskTrend(true); setAskRelated(false);
     replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), {
       q: DEFAULT_QUERY, r: 20, m, t: ["hotel"], mode: "zone", dataSource, csvUrl, gsId, gsGid, gsSheet
     });
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
-
   // Share link
   const [shareUrl, setShareUrl] = useState<string>("");
 
@@ -790,13 +729,10 @@ export default function App(){
         <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
-            {(serpUsage || quotaLeft != null) && (
+            {serpUsage && (serpUsage.total || serpUsage.left || serpUsage.used) && (
               <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border bg-white">
                 <TrendingUp className="h-3.5 w-3.5" />
-                {serpUsage
-                  ? <>SERP {serpUsage.used ?? "?"}/{serpUsage.total ?? "?"} (rimasti {serpUsage.left ?? "?"})</>
-                  : <>SERP · rimasti {quotaLeft}</>
-                }
+                SERP {serpUsage.used ?? "?"}/{serpUsage.total ?? "?"} (rimasti {serpUsage.left ?? "?"})
               </span>
             )}
           </div>
@@ -814,7 +750,7 @@ export default function App(){
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
         {/* SIDEBAR */}
         <aside className="space-y-6">
-          {/* Sorgente dati */}
+          {/* Sorgente dati opzionale */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="text-sm font-semibold">Sorgente Dati</div>
             <div className="flex items-center gap-2">
@@ -895,7 +831,23 @@ export default function App(){
             {/* Tipologie */}
             <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels} />
 
-            {/* Modalità + Pulsante + Link condivisibile */}
+            {/* Selettori SERP */}
+            <div className="rounded-xl border bg-white p-3">
+              <div className="text-sm font-semibold mb-2">Dati da chiedere alle API</div>
+              <label className="flex items-center gap-2 text-sm mb-1">
+                <input type="checkbox" checked={askTrend} onChange={(e)=> setAskTrend(e.currentTarget.checked)} />
+                <span>Domanda (Google Trends)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={askRelated} onChange={(e)=> setAskRelated(e.currentTarget.checked)} />
+                <span>Segmenti (canali, provenienza, LOS)</span>
+              </label>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Suggerito: attiva <b>Domanda</b> sempre, abilita <b>Segmenti</b> solo quando serve (risparmi query).
+              </p>
+            </div>
+
+            {/* Modalità + Pulsante + Link */}
             <div className="grid grid-cols-1 gap-3 mt-2">
               <div className="flex items-center gap-3">
                 <label className="w-28 text-sm text-slate-700">Modalità</label>
@@ -915,6 +867,8 @@ export default function App(){
                     if (!aCenter) setACenter(DEFAULT_CENTER);
                     const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
                     setShareUrl(url);
+                    // chiama subito le SERP (in base ai checkbox)
+                    fetchSerp();
                   }}
                 >
                   <RefreshCw className="h-4 w-4 mr-2"/>
@@ -939,6 +893,7 @@ export default function App(){
             </section>
           )}
         </aside>
+
         {/* MAIN */}
         <main className="space-y-6">
           {/* MAPPA */}
@@ -1052,7 +1007,7 @@ export default function App(){
             </ResponsiveContainer>
           </div>
 
-          {/* Andamento Domanda (mese selezionato ±1) */}
+          {/* Andamento Domanda (mese-1, mese, mese+1) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
             <ResponsiveContainer width="100%" height={280}>
