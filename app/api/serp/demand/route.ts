@@ -1,181 +1,227 @@
 // app/api/serp/demand/route.ts
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 import { NextResponse } from "next/server";
 
-/** Converte un item Trends in ISO yyyy-mm-dd.
- *  Supporta:
- *   - row.time (unix sec)   → giornaliero
- *   - row.timestamp (string | unix sec) → orario
- *   - row.formattedTime (string)        → fallback
- */
-function toISODate(row: any): string | null {
-  try {
-    if (row?.time != null) {
-      // unix seconds (giorni)
-      const d = new Date(Number(row.time) * 1000);
-      return d.toISOString().slice(0, 10);
-    }
-    if (row?.timestamp != null) {
-      // può essere stringa di secondi o già ISO; normalizziamo sempre a Date
-      const ts = Number(row.timestamp);
-      const d = Number.isFinite(ts) ? new Date(ts * 1000) : new Date(row.timestamp);
-      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-    }
-    if (row?.formattedTime) {
-      const d = new Date(row.formattedTime);
-      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-    }
-  } catch {/* ignore */}
-  return null;
-}
+/** Mappa per costruire il topic in base alla tipologia selezionata */
+const TYPE_KEYWORD: Record<string, string> = {
+  hotel: "hotel",
+  agriturismo: "agriturismo",
+  "b&b": "b&b",
+  casa_vacanza: "casa vacanza",
+  villaggio_turistico: "villaggio turistico",
+  resort: "resort",
+  affittacamere: "affittacamere",
+};
 
-/** Estrae i punti 0..100 e (se orari) li aggrega per giorno con media */
-function parseTimeseriesDaily(json: any): { date: string; score: number }[] {
+/** Parsers SerpAPI → nostra struttura */
+function parseTimeseries(json: any): { date: string; score: number }[] {
   const tl: any[] = json?.interest_over_time?.timeline_data || [];
-  if (!Array.isArray(tl) || tl.length === 0) return [];
-
-  // bucket giornaliero
-  const byDay = new Map<string, { s: number; n: number }>();
-
+  const out: { date: string; score: number }[] = [];
   for (const row of tl) {
-    const iso = toISODate(row);
-    const raw =
+    const ts = row?.timestamp || row?.time;
+    const v =
       Array.isArray(row?.values) && row.values[0]?.value != null
         ? Number(row.values[0].value)
         : Number(row?.value ?? row?.score ?? 0);
-
-    if (!iso || !Number.isFinite(raw)) continue;
-
-    const v = Math.max(0, Math.min(100, Math.round(raw)));
-
-    const bucket = byDay.get(iso) || { s: 0, n: 0 };
-    bucket.s += v;
-    bucket.n += 1;
-    byDay.set(iso, bucket);
+    if (ts != null && !Number.isNaN(v)) {
+      const d = new Date(Number(ts) * 1000);
+      const iso = d.toISOString().slice(0, 10);
+      out.push({ date: iso, score: Math.max(0, Math.min(100, Math.round(v))) });
+    }
   }
-
-  // media per giorno + ordinamento crescente
-  const out = Array.from(byDay.entries())
-    .map(([date, { s, n }]) => ({ date, score: Math.round(s / Math.max(1, n)) }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
   return out;
 }
 
-type TryParams = { topic: string; geo: string; date: string; cat?: string };
+function pickTopN(list: string[], n: number): string[] {
+  return list
+    .filter(Boolean)
+    .map((s) => s.trim())
+    .filter((s, i, a) => s.length > 1 && a.indexOf(s) === i)
+    .slice(0, n);
+}
 
-async function tryFetchSeries(key: string, tp: TryParams, debug = false) {
-  const p = new URLSearchParams({
-    engine: "google_trends",
-    data_type: "TIMESERIES",
-    q: tp.topic,
-    geo: tp.geo,
-    date: tp.date,
-    api_key: key,
+/** Bucket grezzi dai related queries → Canali / Provenienza / LOS */
+function bucketsFromRelated(queries: string[]) {
+  const q = queries.map((s) => s.toLowerCase());
+
+  const channels: Record<string, number> = {
+    booking: 0,
+    airbnb: 0,
+    diretto: 0,
+    expedia: 0,
+    altro: 0,
+  };
+  q.forEach((s) => {
+    if (s.includes("booking")) channels.booking++;
+    else if (s.includes("airbnb")) channels.airbnb++;
+    else if (s.includes("expedia")) channels.expedia++;
+    else if (s.includes("diretto") || s.includes("sito") || s.includes("telefono"))
+      channels.diretto++;
+    else channels.altro++;
   });
-  if (tp.cat) p.set("cat", tp.cat); // 203 = Hotels & Accommodations
 
-  const url = `https://serpapi.com/search.json?${p.toString()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  const text = await res.text();
+  const prov: Record<string, number> = {
+    italia: 0,
+    germania: 0,
+    francia: 0,
+    usa: 0,
+    uk: 0,
+    altro: 0,
+  };
+  q.forEach((s) => {
+    if (/(italia|rome|milan|florence|napoli|venezia)/.test(s)) prov.italia++;
+    else if (/(german|berlin|munich|deutsch)/.test(s)) prov.germania++;
+    else if (/(france|paris|francese)/.test(s)) prov.francia++;
+    else if (/(usa|new york|los angeles|miami)/.test(s)) prov.usa++;
+    else if (/(uk|london|british|inghilterra)/.test(s)) prov.uk++;
+    else prov.altro++;
+  });
 
-  let json: any;
-  try { json = JSON.parse(text); } catch { json = { _raw: text }; }
+  const los: Record<string, number> = {
+    "1 notte": 0,
+    "2-3 notti": 0,
+    "4-6 notti": 0,
+    "7+ notti": 0,
+  };
+  q.forEach((s) => {
+    if (/(1 notte|una notte|weekend)/.test(s)) los["1 notte"]++;
+    else if (/(2|3).*(nott[ei])/.test(s)) los["2-3 notti"]++;
+    else if (/(4|5|6).*(nott[ei])/.test(s)) los["4-6 notti"]++;
+    else if (/(7|settimana|14|due settimane)/.test(s)) los["7+ notti"]++;
+  });
 
-  const series = parseTimeseriesDaily(json);
+  const toArr = (o: Record<string, number>) =>
+    Object.entries(o).map(([label, value]) => ({ label, value }));
+
   return {
-    ok: res.ok,
-    series,
-    rawMeta: (json?.search_metadata || json?.search_parameters || null),
-    lastUrl: url,
-    httpStatus: res.status,
-    body: debug ? json : undefined,
+    channels: toArr(channels),
+    provenance: toArr(prov),
+    los: toArr(los),
   };
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const qRaw = (url.searchParams.get("q") || "").trim();
-  const debug = url.searchParams.get("debug") === "1";
-
-  if (!qRaw) {
-    return NextResponse.json({ ok: false, error: "Parametro 'q' mancante." }, { status: 400 });
-  }
-
   const key = process.env.SERPAPI_KEY;
   if (!key) {
-    return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante." }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "SERPAPI_KEY mancante su Vercel" },
+      { status: 500 }
+    );
   }
 
-  // Varianti di topic (b&b incluso ma con fallback "hotel")
-  const topics = [
-    /hotel|albergh/i.test(qRaw) ? qRaw : `${qRaw} hotel`,
-    `hotel ${qRaw}`,
-    `${qRaw} alberghi`,
-    `${qRaw} b&b`,
-  ];
+  const url = new URL(req.url);
+  const q = (url.searchParams.get("q") || "").trim(); // es. "Firenze"
+  const monthISO = (url.searchParams.get("monthISO") || "").trim(); // "YYYY-MM-01" opz.
+  const types = (url.searchParams.get("types") || "hotel")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 
-  // Periodi: prima 12 mesi (robusta), poi 3 mesi, poi 7 giorni (orario → noi aggreghiamo)
-  const dates = ["today 12-m", "today 3-m", "now 7-d"];
+  // Tipologia principale (prima selezionata)
+  const mainType = types[0] || "hotel";
+  const typeKeyword = TYPE_KEYWORD[mainType] || "hotel";
 
-  // Geo: partiamo da nazionale IT (stabile)
-  const geos = ["IT"];
+  // Topic per Trends (es. "Firenze hotel")
+  const topic = `${q} ${typeKeyword}`.trim();
 
-  // Categoria 203 (Hotels & Accommodations) aiuta la qualità
-  const cats = ["203", undefined];
+  // Per ottenere dati “utili” al calendario e al grafico mensile: 3 mesi
+  const dateRange = "today 3-m";
 
-  const attempts: TryParams[] = [];
-  for (const topic of topics) {
-    for (const geo of geos) {
-      for (const date of dates) {
-        for (const cat of cats) {
-          attempts.push({ topic, geo, date, cat });
-        }
-      }
-    }
-  }
-
-  let lastDebug: any = null;
-
-  for (const tp of attempts) {
-    try {
-      const r = await tryFetchSeries(key, tp, debug);
-      lastDebug = r;
-      if (r.ok && r.series.length > 0) {
-  // Serie per il grafico (etichette "08 set", etc.)
-  const trend = r.series.map(s => ({
-    dateLabel: s.date.slice(8, 10) + " " + new Date(s.date).toLocaleString("it-IT", { month: "short" }),
-    value: s.score,
-  }));
-
-  // Serie ISO per il calendario (la userà il frontend)
-  const seriesISO = r.series; // [{ date: "YYYY-MM-DD", score: 0..100 }]
-
-  return NextResponse.json({
-    ok: true,
-    topic: tp.topic,
-    geo: tp.geo,
-    dateRange: tp.date,
-    cat: tp.cat || null,
-    trend,
-    seriesISO,
-    usage: r.rawMeta,
-    debug: debug ? { lastUrl: r.lastUrl, httpStatus: r.httpStatus, body: r.body } : undefined,
+  // --- 1) TIMESERIES ---
+  const p = new URLSearchParams({
+    engine: "google_trends",
+    data_type: "TIMESERIES",
+    q: topic,
+    geo: "IT",
+    date: dateRange,
+    api_key: key,
+    // categoria "Travel" per ridurre rumore
+    cat: "203",
   });
-}
-    } catch (e: any) {
-      lastDebug = { error: String(e?.message || e), params: tp };
-      continue;
-    }
+
+  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, {
+    cache: "no-store",
+  });
+  const body = await r.json();
+
+  const seriesISO = parseTimeseries(body); // [{date, score}]
+
+  // --- 2) RELATED QUERIES (per grafici torta/bar) ---
+  let relatedQueries: string[] = [];
+  try {
+    const rq = new URLSearchParams({
+      engine: "google_trends",
+      data_type: "RELATED_QUERIES",
+      q: topic,
+      geo: "IT",
+      date: dateRange,
+      api_key: key,
+      cat: "203",
+    });
+    const r2 = await fetch(
+      `https://serpapi.com/search.json?${rq.toString()}`,
+      { cache: "no-store" }
+    );
+    const j2 = await r2.json();
+    relatedQueries =
+      j2?.related_queries?.flatMap((g: any) =>
+        (g?.queries || []).map((x: any) => String(x?.query || ""))
+      ) || [];
+  } catch {
+    // ignora
   }
 
-  // Nessun risultato utile → ok:false (200) per far scattare i fallback UI, niente 500
-  return NextResponse.json({
-    ok: false,
-    error: "Nessuna serie disponibile per il topic/periodo selezionato (dopo vari tentativi).",
-    hint: "Prova a variare la query (es. 'hotel firenze') o un periodo più lungo (today 12-m).",
-    debug: debug ? lastDebug : undefined,
-  }, { status: 200 });
+  const buckets =
+    relatedQueries.length > 0
+      ? bucketsFromRelated(pickTopN(relatedQueries, 100))
+      : null;
+
+  // Serie per il grafico linea: trasformiamo in etichette "d MMM"
+  const trend = seriesISO.map((s) => {
+    const d = new Date(s.date);
+    const label = d
+      .toLocaleDateString("it-IT", { day: "2-digit", month: "short" })
+      .replace(".", "");
+    return { dateLabel: label, value: s.score };
+  });
+
+  return NextResponse.json(
+    {
+      ok: seriesISO.length > 0,
+      topic,
+      geo: "IT",
+      dateRange,
+      cat: "203",
+      trend,
+      seriesISO, // <- per il calendario/ADR
+      // grafici
+      channels: buckets
+        ? [
+            { channel: "Booking", value: buckets.channels.find((x) => x.label === "booking")?.value || 0 },
+            { channel: "Airbnb", value: buckets.channels.find((x) => x.label === "airbnb")?.value || 0 },
+            { channel: "Diretto", value: buckets.channels.find((x) => x.label === "diretto")?.value || 0 },
+            { channel: "Expedia", value: buckets.channels.find((x) => x.label === "expedia")?.value || 0 },
+            { channel: "Altro", value: buckets.channels.find((x) => x.label === "altro")?.value || 0 },
+          ]
+        : [],
+      origins: buckets
+        ? [
+            { name: "Italia", value: buckets.provenance.find((x) => x.label === "italia")?.value || 0 },
+            { name: "Germania", value: buckets.provenance.find((x) => x.label === "germania")?.value || 0 },
+            { name: "Francia", value: buckets.provenance.find((x) => x.label === "francia")?.value || 0 },
+            { name: "USA", value: buckets.provenance.find((x) => x.label === "usa")?.value || 0 },
+            { name: "UK", value: buckets.provenance.find((x) => x.label === "uk")?.value || 0 },
+          ]
+        : [],
+      losDist: buckets
+        ? buckets.los.map(({ label, value }) => ({ bucket: label, value }))
+        : [],
+      note:
+        relatedQueries.length === 0
+          ? "Dati Trends senza related queries (campioni ridotti)."
+          : undefined,
+      usage: body?.search_metadata || null,
+    },
+    { status: 200 }
+  );
 }
