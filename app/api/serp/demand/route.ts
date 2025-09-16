@@ -34,10 +34,7 @@ function parseTimeseries(json: any): { date: string; score: number }[] {
     const ts = row?.timestamp ? Number(row.timestamp) * 1000 : null;
     const v = Array.isArray(row?.values) ? Number(row.values[0]?.value ?? 0) : 0;
     if (ts != null) {
-      out.push({
-        date: new Date(ts).toISOString().slice(0, 10),
-        score: Math.max(0, Math.min(100, Math.round(v))),
-      });
+      out.push({ date: new Date(ts).toISOString().slice(0, 10), score: Math.max(0, Math.min(100, Math.round(v))) });
     }
   }
   return out;
@@ -160,7 +157,7 @@ export async function GET(req: Request) {
       const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       trendSeries = parseTimeseries(j);
-      usage = j?.search_metadata; // indicativo; per contatori affidabili usa /api/serp/quota
+      usage = j?.search_metadata; // indicativo
     }
 
     // ----- B) Related Queries (bucket) -----
@@ -184,9 +181,9 @@ export async function GET(req: Request) {
       if (relatedQueries.length > 0) {
         const all = bucketsFromRelated(pickTopN(relatedQueries, 120));
         related = {
-          channels: (noFlags || wantCh) ? all.channels : [],
+          channels:   (noFlags || wantCh)   ? all.channels   : [],
           provenance: (noFlags || wantProv) ? all.provenance : [],
-          los: (noFlags || wantLos) ? all.los : [],
+          los:        (noFlags || wantLos)  ? all.los        : [],
         };
       } else {
         note = "Dati Trends senza related queries (campioni ridotti).";
@@ -196,27 +193,13 @@ export async function GET(req: Request) {
 
     if (parts.includes("trend") && trendSeries.length === 0) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Nessuna serie disponibile per il topic/periodo selezionato.",
-          hint: "Prova con 'hotel <città>' e periodo 'today 12-m'.",
-        },
+        { ok: false, error: "Nessuna serie disponibile per il topic/periodo selezionato.", hint: "Prova con 'hotel <città>' e periodo 'today 12-m'." },
         { status: 200 }
       );
     }
 
     return NextResponse.json(
-      {
-        ok: true,
-        topic,
-        geo,
-        dateRange: date,
-        cat,
-        series: trendSeries,
-        related,
-        usage,
-        note,
-      },
+      { ok: true, topic, geo, dateRange: date, cat, series: trendSeries, related, usage, note },
       { status: 200 }
     );
   } catch (err: any) {

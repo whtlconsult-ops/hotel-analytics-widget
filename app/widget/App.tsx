@@ -1,3 +1,4 @@
+// ===== Block 1/4 =====
 // app/widget/App.tsx
 "use client";
 
@@ -5,7 +6,7 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
-import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO, addMonths, subMonths, isSameMonth } from "date-fns";
+import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
@@ -80,7 +81,6 @@ const THEME = {
 const solidColor = (i:number)=> THEME.palette.solid[i % THEME.palette.solid.length];
 
 /* ---------- Utilità ---------- */
-function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
 function shade(hex: string, percent: number) {
   const m = hex.replace('#',''); const num = parseInt(m, 16);
   const r = Math.min(255, Math.max(0, (num >> 16) + Math.round(255 * percent)));
@@ -121,10 +121,9 @@ function safeParseMonthISO(v:string|undefined|null, warnings:string[]): string{
 }
 function daysOfMonthWindow(monthISO: string): Date[] {
   const m = parseISO(monthISO);
-  // solo **mese selezionato**
   return eachDayOfInterval({ start: startOfMonth(m), end: endOfMonth(m) });
 }
-function clampRadiusSilently(r:number){ // niente avviso al primo load
+function clampRadiusSilently(r:number){
   if (!Number.isFinite(r)) return 20;
   return Math.max(1, Math.min(50, Math.round(r)));
 }
@@ -169,13 +168,10 @@ function isWithinNextDays(d: Date, n = 7) {
   return dd >= today && dd <= max;
 }
 function resampleToDays(series: {date:string; score:number}[], monthISO: string) {
-  // Porta una serie settimanale a punti giornalieri del mese selezionato
   const monthDays = daysOfMonthWindow(monthISO);
   if (!series?.length) return monthDays.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
-  // mappa per timestamp YYYY-MM-DD
   const m = new Map<string, number>();
   series.forEach(p => m.set(p.date.slice(0,10), Number(p.score)||0));
-  // strategie: nearest-week (semplice)
   let lastSeen = 0;
   return monthDays.map(d=>{
     const iso = format(d,"yyyy-MM-dd");
@@ -351,7 +347,7 @@ function TypesMultiSelect({
     </div>
   );
 }
-/* ---------- APP ---------- */
+// ===== Block 2/4 =====
 export default function App(){
   const router = useRouter();
   const search = useSearchParams();
@@ -419,7 +415,7 @@ export default function App(){
     askTrend !== true || askChannels !== false || askProvenance !== false || askLOS !== false || wxProvider !== "open-meteo",
   [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types, askTrend, askChannels, askProvenance, askLOS, wxProvider]);
 
-  // Normalizzazione (niente warning sul raggio: clamp silenzioso)
+  // Normalizzazione
   const normalized: Normalized = useMemo(()=>{
     const warnings: string[] = [];
     const center = aCenter;
@@ -430,7 +426,7 @@ export default function App(){
     return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
   }, [aMonthISO, aRadius, aTypes, aCenter]);
 
-  // Avvisi (filtra via l’eventuale warning del raggio di default)
+  // Avvisi
   useEffect(() => {
     setNotices(prev => (prev.join("|") === normalized.warnings.join("|") ? prev : normalized.warnings));
   }, [normalized.warnings]);
@@ -465,6 +461,7 @@ export default function App(){
     setACenter({ lat: 43.7696, lng: 11.2558 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   /* ----- Geocoding ----- */
   const handleSearchLocation = useCallback(async () => {
     const q = (query || "").trim();
@@ -632,7 +629,7 @@ export default function App(){
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
-
+// ===== Block 3/4 =====
   // CSV/GS (ridotto)
   useEffect(() => {
     if (dataSource === "none") return;
@@ -683,7 +680,7 @@ export default function App(){
     try { return parseISO(aMonthISO); } catch { return new Date(); }
   }, [aMonthISO]);
 
-  // Calendario (pressione + adr da regole dimostrative finché non colleghi ADR reale)
+  // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
     const days = daysOfMonthWindow(aMonthISO);
     return days.map(d => ({
@@ -719,6 +716,7 @@ export default function App(){
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
 
   const [shareUrl, setShareUrl] = useState<string>("");
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
@@ -943,118 +941,146 @@ export default function App(){
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
-
+// ===== Block 4/4 =====
           {/* Grafici: Provenienza + LOS */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-              <ResponsiveContainer width="100%" height={360}>
-                <PieChart margin={{ bottom: 24 }}>
-                  <defs>
-                    {provenance.map((_, i) => {
-                      const base = solidColor(i);
-                      return (
-                        <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.25)} />
-                          <stop offset="100%" stopColor={shade(base, -0.12)} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                    innerRadius={THEME.chart.pie.innerRadius} outerRadius={THEME.chart.pie.outerRadius}
-                    paddingAngle={THEME.chart.pie.paddingAngle} cornerRadius={THEME.chart.pie.cornerRadius}
-                    labelLine={false} label={({ percent }) => `${Math.round((percent || 0)*100)}%`} isAnimationActive
-                    style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}>
-                    {provenance.map((_, i) => (
-                      <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
-                    ))}
-                  </Pie>
-                  <RTooltip />
-                  <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
-                </PieChart>
-              </ResponsiveContainer>
+
+              {provenance.length === 0 || provenance.every(x => (x.value || 0) === 0) ? (
+                <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+                  Nessun segnale utile per questo periodo/area.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={360}>
+                  <PieChart margin={{ bottom: 24 }}>
+                    <defs>
+                      {provenance.map((_, i) => {
+                        const base = solidColor(i);
+                        return (
+                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.25)} />
+                            <stop offset="100%" stopColor={shade(base, -0.12)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                      innerRadius={THEME.chart.pie.innerRadius} outerRadius={THEME.chart.pie.outerRadius}
+                      paddingAngle={THEME.chart.pie.paddingAngle} cornerRadius={THEME.chart.pie.cornerRadius}
+                      labelLine={false} label={({ percent }) => `${Math.round((percent || 0)*100)}%`} isAnimationActive
+                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}>
+                      {provenance.map((_, i) => (
+                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
+                      ))}
+                    </Pie>
+                    <RTooltip />
+                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
 
             <div className="bg-white rounded-2xl border shadow-sm p-4">
               <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={los} margin={THEME.chart.bar.margin}>
-                  <defs>
-                    {los.map((_, i) => {
-                      const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
-                      return (
-                        <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.2)} />
-                          <stop offset="100%" stopColor={shade(base, -0.15)} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
-                  <YAxis />
-                  <RTooltip />
-                  <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+
+              {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
+                <div className="h-48 flex items-center justify-center text-sm text-slate-500">
+                  Nessun segnale utile per questo periodo/area.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={los} margin={THEME.chart.bar.margin}>
+                    <defs>
+                      {los.map((_, i) => {
+                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                        return (
+                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.2)} />
+                            <stop offset="100%" stopColor={shade(base, -0.15)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
+                    <YAxis />
+                    <RTooltip />
+                    <Bar dataKey="value" radius={[8,8,0,0]}>
+                      {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
           {/* Canali */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={channels} margin={THEME.chart.barWide.margin}>
-                <defs>
-                  {channels.map((_, i) => {
-                    const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
-                    return (
-                      <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={shade(base, 0.18)} />
-                        <stop offset="100%" stopColor={shade(base, -0.15)} />
-                      </linearGradient>
-                    );
-                  })}
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value" radius={[8,8,0,0]}>
-                  {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+
+            {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+                Nessun segnale utile per questo periodo/area.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                  <defs>
+                    {channels.map((_, i) => {
+                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                      return (
+                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.18)} />
+                          <stop offset="100%" stopColor={shade(base, -0.15)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
+                  <YAxis />
+                  <RTooltip />
+                  <Bar dataKey="value" radius={[8,8,0,0]}>
+                    {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           {/* Andamento Domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
             <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={serpTrend}>
-                <defs>
-                  <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
-                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
-                  </linearGradient>
-                  <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
-                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="dateLabel" tick={{fontSize: 12}} interval={3}/>
-                <YAxis />
-                <RTooltip />
-                <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                  dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                  activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }} isAnimationActive />
-              </LineChart>
-            </ResponsiveContainer>
+
+            {serpTrend.length === 0 || serpTrend.every(p => (p.value || 0) === 0) ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+                Nessun segnale (serie tutta a zero). Prova ad ampliare l’area o il periodo.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={serpTrend}>
+                  <defs>
+                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
+                    </linearGradient>
+                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
+                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="dateLabel" tick={{fontSize: 12}} interval={3}/>
+                  <YAxis />
+                  <RTooltip />
+                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
+                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
+                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }} isAnimationActive />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </main>
       </div>
