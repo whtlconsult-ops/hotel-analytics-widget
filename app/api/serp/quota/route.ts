@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const key = process.env.SERP_API_KEY;
+  const key = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
   if (!key) {
     return NextResponse.json({ ok: false, error: "SERP_API_KEY mancante" }, { status: 500 });
   }
