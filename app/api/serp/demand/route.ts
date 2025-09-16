@@ -1,4 +1,3 @@
-// app/api/serp/demand/route.ts
 export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 
@@ -78,17 +77,15 @@ export async function GET(req: Request) {
   const topic = (url.searchParams.get("q") || "").trim();
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
-  const monthISO = (url.searchParams.get("monthISO") || "").trim(); // (non obbligatorio qui)
   const parts = (url.searchParams.get("parts") || "trend").split(","); // "trend", "related"
 
-// flag per calcolare solo i bucket richiesti (retro-compatibili: se mancano, li calcolo tutti)
-const wantCh   = url.searchParams.get("ch")   === "1";
-const wantProv = url.searchParams.get("prov") === "1";
-const wantLos  = url.searchParams.get("los")  === "1";
-  const cat = url.searchParams.get("cat") || "203";                    // 203 = Travel
-  
-// per avere copertura sufficiente: 12 mesi
-  const date = url.searchParams.get("date") || "today 12-m";
+  // flag per calcolare solo i bucket richiesti (retro-compatibili: se mancano → tutti)
+  const wantCh   = url.searchParams.get("ch")   === "1";
+  const wantProv = url.searchParams.get("prov") === "1";
+  const wantLos  = url.searchParams.get("los")  === "1";
+
+  const cat = url.searchParams.get("cat") || "203";          // 203 = Travel
+  const date = url.searchParams.get("date") || "today 12-m"; // copertura 12 mesi
 
   if (!topic) return NextResponse.json({ ok: false, error: "Manca 'q'." }, { status: 400 });
 
@@ -110,40 +107,41 @@ const wantLos  = url.searchParams.get("los")  === "1";
     const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
     const j = await r.json();
     trendSeries = parseTimeseries(j);
-    usage = j?.search_metadata;
+    usage = j?.search_metadata; // NB: l'uso reale lo leggiamo da /api/serp/quota
   }
 
   // ----- B) Related Queries (bucket) -----
   let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
   let note: string | undefined;
   if (parts.includes("related")) {
-  const rq = new URLSearchParams({
-    engine: "google_trends",
-    data_type: "RELATED_QUERIES",
-    q: topic,
-    geo,
-    date,
-    cat,
-    api_key: apiKey!,
-  });
-  const r2 = await fetch(`https://serpapi.com/search.json?${rq.toString()}`, { cache: "no-store" });
-  const j2 = await r2.json();
-  const relatedQueries: string[] =
-    j2?.related_queries?.flatMap((g: any) => (g?.queries || []).map((x: any) => String(x?.query || ""))) || [];
+    const rq = new URLSearchParams({
+      engine: "google_trends",
+      data_type: "RELATED_QUERIES",
+      q: topic,
+      geo,
+      date,
+      cat,
+      api_key: apiKey!,
+    });
+    const r2 = await fetch(`https://serpapi.com/search.json?${rq.toString()}`, { cache: "no-store" });
+    const j2 = await r2.json();
+    const relatedQueries: string[] =
+      j2?.related_queries?.flatMap((g: any) => (g?.queries || []).map((x: any) => String(x?.query || ""))) || [];
 
-  if (relatedQueries.length > 0) {
-    const all = bucketsFromRelated(pickTopN(relatedQueries, 120));
-    // se i flag mancano, restituisco tutti i bucket per retro-compatibilità
-    const noFlags = url.searchParams.get("ch") === null && url.searchParams.get("prov") === null && url.searchParams.get("los") === null;
-    related = {
-      channels: (noFlags || wantCh)   ? all.channels   : [],
-      provenance: (noFlags || wantProv) ? all.provenance : [],
-      los: (noFlags || wantLos)      ? all.los        : [],
-    };
-  } else {
-    note = "Dati Trends senza related queries (campioni ridotti).";
+    if (relatedQueries.length > 0) {
+      const all = bucketsFromRelated(pickTopN(relatedQueries, 120));
+      const noFlags = url.searchParams.get("ch") === null
+                   && url.searchParams.get("prov") === null
+                   && url.searchParams.get("los") === null;
+      related = {
+        channels:    (noFlags || wantCh)   ? all.channels    : [],
+        provenance:  (noFlags || wantProv) ? all.provenance  : [],
+        los:         (noFlags || wantLos)  ? all.los         : [],
+      };
+    } else {
+      note = "Dati Trends senza related queries (campioni ridotti).";
+    }
   }
-}
 
   if (parts.includes("trend") && trendSeries.length === 0) {
     return NextResponse.json({
