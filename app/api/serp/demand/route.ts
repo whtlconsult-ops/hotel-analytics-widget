@@ -40,6 +40,10 @@ function parseTimeseries(json: any): { date: string; score: number }[] {
   return out;
 }
 
+function nonZeroCount(a: {score:number}[]) {
+  return a.reduce((acc, x) => acc + (x.score > 0 ? 1 : 0), 0);
+}
+
 function pickTopN(list: string[], n: number) {
   return list
     .filter(Boolean)
@@ -110,96 +114,110 @@ function extractRelatedQueries(j2: any): string[] {
   return [];
 }
 
+async function fetchTrends(apiKey: string, q: string, geo: string, date: string, cat: string) {
+  const p = new URLSearchParams({
+    engine: "google_trends",
+    data_type: "TIMESERIES",
+    q, geo, date, cat, api_key: apiKey,
+  });
+  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  return { json: j, series: parseTimeseries(j) as {date:string; score:number}[], usage: j?.search_metadata };
+}
+
+async function fetchRelated(apiKey: string, q: string, geo: string, date: string, cat: string) {
+  const p = new URLSearchParams({
+    engine: "google_trends",
+    data_type: "RELATED_QUERIES",
+    q, geo, date, cat, api_key: apiKey,
+  });
+  const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  return extractRelatedQueries(j);
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante" }, { status: 500 });
-    }
+    if (!apiKey) return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante" }, { status: 500 });
 
     const topic = (url.searchParams.get("q") || "").trim();
     if (!topic) return NextResponse.json({ ok: false, error: "Manca 'q'." }, { status: 400 });
 
     const lat = Number(url.searchParams.get("lat"));
     const lng = Number(url.searchParams.get("lng"));
-    const parts = (url.searchParams.get("parts") || "trend")
-      .split(",")
-      .map((s) => s.trim().toLowerCase());
-
-    // flag per calcolare solo i bucket richiesti (retro-compatibili: se mancano → tutti)
-    const wantCh = url.searchParams.get("ch") === "1";
+    const parts = (url.searchParams.get("parts") || "trend").split(",").map(s=>s.trim().toLowerCase());
+    const wantCh   = url.searchParams.get("ch")   === "1";
     const wantProv = url.searchParams.get("prov") === "1";
-    const wantLos = url.searchParams.get("los") === "1";
-    const noFlags =
-      url.searchParams.get("ch") === null &&
-      url.searchParams.get("prov") === null &&
-      url.searchParams.get("los") === null;
+    const wantLos  = url.searchParams.get("los")  === "1";
+    const noFlags  = url.searchParams.get("ch")===null && url.searchParams.get("prov")===null && url.searchParams.get("los")===null;
 
-    const cat = url.searchParams.get("cat") || "203"; // 203 = Travel
-    const date = url.searchParams.get("date") || "today 12-m";
+    const cat  = url.searchParams.get("cat")  || "203";          // Travel
+    const date = url.searchParams.get("date") || "today 12-m";   // predefinito
 
-    const geo = await guessGeoFromLatLng(lat, lng);
+    const geoRegion = await guessGeoFromLatLng(lat, lng);
+    let noteParts: string[] = [];
 
-    // ----- A) Trends (serie) -----
-    let trendSeries: { date: string; score: number }[] = [];
-    let usage: any | undefined;
+    // ----- A) TIMESERIES con fallback progressivo -----
+    let series: { date: string; score: number }[] = [];
+    let usage: any;
     if (parts.includes("trend")) {
-      const p = new URLSearchParams({
-        engine: "google_trends",
-        data_type: "TIMESERIES",
-        q: topic,
-        geo,
-        date,
-        cat,
-        api_key: apiKey,
-      });
-      const r = await fetch(`https://serpapi.com/search.json?${p.toString()}`, { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      trendSeries = parseTimeseries(j);
-      usage = j?.search_metadata; // indicativo
-    }
-
-    // ----- B) Related Queries (bucket) -----
-    let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
-    let note: string | undefined;
-
-    if (parts.includes("related")) {
-      const rq = new URLSearchParams({
-        engine: "google_trends",
-        data_type: "RELATED_QUERIES",
-        q: topic,
-        geo,
-        date,
-        cat,
-        api_key: apiKey,
-      });
-      const r2 = await fetch(`https://serpapi.com/search.json?${rq.toString()}`, { cache: "no-store" });
-      const j2 = await r2.json().catch(() => ({}));
-
-      const relatedQueries = extractRelatedQueries(j2);
-      if (relatedQueries.length > 0) {
-        const all = bucketsFromRelated(pickTopN(relatedQueries, 120));
-        related = {
-          channels:   (noFlags || wantCh)   ? all.channels   : [],
-          provenance: (noFlags || wantProv) ? all.provenance : [],
-          los:        (noFlags || wantLos)  ? all.los        : [],
-        };
-      } else {
-        note = "Dati Trends senza related queries (campioni ridotti).";
-        related = { channels: [], provenance: [], los: [] };
+      // 1) regione
+      let t = await fetchTrends(apiKey, topic, geoRegion, date, cat);
+      series = t.series; usage = t.usage;
+      if (nonZeroCount(series) < 3) {
+        // 2) nazionale
+        noteParts.push("Serie debole su geo regionale → fallback geo=IT");
+        t = await fetchTrends(apiKey, topic, "IT", date, cat);
+        series = t.series; usage = usage || t.usage;
+      }
+      if (nonZeroCount(series) < 3 && date !== "today 5-y") {
+        // 3) estendi periodo
+        noteParts.push("Serie ancora debole → fallback periodo today 5-y");
+        t = await fetchTrends(apiKey, topic, "IT", "today 5-y", cat);
+        series = t.series; usage = usage || t.usage;
       }
     }
 
-    if (parts.includes("trend") && trendSeries.length === 0) {
+    // ----- B) RELATED con fallback progressivo -----
+    let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
+    if (parts.includes("related")) {
+      const minRelated = 10;
+      let queries = await fetchRelated(apiKey, topic, geoRegion, date, cat);
+      if (queries.length < minRelated) {
+        noteParts.push("Related poveri su geo regionale → fallback geo=IT");
+        queries = await fetchRelated(apiKey, topic, "IT", date, cat);
+      }
+      if (queries.length < minRelated && date !== "today 5-y") {
+        noteParts.push("Related ancora poveri → fallback periodo today 5-y");
+        queries = await fetchRelated(apiKey, topic, "IT", "today 5-y", cat);
+      }
+
+      if (queries.length > 0) {
+        const all = bucketsFromRelated(pickTopN(queries, 120));
+        related = {
+          channels:    (noFlags || wantCh)   ? all.channels   : [],
+          provenance:  (noFlags || wantProv) ? all.provenance : [],
+          los:         (noFlags || wantLos)  ? all.los        : [],
+        };
+      } else {
+        related = { channels: [], provenance: [], los: [] };
+        noteParts.push("Related non disponibili (campioni ridotti).");
+      }
+    }
+
+    if (parts.includes("trend") && series.length === 0) {
       return NextResponse.json(
-        { ok: false, error: "Nessuna serie disponibile per il topic/periodo selezionato.", hint: "Prova con 'hotel <città>' e periodo 'today 12-m'." },
+        { ok: false, error: "Nessuna serie disponibile per il topic/periodo selezionato.", hint: "Prova con 'hotel <città>'." },
         { status: 200 }
       );
     }
 
+    const note = noteParts.length ? noteParts.join(" ") : undefined;
+
     return NextResponse.json(
-      { ok: true, topic, geo, dateRange: date, cat, series: trendSeries, related, usage, note },
+      { ok: true, topic, geo: geoRegion, dateRange: date, cat, series, related, usage, note },
       { status: 200 }
     );
   } catch (err: any) {

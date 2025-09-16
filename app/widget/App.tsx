@@ -168,16 +168,27 @@ function isWithinNextDays(d: Date, n = 7) {
   return dd >= today && dd <= max;
 }
 function resampleToDays(series: {date:string; score:number}[], monthISO: string) {
-  const monthDays = daysOfMonthWindow(monthISO);
-  if (!series?.length) return monthDays.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
-  const m = new Map<string, number>();
-  series.forEach(p => m.set(p.date.slice(0,10), Number(p.score)||0));
-  let lastSeen = 0;
-  return monthDays.map(d=>{
-    const iso = format(d,"yyyy-MM-dd");
-    const v = m.get(iso);
-    if (v != null) lastSeen = v;
-    return { dateLabel: format(d, "d MMM", { locale: it }), value: lastSeen };
+  const days = daysOfMonthWindow(monthISO);
+
+  if (!Array.isArray(series) || series.length === 0) {
+    return days.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
+  }
+
+  // Ordina i punti per data crescente
+  const pts = series
+    .map(p => ({ d: parseISO(p.date), v: Number(p.score)||0 }))
+    .sort((a,b)=> a.d.getTime() - b.d.getTime());
+
+  let idx = 0;
+  let last = 0;
+
+  return days.map(day => {
+    // Avanza l'indice finché il punto è <= giorno corrente
+    while (idx < pts.length && pts[idx].d.getTime() <= day.getTime()) {
+      last = pts[idx].v;
+      idx++;
+    }
+    return { dateLabel: format(day, "d MMM", { locale: it }), value: last };
   });
 }
 
@@ -544,7 +555,7 @@ export default function App(){
         q: `${aQuery} hotel`,
         lat: String(aCenter.lat),
         lng: String(aCenter.lng),
-        date: "today 12-m",
+        date: "today 5-y",
         cat: "203",
         parts: [
           needTrend ? "trend" : "",
@@ -941,7 +952,7 @@ export default function App(){
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
-// ===== Block 4/4 =====
+
           {/* Grafici: Provenienza + LOS */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-2xl border shadow-sm p-4">
