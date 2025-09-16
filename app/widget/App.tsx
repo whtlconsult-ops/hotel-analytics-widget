@@ -554,6 +554,10 @@ export default function App(){
           needRelated ? "related" : ""
         ].filter(Boolean).join(","),
       });
++      // comunica al backend quali bucket "related" servono
++      params.set("ch", String(+askChannels));
++      params.set("prov", String(+askProvenance));
++      params.set("los", String(+askLOS));
 
       const r = await fetch(`/api/serp/demand?${params.toString()}`);
       const j: SerpDemandPayload = await r.json();
