@@ -170,15 +170,15 @@ export async function GET(req: Request) {
     /* ----- B) Related con fallback + varianti query ----- */
     let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
     if (parts.includes("related")) {
-      const minNeeded = 20;            // soglia per dire “ok, c’è segnale”
-      const maxCalls  = 6;             // per non bruciare quota: max 6 fetch RELATED in totale
-      let calls = 0;
+      const minNeeded = 20;
+const maxCalls  = 6;
+let calls = 0;
 
-      async function gather(q: string, geo: string, timeframe: string): Promise<string[]> {
-        if (calls >= maxCalls) return [];
-        calls++;
-        return await fetchRelated(apiKey, q, geo, timeframe, cat);
-      }
+const gather = async (q: string, geo: string, timeframe: string): Promise<string[]> => {
+  if (calls >= maxCalls) return [];
+  calls++;
+  return await fetchRelated(apiKey, q, geo, timeframe, cat);
+};
 
       // 1) tentativi sul topic originale (geo fallback + periodo)
       let pool = new Set<string>(await gather(topic, geoRegion, date));
