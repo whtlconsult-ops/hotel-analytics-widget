@@ -138,27 +138,36 @@ function makeShareUrl(pathname: string, opts: {
 const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
 const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
 
+// Calcola inizio/fine del MESE selezionato (coerente col calendario)
+const monthStart = format(startOfMonth(parseISO(`${monthISO}-01`)), "yyyy-MM-dd");
+const monthEnd   = format(endOfMonth(parseISO(`${monthISO}-01`)),  "yyyy-MM-dd");
+
 const params = new URLSearchParams();
-// topic: assicurati di interrogare "<query> hotel"
-params.set("q", `${aQuery} hotel`);
-params.set("lat", String(aCenter.lat));
-params.set("lng", String(aCenter.lng));
-// quali parti servono (trend sempre; related solo se richiesti)
+
+// topic: assicurati sempre "<query> hotel"
+params.set("q", /hotel/i.test(query) ? query.trim() : `${query.trim()} hotel`);
+
+// geo
+params.set("lat", String(center.lat));
+params.set("lng", String(center.lng));
+
+// parti richieste (trend sempre; related solo se spuntati)
 params.set("parts", [
   needTrend ? "trend" : "",
-  needRelated ? "related" : ""
+  needRelated ? "related" : "",
 ].filter(Boolean).join(","));
+
 // categoria Travel
 params.set("cat", "203");
 
-// intervallo coerente con il mese del calendario
+// intervallo coerente col mese selezionato
 params.set("from", monthStart);
-params.set("to", monthEnd);
+params.set("to",   monthEnd);
 
-// flag per i bucket related (il backend calcolerà solo ciò che chiedi)
-if (askChannels)    params.set("ch", "1");
-if (askProvenance)  params.set("prov", "1");
-if (askLOS)         params.set("los", "1");
+// flags per i bucket (il backend calcola solo ciò che chiedi)
+if (askChannels)   params.set("ch",   "1");
+if (askProvenance) params.set("prov", "1");
+if (askLOS)        params.set("los",  "1");
 
   params.set("wx", opts.wxProvider);
   if (opts.dataSource === "csv" && opts.csvUrl) { params.set("src","csv"); params.set("csv", opts.csvUrl); }
@@ -696,7 +705,7 @@ export default function App(){
 
   // Calendario (pressione da Trends ricampionati; fallback all'euristica se serie debole)
 const calendarData = useMemo(() => {
-  const days = daysOfMonthWindow(aMonthISO);
+  const days = daysOfMonthWindow(MonthISO);
 
   // 'serpTrend' è alimentato da fetchSerp → resampleToDays(...)
   const vals = Array.isArray(serpTrend) ? serpTrend.map(p => Number(p?.value) || 0) : [];
@@ -716,12 +725,12 @@ const calendarData = useMemo(() => {
     date: d,
     pressure: pressures[i] || 0,
     // Mantiene la tua stima ADR storica (puoi sostituirla quando colleghi ADR reale)
-    adr: adrFromCompetitors(d, aMode),
+    adr: adrFromCompetitors(d, Mode),
     holidayName: holidays[format(d,"yyyy-MM-dd")],
     wx: weatherByDate[format(d,"yyyy-MM-dd")] || undefined,
   }));
 // 👇 aggiungi 'serpTrend' nelle dipendenze, così il calendario reagisce ai dati reali
-}, [aMonthISO, aMode, holidays, weatherByDate, serpTrend]);
+}, [MonthISO, Mode, holidays, weatherByDate, serpTrend]);
 
   const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : []), [serpOrigins]);
   const los = useMemo(()=> (serpLOS.length>0 ? serpLOS : []), [serpLOS]);
