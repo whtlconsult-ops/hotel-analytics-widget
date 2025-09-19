@@ -5,7 +5,6 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Map as LeafletMap } from "leaflet";
 import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
-import "leaflet/dist/leaflet.css";
 
 /** Mantiene la mappa in forma su cambi center/bounds e su resize */
 function ResizeFix({
