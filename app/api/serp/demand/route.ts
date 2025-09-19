@@ -40,6 +40,8 @@ const pickTopN = (list: string[], n: number) =>
 
 function bucketsFromRelated(queries: string[]) {
   const q = queries.map(s => s.toLowerCase());
+
+  // CHANNElS: espandi i sinonimi → poi riduci ai 4 bucket richiesti
   const channels: Record<string, number> = { booking: 0, airbnb: 0, diretto: 0, expedia: 0, altro: 0 };
   q.forEach(s => {
     if (/\bbooking(\.com)?\b/.test(s)) channels.booking++;
@@ -48,26 +50,32 @@ function bucketsFromRelated(queries: string[]) {
     else if (/(diretto|sito\s*ufficiale|prenota\s*dal|telefono|call\s*center)/.test(s)) channels.diretto++;
     else channels.altro++;
   });
-  const prov: Record<string, number> = { italia: 0, germania: 0, francia: 0, usa: 0, uk: 0, altro: 0 };
+
+  // PROVENIENZA (query words)
+  const provCount: Record<string, number> = { italia: 0, germania: 0, francia: 0, usa: 0, uk: 0, altro: 0 };
   q.forEach(s => {
-    if (/(italia|rome|roma|milan|milano|florence|firenze|napoli|naples|venice|venezia|turin|torino|bologna)/.test(s)) prov.italia++;
-    else if (/(german|berlin|munich|frankfurt|deutsch)/.test(s)) prov.germania++;
-    else if (/(france|paris|marseille|lyon|français|francese)/.test(s)) prov.francia++;
-    else if (/(usa|united states|new york|los angeles|miami|chicago|boston)/.test(s)) prov.usa++;
-    else if (/(uk|united kingdom|london|british|inghilterra|manchester)/.test(s)) prov.uk++;
-    else prov.altro++;
+    if (/(italia|rome|roma|milan|milano|florence|firenze|napoli|naples|venice|venezia|turin|torino|bologna)/.test(s)) provCount.italia++;
+    else if (/(german|berlin|munich|frankfurt|deutsch)/.test(s)) provCount.germania++;
+    else if (/(france|paris|marseille|lyon|français|francese)/.test(s)) provCount.francia++;
+    else if (/(usa|united states|new york|los angeles|miami|chicago|boston)/.test(s)) provCount.usa++;
+    else if (/(uk|united kingdom|london|british|inghilterra|manchester)/.test(s)) provCount.uk++;
+    else provCount.altro++;
   });
-  const los: Record<string, number> = { "1 notte": 0, "2-3 notti": 0, "4-6 notti": 0, "7+ notti": 0 };
+
+  // LOS (query words)
+  const losBuckets: Record<string, number> = { "1 notte": 0, "2-3 notti": 0, "4-6 notti": 0, "7+ notti": 0 };
   q.forEach(s => {
-    if (/(^|\W)(1|una)\s*notte|weekend\b/.test(s)) los["1 notte"]++;
-    else if (/(^|\W)(2|3).*(nott[ei])/.test(s)) los["2-3 notti"]++;
-    else if (/(^|\W)(4|5|6).*(nott[ei])/.test(s)) los["4-6 notti"]++;
-    else if (/(^|\W)(7|settimana|14|due settimane)/.test(s)) los["7+ notti"]++;
+    if (/(^|\W)(1|una)\s*notte|weekend\b/.test(s)) losBuckets["1 notte"]++;
+    else if (/(^|\W)(2|3).*(nott[ei])/.test(s)) losBuckets["2-3 notti"]++;
+    else if (/(^|\W)(4|5|6).*(nott[ei])/.test(s)) losBuckets["4-6 notti"]++;
+    else if (/(^|\W)(7|settimana|14|due settimane)/.test(s)) losBuckets["7+ notti"]++;
   });
+
   const toArr = (o: Record<string, number>) => Object.entries(o).map(([label, value]) => ({ label, value }));
-  return { channels: toArr(channels), provenance: toArr(prov), los: toArr(los) };
+  return { channels: toArr(channels), provenance: toArr(provCount), los: toArr(losBuckets) };
 }
 
+/** Related Queries / Topics parser */
 function extractRelatedQueries(j2: any): string[] {
   const rq = j2?.related_queries;
   if (!rq) return [];
@@ -98,6 +106,8 @@ function extractRelatedTopics(j2: any): string[] {
   }
   return [];
 }
+
+/** GeoMap → paese e score (per Provenienza fallback) */
 function extractGeoMapCountries(j: any): Array<{ code?: string; name: string; value: number }> {
   const gm = j?.interest_by_region ?? j?.geo_map ?? j?.geoMap;
   const list: any[] =
@@ -111,7 +121,7 @@ function extractGeoMapCountries(j: any): Array<{ code?: string; name: string; va
   })).filter(x => x.name);
 }
 
-/** ----- SerpAPI wrappers (cache 6h) ----- */
+/** ----- SerpAPI wrappers (con caching lato Vercel) ----- */
 const serpFetch = (u: string) =>
   fetch(u, { cache: "force-cache", next: { revalidate: 21600 } }) // 6h
     .then(r => r.json()).catch(()=> ({}));
@@ -137,7 +147,7 @@ async function fetchGeoMap(apiKey: string, q: string, geo: string, date: string,
   return extractGeoMapCountries(j);
 }
 
-/** Query variants */
+/** Query variants (per aumentare segnale) */
 function buildQueryVariants(topic: string) {
   const raw = topic.trim();
   let city = raw.replace(/(hotel|alberghi?|b&b|resort|agriturismo|alloggi|alloggio)/ig, "").trim();
@@ -149,12 +159,15 @@ function buildQueryVariants(topic: string) {
   return Array.from(set).map(s=>s.trim()).filter(Boolean).slice(0,5);
 }
 
-/** Blend regione + nazionale per serie più stabili */
-function blendSeries(a: {date:string;score:number}[], b: {date:string;score:number}[], wa=0.6, wb=0.4) {
-  const m = new Map<string, number>();
-  a.forEach(p => m.set(p.date, (m.get(p.date)||0) + wa*(p.score||0)));
-  b.forEach(p => m.set(p.date, (m.get(p.date)||0) + wb*(p.score||0)));
-  return Array.from(m.entries()).map(([date,score])=>({date, score: Math.round(score)})).sort((x,y)=> x.date.localeCompare(y.date));
+/** Mappa paese → bucket (Italia/Germania/Francia/USA/UK/Altro) */
+function countryBucket(nameOrCode: string) {
+  const s = (nameOrCode||"").toLowerCase();
+  if (s==="it"||/ital/.test(s)||/italia/.test(s)||/rome|roma|florence|firenze|milan|milano|venice|venezia/.test(s)) return "italia";
+  if (s==="de"||/german|deutsch|berlin|munich|frankfurt/.test(s)) return "germania";
+  if (s==="fr"||/france|franc|paris|lyon|marseille/.test(s)) return "francia";
+  if (s==="us"||s==="usa"||/united states|new york|los angeles|miami|boston|chicago/.test(s)) return "usa";
+  if (s==="gb"||s==="uk"||/united kingdom|london|british|inghilterra|manchester/.test(s)) return "uk";
+  return "altro";
 }
 
 /** --------- ROUTE --------- */
@@ -176,42 +189,28 @@ export async function GET(req: Request) {
     const wantLos  = url.searchParams.get("los")  === "1";
     const noFlags  = url.searchParams.get("ch")===null && url.searchParams.get("prov")===null && url.searchParams.get("los")===null;
 
-    const cat   = url.searchParams.get("cat")  || "203"; // Travel
-    // supporto range personalizzato: ?from=YYYY-MM-DD&to=YYYY-MM-DD
-    const from  = url.searchParams.get("from");
-    const to    = url.searchParams.get("to");
-    const dateQ = url.searchParams.get("date") || (from && to ? `${from} ${to}` : "today 12-m");
+    const cat  = url.searchParams.get("cat")  || "203";         // Travel
+    const date = url.searchParams.get("date") || "today 12-m";  // default
 
     const geoRegion = await guessGeoFromLatLng(lat, lng);
     const notes: string[] = [];
 
-    /* ----- A) Serie con macro-area mix + fallback ----- */
+    /* ----- A) Serie con fallback progressivo ----- */
     let series: { date: string; score: number }[] = [];
     let usage: any;
     if (parts.includes("trend")) {
-      // Regione
-      let tRegion = await fetchTrends(apiKey, topic, geoRegion, dateQ, cat);
-      // Nazionale
-      let tNat    = await fetchTrends(apiKey, topic, "IT", dateQ, cat);
-
-      // Se regione debole, aumenta peso nazionale
-      const nzRegion = nonZeroCount(tRegion.series);
-      const nzNat    = nonZeroCount(tNat.series);
-      let wa = 0.65, wb = 0.35;
-      if (nzRegion < 3 && nzNat >= 3) { wa = 0.3; wb = 0.7; notes.push("Serie regionale debole → pesata su nazionale."); }
-      if (nzRegion === 0 && nzNat === 0 && dateQ !== "today 5-y") {
-        notes.push("Serie ancora debole → periodo today 5-y.");
-        tRegion = await fetchTrends(apiKey, topic, geoRegion, "today 5-y", cat);
-        tNat    = await fetchTrends(apiKey, topic, "IT",       "today 5-y", cat);
+      // 1) regionale
+      let t = await fetchTrends(apiKey, topic, geoRegion, date, cat);
+      series = t.series; usage = t.usage;
+      if (nonZeroCount(series) < 3) { // poca dinamica → prova nazionale
+        notes.push("Serie debole su geo regionale → fallback geo=IT.");
+        t = await fetchTrends(apiKey, topic, "IT", date, cat);
+        series = t.series; usage = usage || t.usage;
       }
-
-      series = blendSeries(tRegion.series, tNat.series, wa, wb);
-      usage  = tRegion.usage || tNat.usage;
-      if (nonZeroCount(series) === 0) {
-        return NextResponse.json(
-          { ok: false, error: "Nessuna serie disponibile per il topic/periodo selezionato.", hint: "Prova con 'hotel <città>'." },
-          { status: 200 }
-        );
+      if (nonZeroCount(series) < 3 && date !== "today 5-y") {
+        notes.push("Serie ancora debole → fallback periodo today 5-y.");
+        t = await fetchTrends(apiKey, topic, "IT", "today 5-y", cat);
+        series = t.series; usage = usage || t.usage;
       }
     }
 
@@ -219,30 +218,33 @@ export async function GET(req: Request) {
     let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
 
     if (parts.includes("related")) {
-      const minNeeded = 30;
-      const maxCalls  = 8;
+      const minNeeded = 30; // alza soglia per avere barre visibili
+      const maxCalls  = 8;  // tetto per non bruciare quota
       let calls = 0;
 
       const gatherQ = async (q: string, geo: string, timeframe: string): Promise<string[]> => {
         if (calls >= maxCalls) return [];
         calls++;
         return await fetchRelatedQueries(apiKey, q, geo, timeframe, cat);
-        };
+      };
       const gatherT = async (q: string, geo: string, timeframe: string): Promise<string[]> => {
         if (calls >= maxCalls) return [];
         calls++;
         return await fetchRelatedTopics(apiKey, q, geo, timeframe, cat);
       };
 
-      // Topic originale, regione → nazionale → 5y
-      let pool = new Set<string>(await gatherQ(topic, geoRegion, dateQ));
-      if (pool.size < minNeeded) { notes.push("Related poveri su geo regionale → nazionale."); for (const s of await gatherQ(topic, "IT", dateQ)) pool.add(s); }
-      if (pool.size < minNeeded && !/5-y$/.test(dateQ)) { notes.push("Related ancora poveri → periodo today 5-y."); for (const s of await gatherQ(topic, "IT", "today 5-y")) pool.add(s); }
+      // 1) tentativi sul topic originale (queries)
+      let pool = new Set<string>(await gatherQ(topic, geoRegion, date));
+      if (pool.size < minNeeded) { notes.push("Related poveri su geo regionale → fallback geo=IT."); for (const s of await gatherQ(topic, "IT", date)) pool.add(s); }
+      if (pool.size < minNeeded && date !== "today 5-y") { notes.push("Related ancora poveri → periodo today 5-y."); for (const s of await gatherQ(topic, "IT", "today 5-y")) pool.add(s); }
 
-      // Aggiungi TOPICS
-      if (pool.size < minNeeded) { notes.push("Aggiunti related TOPICS."); for (const s of await gatherT(topic, "IT", "today 5-y")) pool.add(s); }
+      // 2) aggiungi anche i TOPICS (nomi) per aumentare segnale canali/LOS
+      if (pool.size < minNeeded) {
+        notes.push("Aggiunti related TOPICS per aumentare segnale.");
+        for (const s of await gatherT(topic, "IT", "today 5-y")) pool.add(s);
+      }
 
-      // Varianti query
+      // 3) varianti query (hotel <città>, <città> hotel, alberghi, b&b)
       if (pool.size < minNeeded) {
         const variants = buildQueryVariants(topic);
         for (const v of variants) {
@@ -253,25 +255,20 @@ export async function GET(req: Request) {
         }
       }
 
-      let all = bucketsFromRelated(pickTopN(Array.from(pool), 160));
+      // Buckets da queries/topics
+      const queries = Array.from(pool);
+      let all = bucketsFromRelated(pickTopN(queries, 160));
 
-      // Provenienza fallback con GEO_MAP mondiale se vuoto
+      // 4) PROVENIENZA fallback con GEO_MAP globale (se quasi zero)
       const provSum = all.provenance.reduce((a,b)=> a + (b.value||0), 0);
       if (provSum === 0) {
-        const gm = await fetchGeoMap(apiKey, topic, "", "today 5-y", cat);
+        // usa geo worldwide per capire da quali paesi arriva interesse
+        const gm = await fetchGeoMap(apiKey, topic, "", "today 5-y", cat); // "" = mondo
         if (gm.length > 0) {
           const acc: Record<string, number> = { italia: 0, germania: 0, francia: 0, usa: 0, uk: 0, altro: 0 };
-          gm.forEach(row => {
-            const s = (row.code || row.name || "").toLowerCase();
-            if (s==="it"||/ital/.test(s)||/rome|roma|florence|firenze|milan|milano|venice|venezia/.test(s)) acc.italia += row.value||0;
-            else if (s==="de"||/german|deutsch|berlin|munich|frankfurt/.test(s)) acc.germania += row.value||0;
-            else if (s==="fr"||/france|franc|paris|lyon|marseille/.test(s)) acc.francia += row.value||0;
-            else if (s==="us"||s==="usa"||/united states|new york|los angeles|miami|boston|chicago/.test(s)) acc.usa += row.value||0;
-            else if (s==="gb"||s==="uk"||/united kingdom|london|british|inghilterra|manchester/.test(s)) acc.uk += row.value||0;
-            else acc.altro += row.value||0;
-          });
-          all.provenance = Object.entries(acc).map(([label,value])=>({label,value}));
-          notes.push("Provenienza ricostruita da GEO_MAP.");
+          gm.forEach(row => { acc[countryBucket(row.code || row.name)] += row.value || 0; });
+          all.provenance = Object.entries(acc).map(([label,value]) => ({ label, value }));
+          notes.push("Provenienza ricostruita da mappa geografica (GEO_MAP).");
         }
       }
 
@@ -285,11 +282,20 @@ export async function GET(req: Request) {
         related.channels.every(x=>x.value===0) &&
         related.provenance.every(x=>x.value===0) &&
         related.los.every(x=>x.value===0)
-      ) notes.push("Related non disponibili (campioni ridotti).");
+      ) {
+        notes.push("Related non disponibili (campioni ridotti).");
+      }
+    }
+
+    if (parts.includes("trend") && series.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "Nessuna serie disponibile per il topic/periodo selezionato.", hint: "Prova con 'hotel <città>'." },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json(
-      { ok: true, topic, geo: geoRegion, dateRange: dateQ, cat, series, related, usage, note: notes.length ? notes.join(" ") : undefined },
+      { ok: true, topic, geo: geoRegion, dateRange: date, cat, series, related, usage, note: notes.length ? notes.join(" ") : undefined },
       { status: 200 }
     );
   } catch (err: any) {
