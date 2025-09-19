@@ -134,18 +134,32 @@ function makeShareUrl(pathname: string, opts: {
   dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
   askTrend: boolean; askChannels: boolean; askProvenance: boolean; askLOS: boolean; wxProvider: string;
 }) {
-  const params = new URLSearchParams();
-  params.set("q", opts.q);
-  params.set("r", String(opts.r));
-  params.set("m", opts.m.slice(0,7));
-  params.set("mode", opts.mode);
-  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
-    params.set("t", opts.t.map(encodeURIComponent).join(","));
-  }
-  params.set("trend", String(+opts.askTrend));
-  params.set("ch", String(+opts.askChannels));
-  params.set("prov", String(+opts.askProvenance));
-  params.set("los", String(+opts.askLOS));
+  // Calcola inizio/fine del MESE selezionato (per coerenza con il calendario)
+const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
+const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
+
+const params = new URLSearchParams();
+// topic: assicurati di interrogare "<query> hotel"
+params.set("q", `${aQuery} hotel`);
+params.set("lat", String(aCenter.lat));
+params.set("lng", String(aCenter.lng));
+// quali parti servono (trend sempre; related solo se richiesti)
+params.set("parts", [
+  needTrend ? "trend" : "",
+  needRelated ? "related" : ""
+].filter(Boolean).join(","));
+// categoria Travel
+params.set("cat", "203");
+
+// intervallo coerente con il mese del calendario
+params.set("from", monthStart);
+params.set("to", monthEnd);
+
+// flag per i bucket related (il backend calcolerà solo ciò che chiedi)
+if (askChannels)    params.set("ch", "1");
+if (askProvenance)  params.set("prov", "1");
+if (askLOS)         params.set("los", "1");
+
   params.set("wx", opts.wxProvider);
   if (opts.dataSource === "csv" && opts.csvUrl) { params.set("src","csv"); params.set("csv", opts.csvUrl); }
   else if (opts.dataSource === "gsheet" && opts.gsId) { params.set("src","gsheet"); params.set("id",opts.gsId); if (opts.gsGid) params.set("gid",opts.gsGid); if (opts.gsSheet) params.set("sheet",opts.gsSheet); }
@@ -680,17 +694,34 @@ export default function App(){
     try { return parseISO(aMonthISO); } catch { return new Date(); }
   }, [aMonthISO]);
 
-  // Calendario (pressione + adr dimostrativi)
-  const calendarData = useMemo(() => {
-    const days = daysOfMonthWindow(aMonthISO);
-    return days.map(d => ({
-      date: d,
-      pressure: pressureFor(d),
-      adr: adrFromCompetitors(d, aMode),
-      holidayName: holidays[format(d,"yyyy-MM-dd")],
-      wx: weatherByDate[format(d,"yyyy-MM-dd")] || undefined,
-    }));
-  }, [aMonthISO, aMode, holidays, weatherByDate]);
+  // Calendario (pressione da Trends ricampionati; fallback all'euristica se serie debole)
+const calendarData = useMemo(() => {
+  const days = daysOfMonthWindow(aMonthISO);
+
+  // 'serpTrend' è alimentato da fetchSerp → resampleToDays(...)
+  const vals = Array.isArray(serpTrend) ? serpTrend.map(p => Number(p?.value) || 0) : [];
+  const hasTrend = vals.length === days.length && vals.some(v => v > 0);
+
+  // Normalizzazione 0..100 sul mese corrente
+  const mkNorm = (arr: number[]) => {
+    const min = Math.min(...arr);
+    const max = Math.max(...arr);
+    const den = Math.max(1, max - min);
+    return arr.map(v => Math.round(((v - min) / den) * 100));
+  };
+
+  const pressures = hasTrend ? mkNorm(vals) : mkNorm(days.map(d => pressureFor(d)));
+
+  return days.map((d, i) => ({
+    date: d,
+    pressure: pressures[i] || 0,
+    // Mantiene la tua stima ADR storica (puoi sostituirla quando colleghi ADR reale)
+    adr: adrFromCompetitors(d, aMode),
+    holidayName: holidays[format(d,"yyyy-MM-dd")],
+    wx: weatherByDate[format(d,"yyyy-MM-dd")] || undefined,
+  }));
+// 👇 aggiungi 'serpTrend' nelle dipendenze, così il calendario reagisce ai dati reali
+}, [aMonthISO, aMode, holidays, weatherByDate, serpTrend]);
 
   const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : []), [serpOrigins]);
   const los = useMemo(()=> (serpLOS.length>0 ? serpLOS : []), [serpLOS]);
