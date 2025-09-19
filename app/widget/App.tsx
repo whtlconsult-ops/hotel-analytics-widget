@@ -135,8 +135,8 @@ function makeShareUrl(pathname: string, opts: {
   askTrend: boolean; askChannels: boolean; askProvenance: boolean; askLOS: boolean; wxProvider: string;
 }) {
   // Calcola inizio/fine del MESE selezionato (per coerenza con il calendario)
-const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
-const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
+const shareFrom = format(startOfMonth(parseISO(`${opts.m}-01`)), "yyyy-MM-dd");
+const shareTo   = format(endOfMonth(parseISO(`${opts.m}-01`)),  "yyyy-MM-dd");
 
 // Calcola inizio/fine del MESE selezionato (coerente col calendario)
 const monthStart = format(startOfMonth(parseISO(`${monthISO}-01`)), "yyyy-MM-dd");
@@ -145,11 +145,11 @@ const monthEnd   = format(endOfMonth(parseISO(`${monthISO}-01`)),  "yyyy-MM-dd")
 const params = new URLSearchParams();
 
 // topic: assicurati sempre "<query> hotel"
-params.set("q", /hotel/i.test(query) ? query.trim() : `${query.trim()} hotel`);
+params.set("q", /hotel/i.test(query) ? aquery.trim() : `${aquery.trim()} hotel`);
 
 // geo
-params.set("lat", String(center.lat));
-params.set("lng", String(center.lng));
+params.set("lat", String(acenter.lat));
+params.set("lng", String(acenter.lng));
 
 // parti richieste (trend sempre; related solo se spuntati)
 params.set("parts", [
@@ -161,8 +161,7 @@ params.set("parts", [
 params.set("cat", "203");
 
 // intervallo coerente col mese selezionato
-params.set("from", monthStart);
-params.set("to",   monthEnd);
+params.set("date", `${shareFrom} ${shareTo}`);
 
 // flags per i bucket (il backend calcola solo ciò che chiedi)
 if (askChannels)   params.set("ch",   "1");
