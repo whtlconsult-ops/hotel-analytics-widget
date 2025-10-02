@@ -2,6 +2,7 @@
 // app/widget/App.tsx
 "use client";
 
+import { format, parseISO, startOfMonth, endOfMonth } from "date-fns";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -181,6 +182,74 @@ function resampleToDays(series: {date:string; score:number}[], monthISO: string)
   });
 }
 
+// ===== Helpers grafico (range rolling & aggregazioni) =====
+
+// Ritorna [fromISO, toISO] per una finestra di 12 mesi "rolling" che termina al mese selezionato
+function rollingYearRange(monthISO: string): [string, string] {
+  const end = endOfMonth(parseISO(`${monthISO}-01`));
+  const start = addDays(startOfMonth(parseISO(`${monthISO}-01`)), -365 + 1); // ~12 mesi
+  return [format(start, "yyyy-MM-dd"), format(end, "yyyy-MM-dd")];
+}
+
+// Ricampiona su intervallo arbitrario (holding ultimo valore)
+function resampleToRange(series: {date:string; score:number}[], fromISO: string, toISO: string) {
+  const days: Date[] = [];
+  let d = parseISO(fromISO);
+  const e = parseISO(toISO);
+  while (d <= e) { days.push(d); d = addDays(d, 1); }
+  if (!series?.length) return days.map(x => ({ dateLabel: format(x, "d MMM", { locale: it }), value: 0 }));
+
+  const m = new Map(series.map(p => [p.date.slice(0,10), Number(p.score)||0]));
+  let last = 0;
+  return days.map(x => {
+    const iso = format(x, "yyyy-MM-dd");
+    if (m.has(iso)) last = m.get(iso)!;
+    return { dateLabel: format(x, "d MMM", { locale: it }), value: last };
+  });
+}
+
+// Media mobile semplice (per smoothing leggero)
+function movingAvg(arr: number[], k = 3) {
+  if (k <= 1) return arr.slice();
+  const half = Math.floor(k/2);
+  return arr.map((_, i) => {
+    let s=0,c=0; for (let j=i-half; j<=i+half; j++) if (j>=0 && j<arr.length){ s+=arr[j]; c++; }
+    return c? s/c : arr[i];
+  });
+}
+
+// Aggrega giornaliero -> mensile (media), restituisce [{monthLabel, value}]
+function toMonthlyAvg(series: {date:string; score:number}[]) {
+  const bucket = new Map<string, number[]>();
+  for (const p of series) {
+    const ym = p.date.slice(0,7); // YYYY-MM
+    if (!bucket.has(ym)) bucket.set(ym, []);
+    bucket.get(ym)!.push(Number(p.score)||0);
+  }
+  const out = Array.from(bucket.entries()).sort(([a],[b]) => a.localeCompare(b))
+    .map(([ym, vals]) => ({
+      ym,
+      monthLabel: format(parseISO(ym + "-01"), "MMM", { locale: it }),
+      value: vals.reduce((a,b)=>a+b,0) / vals.length
+    }));
+  return out;
+}
+
+// Normalizza 0..100 (utile per ADR stimato)
+function normalize(values: number[]) {
+  if (!values.length) return [];
+  const min = Math.min(...values), max = Math.max(...values);
+  const den = Math.max(1, max - min);
+  return values.map(v => Math.round(((v - min) / den) * 100));
+}
+
+// ADR “indicativo” dalla pressione (stessa funzione euristica del calendario)
+function adrFromPressure(p: number, mode: "zone"|"competitor") {
+  const baseMin = 80, baseMax = 140;
+  const est = baseMin + (p/100) * (baseMax - baseMin);
+  return Math.round(mode === "competitor" ? est * 1.10 : est);
+}
+
 /* ---------- Calendario Heatmap (con badge meteo) ---------- */
 function CalendarHeatmap({
   monthDate,
@@ -266,6 +335,10 @@ function TypesMultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+// ===== Stato grafico: vista "mese" o "12mesi" + smoothing leggero =====
+const [demandView, setDemandView] = useState<"month"|"year">("month");
+const [smooth3d, setSmooth3d] = useState<boolean>(false);
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
@@ -540,21 +613,25 @@ export default function App(){
     if (!needTrend && !needRelated) return;
 
     try {
-      const params = new URLSearchParams({
-        q: `${aQuery} hotel`,
-        lat: String(aCenter.lat),
-        lng: String(aCenter.lng),
-        date: "today 12-m",
-        cat: "203",
-        parts: [
-          needTrend ? "trend" : "",
-          needRelated ? "related" : ""
-        ].filter(Boolean).join(","),
-      });
-      // comunica al backend quali bucket "related" servono
-      params.set("ch", String(+askChannels));
-      params.set("prov", String(+askProvenance));
-      params.set("los", String(+askLOS));
+const params = new URLSearchParams();
+params.set("q", `${aQuery} hotel`);
+params.set("lat", String(aCenter.lat));
+params.set("lng", String(aCenter.lng));
+params.set("cat", "203");
+params.set("parts", [
+  needTrend ? "trend" : "",
+  needRelated ? "related" : ""
+].filter(Boolean).join(","));
+
+// === NOVITÀ: timeframe coerente con il mese del calendario ===
+const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
+const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
+params.set("date", `${monthStart} ${monthEnd}`);
+
+// Flag per i bucket related (li passiamo solo se richiesti)
+if (askChannels)    params.set("ch", "1");
+if (askProvenance)  params.set("prov", "1");
+if (askLOS)         params.set("los", "1");
 
       const r = await fetch(`/api/serp/demand?${params.toString()}`);
       const j: SerpDemandPayload = await r.json();
@@ -1048,41 +1125,103 @@ export default function App(){
             )}
           </div>
 
-          {/* Andamento Domanda */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
-
-            {serpTrend.length === 0 || serpTrend.every(p => (p.value || 0) === 0) ? (
-              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
-                Nessun segnale (serie tutta a zero). Prova ad ampliare l’area o il periodo.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={serpTrend}>
-                  <defs>
-                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
-                    </linearGradient>
-                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="dateLabel" tick={{fontSize: 12}} interval={3}/>
-                  <YAxis />
-                  <RTooltip />
-                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }} isAnimationActive />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </main>
-      </div>
+          {/* ===== Andamento Domanda (area) ===== */}
+<div className="bg-white rounded-2xl border shadow-sm p-4">
+  <div className="mb-2 flex items-center gap-3">
+    <div className="text-sm font-semibold">
+      {demandView === "year"
+        ? <>Andamento Domanda — ultimi 12 mesi fino a {format(parseISO(`${monthISO}-01`), "MMM yyyy", { locale: it })}</>
+        : <>Andamento Domanda — {format(parseISO(`${monthISO}-01`), "MMMM yyyy", { locale: it })}</>
+      }
     </div>
-  );
-}
+    <div className="flex gap-1 ml-auto">
+      <button
+        className={`h-7 px-2 rounded-md text-xs border ${demandView==='month'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
+        onClick={()=>setDemandView('month')}
+      >Mese</button>
+      <button
+        className={`h-7 px-2 rounded-md text-xs border ${demandView==='year'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
+        onClick={()=>setDemandView('year')}
+      >12 mesi</button>
+      <label className="ml-2 flex items-center gap-1 text-[11px]">
+        <input type="checkbox" checked={smooth3d} onChange={e=>setSmooth3d(e.currentTarget.checked)} />
+        smoothing 3g
+      </label>
+    </div>
+  </div>
+
+  {(() => {
+    // Prepara i dati per il grafico in base alla vista
+    let base = [];
+    if (demandView === "year") {
+      const [f,t] = rollingYearRange(monthISO);
+      base = resampleToRange(serpSeries, f, t);
+    } else {
+      base = resampleToDays(serpSeries, monthISO);
+    }
+    // smoothing leggero
+    const data = smooth3d
+      ? base.map((p, i) => ({ ...p, value: movingAvg(base.map(x=>x.value), 3)[i] }))
+      : base;
+
+    // Se non arrivano dati, mostra placeholder chiaro (no “grafico bianco”)
+    if (!data.length || data.every(p => !p.value)) {
+      return <div className="h-64 grid place-items-center text-sm text-slate-500">
+        Nessun segnale utile per questo periodo/area.
+      </div>;
+    }
+
+    // Linee guida "Bassa/Media/Alta"
+    const yTicks = [0, 33, 66, 100];
+
+    return (
+      <>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="fillTrend" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.25}/>
+                  <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.04}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="dateLabel" />
+              <YAxis ticks={yTicks} domain={[0,100]} />
+              <RTooltip />
+              <Area type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={1.6} fill="url(#fillTrend)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Etichette Bassa/Media/Alta (visive, come nello screenshot) */}
+        <div className="relative -mt-6 text-[11px] text-slate-500">
+          <div className="flex justify-between px-2">
+            <span>Bassa</span><span>Media</span><span>Alta</span>
+          </div>
+        </div>
+
+        {/* Se vista 12 mesi, mostra ADR mensile indicativo (pilloline sotto) */}
+        {demandView === "year" && (
+          (() => {
+            // ricava mensile e normalizza per ADR
+            const monthly = toMonthlyAvg(serpSeries);
+            const norm = normalize(monthly.map(m => m.value));
+            return (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {monthly.map((m, i) => {
+                  const adr = adrFromPressure(norm[i] ?? 0, mode);
+                  return (
+                    <div key={m.ym} className="px-2 h-7 rounded-md bg-slate-100 border text-[12px] grid place-items-center">
+                      {m.monthLabel} · €{adr}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
+        )}
+      </>
+    );
+  })()}
+</div>
