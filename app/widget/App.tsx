@@ -1,80 +1,87 @@
+// app/widget/App.tsx
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
-
-import {
-  format, parseISO, addDays,
-  startOfMonth, endOfMonth
-} from "date-fns";
 import { it } from "date-fns/locale";
-
 import {
-  ResponsiveContainer,
-  AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip,
+  format, parseISO, startOfMonth, endOfMonth, addDays,
+} from "date-fns";
+import {
+  ResponsiveContainer, LineChart, Line, Area, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip,
   BarChart, Bar
 } from "recharts";
 
-// Mappa (client only)
-const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
-
-// ------ Tipi
-type Mode = "zone" | "competitor";
-
-type SerpDemandPayload = {
-  ok: boolean;
-  series?: Array<{ date: string; score: number }>;
-  related?: {
-    channels: Array<{ label: string; value: number }>;
-    provenance: Array<{ label: string; value: number }>;
-    los: Array<{ label: string; value: number }>;
+/* ================== Map (PAR1: stessa posizione/estetica) ================== */
+/* Usiamo react-leaflet via dynamic import (no SSR). Se nel tuo progetto hai già
+   un Map.tsx proprietario, puoi ignorare questa sezione e usare quello. */
+const LeafletMap = dynamic(async () => {
+  const L = await import("react-leaflet");
+  return function MapBox(props: {
+    center: { lat: number; lng: number };
+    radiusKm: number;
+    onClick?: (lat: number, lng: number) => void;
+  }) {
+    const { MapContainer, TileLayer, Circle, Marker, useMapEvents } = L as any;
+    const Clicker = () => {
+      useMapEvents({
+        click(e: any) { props.onClick?.(e.latlng.lat, e.latlng.lng); }
+      });
+      return null;
+    };
+    return (
+      <MapContainer
+        center={[props.center.lat, props.center.lng]}
+        zoom={13}
+        style={{ width: "100%", height: "100%", borderRadius: 16 }}
+        scrollWheelZoom
+      >
+        <TileLayer
+          attribution='&copy; OpenStreetMap'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <Marker position={[props.center.lat, props.center.lng]} />
+        <Circle center={[props.center.lat, props.center.lng]} radius={props.radiusKm * 1000} />
+        <Clicker />
+      </MapContainer>
+    );
   };
-  usage?: any;
+}, { ssr: false });
+
+/* ================== Tipi risposta backend ================== */
+type RelatedBuckets = {
+  channels: { label: string; value: number }[];
+  provenance: { label: string; value: number }[];
+  los: { label: string; value: number }[];
+};
+type SerpResp = {
+  ok: boolean;
+  series: { date: string; score: number }[];
+  related?: RelatedBuckets;
   note?: string;
 };
-
-type DataRow = Record<string, any>;
-
-type Normalized = {
-  warnings: string[];
-  safeMonthISO: string; // YYYY-MM
-  safeDays: Date[];
-  center: { lat: number; lng: number } | null;
-  safeR: number;
-  safeT: string[];
-  isBlocked: boolean;
+type QuotaResp = {
+  ok: boolean;
+  total_searches_left?: number;
+  plan_searches_left?: number;
+  this_month_usage?: number;
 };
 
-// ------ Costanti
-const STRUCTURE_TYPES = ["hotel","aparthotel","resort","agriturismo","b&b","ostello"] as const;
+/* ================== Costanti PAR1 ================== */
+type Mode = "zone" | "competitor";
+const RADIUS_OPTIONS = [10, 20, 30] as const;
+const TYPE_OPTIONS = ["hotel", "agriturismo", "casa_vacanza", "villaggio_turistico", "resort", "b&b", "affittacamere"] as const;
+const TYPE_LABEL: Record<(typeof TYPE_OPTIONS)[number], string> = {
+  hotel: "Hotel",
+  agriturismo: "Agriturismo",
+  casa_vacanza: "Casa Vacanza",
+  villaggio_turistico: "Villaggio Turistico",
+  resort: "Resort",
+  "b&b": "B&B",
+  affittacamere: "Affittacamere",
+};
 
-// ------ Helper URL/state
-function parseNumParam(v: string | null, fallback: number) {
-  if (v == null) return fallback;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-function parseListParam(v: string | null) {
-  if (!v) return [];
-  return v.split(",").map(s => s.trim()).filter(Boolean);
-}
-function clampRadiusSilently(r: number) {
-  if (!Number.isFinite(r)) return 20;
-  if (r < 10) return 10;
-  if (r > 30) return 30;
-  return Math.round(r);
-}
-function safeParseMonthISO(m: string, warnings: string[]): string {
-  const ok = /^\d{4}-\d{2}$/.test(m);
-  if (!ok) {
-    const now = new Date();
-    const fix = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
-    warnings.push("Mese non valido: ripristinato al corrente.");
-    return fix;
-  }
-  return m;
-}
+/* ================== Helper PAR1 (calendario/serie) ================== */
 function daysOfMonthWindow(monthISO: string): Date[] {
   const s = startOfMonth(parseISO(`${monthISO}-01`));
   const e = endOfMonth(parseISO(`${monthISO}-01`));
@@ -83,675 +90,570 @@ function daysOfMonthWindow(monthISO: string): Date[] {
   while (d <= e) { out.push(d); d = addDays(d, 1); }
   return out;
 }
-function isWithinNextDays(d: Date, n = 7) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const max   = new Date(today); max.setDate(today.getDate() + n);
-  const dd = new Date(d); dd.setHours(0,0,0,0);
-  return dd >= today && dd <= max;
-}
-function resampleToDays(series: {date:string; score:number}[], monthISO: string) {
+function resampleToDays(series: { date: string; score: number }[], monthISO: string) {
   const monthDays = daysOfMonthWindow(monthISO);
-  if (!series?.length) return monthDays.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
+  if (!series?.length) {
+    return monthDays.map(d => ({ dateLabel: format(d, "d MMM", { locale: it }), value: 0 }));
+  }
   const m = new Map<string, number>();
-  series.forEach(p => m.set(p.date.slice(0,10), Number(p.score)||0));
-  let lastSeen = 0;
-  return monthDays.map(d=>{
-    const iso = format(d,"yyyy-MM-dd");
-    const v = m.get(iso);
-    if (v != null) lastSeen = v;
-    return { dateLabel: format(d, "d MMM", { locale: it }), value: lastSeen };
+  series.forEach(p => m.set(p.date.slice(0, 10), Number(p.score) || 0));
+  let last = 0;
+  return monthDays.map(d => {
+    const iso = format(d, "yyyy-MM-dd");
+    if (m.has(iso)) last = m.get(iso)!;
+    return { dateLabel: format(d, "d MMM", { locale: it }), value: last };
   });
 }
-function colorForPressure(v: number) {
-  // scala blu indaco chiara → scura (coerente con PAR1)
-  const a = Math.max(0, Math.min(100, v));
-  const t = a / 100;
-  const from = [239, 246, 255];  // indigo-50
-  const to   = [ 67,  56, 202];  // indigo-700
-  const c = from.map((f, i) => Math.round(f + (to[i]-f)*t));
-  return `rgb(${c[0]} ${c[1]} ${c[2]})`;
+function daysBetween(fromISO: string, toISO: string) {
+  const s = parseISO(fromISO), e = parseISO(toISO);
+  const out: Date[] = [];
+  let d = s;
+  while (d <= e) { out.push(d); d = addDays(d, 1); }
+  return out;
+}
+function resampleToRange(series: { date: string; score: number }[], fromISO: string, toISO: string) {
+  const days = daysBetween(fromISO, toISO);
+  if (!series?.length) {
+    return days.map(d => ({ dateLabel: format(d, "d MMM", { locale: it }), value: 0 }));
+  }
+  const m = new Map<string, number>();
+  series.forEach(p => m.set(p.date.slice(0, 10), Number(p.score) || 0));
+  let last = 0;
+  return days.map(d => {
+    const iso = format(d, "yyyy-MM-dd");
+    if (m.has(iso)) last = m.get(iso)!;
+    return { dateLabel: format(d, "d MMM", { locale: it }), value: last };
+  });
+}
+function movingAverage(arr: number[], k = 3) {
+  if (k <= 1) return arr.slice();
+  const half = Math.floor(k / 2);
+  return arr.map((_, i) => {
+    let s = 0, c = 0;
+    for (let j = i - half; j <= i + half; j++) {
+      if (j >= 0 && j < arr.length) { s += arr[j]; c++; }
+    }
+    return c ? s / c : arr[i];
+  });
+}
+function normalize0to100(values: number[]): number[] {
+  if (!values.length) return [];
+  const min = Math.min(...values), max = Math.max(...values);
+  const den = Math.max(1, max - min);
+  return values.map(v => Math.round(((v - min) / den) * 100));
+}
+function ensureHotelQ(q: string) {
+  return /hotel/i.test(q) ? q.trim() : `${q.trim()} hotel`;
 }
 function adrFromPressure(p: number, mode: Mode) {
   const baseMin = 80, baseMax = 140;
-  const est = baseMin + (p/100) * (baseMax - baseMin);
+  const est = baseMin + (p / 100) * (baseMax - baseMin);
   return Math.round(mode === "competitor" ? est * 1.10 : est);
 }
+export default function AppWidget() {
+  /* ======= Stato PAR1 invariato ======= */
+  const [dataSource] = useState<"none">("none"); // placeholder PAR1
+  const [query, setQuery] = useState("Firenze");
+  const [center, setCenter] = useState<{ lat: number; lng: number }>({ lat: 43.7696, lng: 11.2558 });
+  const [radius, setRadius] = useState<(typeof RADIUS_OPTIONS)[number]>(20);
+  const [monthISO, setMonthISO] = useState(format(new Date(), "yyyy-MM"));
+  const [wxProvider, setWxProvider] = useState<"open-meteo" | "openweather">("open-meteo");
 
-// Share URL
-function makeShareUrl(
-  pathname: string,
-  opts: { q: string; r: number; m: string; t: string[]; mode: Mode; dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-    askTrend:boolean; askChannels:boolean; askProvenance:boolean; askLOS:boolean; wxProvider:string; }
-) {
-  const params = new URLSearchParams();
-  params.set("q", opts.q);
-  params.set("r", String(opts.r));
-  params.set("m", opts.m); // YYYY-MM
-  if (opts.t?.length) params.set("t", opts.t.join(","));
-  params.set("mode", opts.mode);
-  if (opts.dataSource !== "none") {
-    params.set("src", opts.dataSource);
-    if (opts.dataSource === "csv" && opts.csvUrl) params.set("csv", opts.csvUrl);
-    if (opts.dataSource === "gsheet" && opts.gsId) {
-      params.set("id", opts.gsId);
-      if (opts.gsGid) params.set("gid", opts.gsGid);
-      if (opts.gsSheet) params.set("sheet", opts.gsSheet);
+  const [types, setTypes] = useState<(typeof TYPE_OPTIONS)[number][]>(["hotel"]);
+  const [typesOpen, setTypesOpen] = useState(false);
+  const [typesTemp, setTypesTemp] = useState<(typeof TYPE_OPTIONS)[number][]>(["hotel"]);
+
+  const [mode, setMode] = useState<Mode>("zone");
+
+  // Toggle API (PAR1)
+  const [askTrend, setAskTrend] = useState(true);
+  const [askChannels, setAskChannels] = useState(false);
+  const [askProvenance, setAskProvenance] = useState(false);
+  const [askLOS, setAskLOS] = useState(false);
+
+  // Avanzate: intervallo personalizzato & smoothing (nuovo, opt-in)
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [smooth3d, setSmooth3d] = useState(false);
+
+  // Dati
+  const [serpSeries, setSerpSeries] = useState<SerpResp["series"]>([]);
+  const [related, setRelated] = useState<RelatedBuckets | undefined>(undefined);
+  const [note, setNote] = useState<string | undefined>(undefined);
+  const [quota, setQuota] = useState<QuotaResp | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  /* ======= Quota badge ======= */
+  async function fetchQuota() {
+    try {
+      const r = await fetch("/api/serp/quota", { cache: "no-store" });
+      const j: QuotaResp = await r.json();
+      setQuota(j);
+    } catch { /* ignore */ }
+  }
+  const quotaBadge = useMemo(() => {
+    if (!quota?.ok) return "—/—";
+    const left = quota.total_searches_left ?? quota.plan_searches_left;
+    const used = quota.this_month_usage;
+    return (left == null || used == null) ? "—/—" : `${used}/${used + left} (rimasti ${left})`;
+  }, [quota]);
+
+  /* ======= URL share (PAR1 compat) ======= */
+  function persistUrl() {
+    const url = new URL(globalThis?.location?.href || "");
+    const p = url.searchParams;
+    p.set("q", query); p.set("r", String(radius)); p.set("m", monthISO);
+    p.set("mode", mode);
+    p.set("trend", askTrend ? "1" : "0");
+    p.set("ch", askChannels ? "1" : "0");
+    p.set("prov", askProvenance ? "1" : "0");
+    p.set("los", askLOS ? "1" : "0");
+    p.set("t", types.join(","));
+    if (fromDate && toDate) { p.set("from", fromDate); p.set("to", toDate); } else { p.delete("from"); p.delete("to"); }
+    try { history.replaceState({}, "", `${url.pathname}?${p.toString()}`); } catch {}
+  }
+
+  useEffect(() => { fetchQuota(); /* on mount */ }, []);
+  /* ======= SERP fetch ======= */
+  async function fetchSerp() {
+    setLoading(true);
+    try {
+      // mese del calendario come fallback
+      const mStart = format(startOfMonth(parseISO(`${monthISO}-01`)), "yyyy-MM-dd");
+      const mEnd   = format(endOfMonth(parseISO(`${monthISO}-01`)),  "yyyy-MM-dd");
+      // se attivo il range, uso quello
+      const dFrom = (fromDate && toDate) ? fromDate : mStart;
+      const dTo   = (fromDate && toDate) ? toDate   : mEnd;
+
+      const parts: string[] = [];
+      if (askTrend) parts.push("trend");
+      if (askChannels || askProvenance || askLOS) parts.push("related");
+
+      const u = new URLSearchParams();
+      u.set("q", ensureHotelQ(query));
+      u.set("lat", String(center.lat));
+      u.set("lng", String(center.lng));
+      u.set("date", `${dFrom} ${dTo}`);
+      u.set("cat", "203");
+      u.set("parts", parts.join(",") || "trend");
+      if (askChannels)   u.set("ch", "1");
+      if (askProvenance) u.set("prov", "1");
+      if (askLOS)        u.set("los", "1");
+
+      const r = await fetch(`/api/serp/demand?${u.toString()}`, { cache: "no-store" });
+      const j: SerpResp = await r.json();
+
+      if (!j.ok) {
+        setSerpSeries([]); setRelated(undefined);
+        setNote(j.note || "Nessun dato disponibile per i parametri selezionati.");
+      } else {
+        setSerpSeries(Array.isArray(j.series) ? j.series : []);
+        setRelated(j.related); setNote(j.note);
+      }
+    } catch {
+      setSerpSeries([]); setRelated(undefined); setNote("Errore nel recupero dati.");
+    } finally {
+      setLoading(false);
+      persistUrl();
+      fetchQuota();
     }
   }
-  if (!opts.askTrend) params.set("trend","0"); else params.set("trend","1");
-  if (opts.askChannels)   params.set("ch","1");
-  if (opts.askProvenance) params.set("prov","1");
-  if (opts.askLOS)        params.set("los","1");
-  params.set("wx", opts.wxProvider);
-  return `${pathname}?${params.toString()}`;
-}
-function replaceUrlWithState(
-  router: ReturnType<typeof useRouter>, pathname: string,
-  opts: { q: string; r: number; m: string; t: string[]; mode: Mode; dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
-    askTrend:boolean; askChannels:boolean; askProvenance:boolean; askLOS:boolean; wxProvider:string; }
-) {
-  const url = makeShareUrl(pathname, opts);
-  try { router.replace(url, { scroll: false }); } catch {}
-  try { if (typeof window !== "undefined") window.history.replaceState({}, "", url); } catch {}
-  return url;
-}
-export default function App(){
-  const router = useRouter();
-  const search = useSearchParams();
 
-  // Notifiche / avvisi
-  const [notices, setNotices] = useState<string[]>([]);
+  /* ======= Derivate: calendario dal mese (ricampionamento giornaliero) ======= */
+  const monthDays = useMemo(() => daysOfMonthWindow(monthISO), [monthISO]);
+  const trendMonth = useMemo(() => resampleToDays(serpSeries, monthISO), [serpSeries, monthISO]);
+  const pressures = useMemo(() => normalize0to100(trendMonth.map(p => p.value || 0)), [trendMonth]);
+  const calendarData = useMemo(() => monthDays.map((d, i) => ({
+    dateISO: format(d, "yyyy-MM-dd"),
+    day: format(d, "d", { locale: it }),
+    pressure: pressures[i] || 0,
+    adr: adrFromPressure(pressures[i] || 0, mode),
+  })), [monthDays, pressures, mode]);
 
-  // Filtri UI
-  const [mode, setMode] = useState<Mode>("zone");
-  const [query, setQuery] = useState("Firenze");
-  const [radius, setRadius] = useState<number>(20);
-  const [monthISO, setMonthISO] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`; // YYYY-MM
-  });
-  // Default: SOLO Hotel
-  const [types, setTypes] = useState<string[]>(["hotel"]);
+  /* ======= Derivate: grafico in basso (range o mese) + smoothing opzionale ======= */
+  const trendRangeBase = useMemo(() => {
+    if (fromDate && toDate) return resampleToRange(serpSeries, fromDate, toDate);
+    return resampleToDays(serpSeries, monthISO);
+  }, [serpSeries, fromDate, toDate, monthISO]);
 
-  // Meteo provider
-  const [wxProvider, setWxProvider] = useState<"open-meteo"|"openweather">("open-meteo");
+  const trendRange = useMemo(() => {
+    if (!smooth3d) return trendRangeBase;
+    const sm = movingAverage(trendRangeBase.map(x => x.value), 3);
+    return trendRangeBase.map((p, i) => ({ ...p, value: sm[i] }));
+  }, [trendRangeBase, smooth3d]);
 
-  // Selettori SERP (uno per grafico)
-  const [askTrend, setAskTrend] = useState(true);            // Andamento domanda
-  const [askChannels, setAskChannels] = useState(false);     // Canali
-  const [askProvenance, setAskProvenance] = useState(false); // Provenienza
-  const [askLOS, setAskLOS] = useState(false);               // LOS
-
-  // Dati esterni (placeholder compatibilità PAR1)
-  const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
-  const [csvUrl, setCsvUrl] = useState("");
-  const [gsId, setGsId] = useState("");
-  const [gsSheet, setGsSheet] = useState("Sheet1");
-  const [gsGid, setGsGid] = useState("");
-  const [strictSheet] = useState(true);
-
-  // Caricamenti CSV/GSheet (compat)
-  const [rawRows] = useState<DataRow[]>([]);
-  const [loading] = useState(false);
-  const [loadError] = useState<string | null>(null);
-
-  // Festività + Meteo
-  const [holidays, setHolidays] = useState<Record<string, string>>({});
-  const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
-
-  // Stato “applicato”
-  const [aQuery, setAQuery] = useState(query);
-  const [aRadius, setARadius] = useState(radius);
-  const [aMonthISO, setAMonthISO] = useState(monthISO); // YYYY-MM
-  const [aTypes, setATypes] = useState<string[]>(types);
-  const [aMode, setAMode] = useState<Mode>(mode);
-  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>({ lat: 43.7696, lng: 11.2558 });
-
-  // Contatore SerpAPI
-  const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
-
-  // Stato per grafici
-  const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
-  const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
-  const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
-  const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
-
-  // Flag cambi (per bottone Applica ecc.)
-  const hasChanges = useMemo(() =>
-    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO || aMode !== mode || aTypes.join(",") !== types.join(",") ||
-    askTrend !== true || askChannels !== false || askProvenance !== false || askLOS !== false || wxProvider !== "open-meteo",
-  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types, askTrend, askChannels, askProvenance, askLOS, wxProvider]);
-
-  // Normalizzazione (PAR1)
-  const normalized: Normalized = useMemo(()=>{
-    const warnings: string[] = [];
-    const center = aCenter;
-    const safeR = clampRadiusSilently(aRadius);
-    const safeT = aTypes.length ? aTypes.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t)) : ["hotel"];
-    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings); // YYYY-MM
-    const safeDays = daysOfMonthWindow(safeMonthISO);
-    return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
-  }, [aMonthISO, aRadius, aTypes, aCenter]);
-
-  // Avvisi
-  useEffect(() => {
-    setNotices(prev => (prev.join("|") === normalized.warnings.join("|") ? prev : normalized.warnings));
-  }, [normalized.warnings]);
-
-  // Leggi stato da URL al mount
-  useEffect(() => {
-    if (!search) return;
-    const q = search.get("q") ?? "Firenze";
-    const r = parseNumParam(search.get("r"), radius);
-    const m = search.get("m") ?? monthISO; // YYYY-MM
-    const rawT = parseListParam(search.get("t"));
-    const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
-    const t = validT.length ? validT : ["hotel"];
-    const modeParam: Mode = (search.get("mode") === "competitor" ? "competitor" : "zone");
-
-    const src = (search.get("src") as "none"|"csv"|"gsheet") ?? dataSource;
-    const csv = search.get("csv") ?? csvUrl;
-    const id  = search.get("id")  ?? gsId;
-    const gid = search.get("gid") ?? gsGid;
-    const sheet = search.get("sheet") ?? gsSheet;
-
-    const trendQ = search.get("trend"); const chQ = search.get("ch"); const prQ = search.get("prov"); const losQ = search.get("los");
-    const wx = (search.get("wx") as "open-meteo"|"openweather") || "open-meteo";
-
-    setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
-    setDataSource(src); setCsvUrl(csv); setGsId(id); setGsGid(gid ?? ""); setGsSheet(sheet ?? "");
-    setAskTrend(trendQ==null ? true : trendQ==="1");
-    setAskChannels(chQ==="1"); setAskProvenance(prQ==="1"); setAskLOS(losQ==="1");
-    setWxProvider(wx);
-
-    setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
-    setACenter({ lat: 43.7696, lng: 11.2558 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ----- Geocoding ----- */
-  const handleSearchLocation = useCallback(async () => {
-    const q = (query || "").trim();
-    if (!q) return;
-    try {
-      const res = await fetch(`/api/external/geocode?q=${encodeURIComponent(q)}`);
-      const j = await res.json();
-      const item = Array.isArray(j?.results) ? j.results[0] : j?.result || j;
-      const lat = Number(item?.lat ?? item?.latitude);
-      const lng = Number(item?.lng ?? item?.longitude);
-      const name = String(item?.name ?? item?.display_name ?? q);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        setACenter({ lat, lng }); setAQuery(name);
-        setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
-        replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
-          { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
-      } else { alert("Località non trovata"); }
-    } catch { alert("Errore di geocoding"); }
-  }, [query, radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider, router]);
-
-  /* ----- Reverse geocoding (click mappa) ----- */
-  const onMapClick = useCallback(async ({ lat, lng }: { lat: number; lng: number }) => {
-    let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    try { const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`); const j = r.ok ? await r.json() : null; if (j) name = String(j?.name ?? j?.display_name ?? name); } catch {}
-    setQuery(name);
-    setACenter({ lat, lng }); setAQuery(name);
-    setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
-    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
-      { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
-  }, [radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider, router]);
-
-  /* ----- Festività IT ----- */
-  useEffect(() => {
-    const y = Number(aMonthISO.slice(0, 4));
-    if (!y) return;
-    fetch(`/api/external/holidays?year=${y}&country=IT`)
-      .then(r => r.json())
-      .then((j) => {
-        if (!j?.ok) return;
-        const map: Record<string, string> = {};
-        (j.holidays || []).forEach((h: any) => { map[h.date] = h.localName || h.name; });
-        setHolidays(map);
-      })
-      .catch(() => {});
-  }, [aMonthISO]);
-
-  /* ----- Meteo ----- */
-  useEffect(() => {
-    if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
-    const { lat, lng } = normalized.center;
-    const url = `/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(aMonthISO)}&provider=${wxProvider}`;
-    fetch(url)
-      .then(r => r.json())
-      .then((j) => {
-        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
-        const daily = j.weather.daily;
-        const out: Record<string, { t?: number; p?: number; code?: number }> = {};
-        (daily.time || []).forEach((d: string, i: number) => {
-          out[d] = {
-            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
-            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
-            code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined,
-          };
-        });
-        setWeatherByDate(out);
-      })
-      .catch(() => setWeatherByDate({}));
-  }, [normalized.center, aMonthISO, wxProvider]);
-
-  /* ----- SERPAPI: linea + segmenti + quota ----- */
-  const fetchSerp = useCallback(async () => {
-    if (!aCenter) return;
-
-    const needTrend   = askTrend;
-    const needRelated = askChannels || askProvenance || askLOS;
-    if (!needTrend && !needRelated) return;
-
-    try {
-      // === COSTRUZIONE PARAMETRI RICHIESTA ===
-      const params = new URLSearchParams();
-
-      // query: imponi "<q> hotel"
-      params.set("q", `${aQuery} hotel`);
-
-      // geo
-      params.set("lat", String(aCenter.lat));
-      params.set("lng", String(aCenter.lng));
-
-      // categoria Travel
-      params.set("cat", "203");
-
-      // parti richieste (trend sempre se spuntato; related se serve)
-      params.set("parts", [
-        needTrend ? "trend" : "",
-        needRelated ? "related" : ""
-      ].filter(Boolean).join(","));
-
-      // timeframe coerente con il MESE selezionato nel calendario
-      const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
-      const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
-      params.set("date", `${monthStart} ${monthEnd}`);
-
-      // bucket related (solo se richiesti)
-      if (askChannels)    params.set("ch", "1");
-      if (askProvenance)  params.set("prov", "1");
-      if (askLOS)         params.set("los", "1");
-
-      // === FINE COSTRUZIONE PARAMETRI ===
-
-      const r = await fetch(`/api/serp/demand?${params.toString()}`);
-      const j: SerpDemandPayload = await r.json();
-
-      if (!j?.ok) {
-        setNotices(prev => Array.from(new Set([
-          ...prev,
-          (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."
-        ])));
-        return;
-      }
-
-      // Quota SERP (parziale dalla stessa response)
-      let badge: { used?: number; total?: number; left?: number } = {
-        used:  j.usage?.this_month_usage,
-        total: j.usage?.searches_per_month,
-        left:  j.usage?.plan_searches_left
-      };
-
-      // Serie per il grafico (ricampionata sul mese corrente)
-      if (needTrend && Array.isArray(j.series)) {
-        setSerpTrend(resampleToDays(j.series, aMonthISO));
-      } else if (!needTrend) {
-        setSerpTrend([]);
-      }
-
-      // Related (canali, provenienza, LOS)
-      if (needRelated && j.related) {
-        const rel = j.related;
-
-        if (askChannels) {
-          setSerpChannels([
-            { channel: "Booking",  value: rel.channels.find((x:any)=>x.label==="booking")?.value || 0 },
-            { channel: "Airbnb",   value: rel.channels.find((x:any)=>x.label==="airbnb")?.value || 0 },
-            { channel: "Diretto",  value: rel.channels.find((x:any)=>x.label==="diretto")?.value || 0 },
-            { channel: "Expedia",  value: rel.channels.find((x:any)=>x.label==="expedia")?.value || 0 },
-            { channel: "Altro",    value: rel.channels.find((x:any)=>x.label==="altro")?.value || 0 },
-          ]);
-        } else {
-          setSerpChannels([]);
-        }
-
-        if (askProvenance) {
-          setSerpOrigins([
-            { name: "Italia",   value: rel.provenance.find((x:any)=>x.label==="italia")?.value || 0 },
-            { name: "Germania", value: rel.provenance.find((x:any)=>x.label==="germania")?.value || 0 },
-            { name: "Francia",  value: rel.provenance.find((x:any)=>x.label==="francia")?.value || 0 },
-            { name: "USA",      value: rel.provenance.find((x:any)=>x.label==="usa")?.value || 0 },
-            { name: "UK",       value: rel.provenance.find((x:any)=>x.label==="uk")?.value || 0 },
-          ]);
-        } else {
-          setSerpOrigins([]);
-        }
-
-        if (askLOS) {
-          setSerpLOS([
-            { bucket: "1 notte",   value: rel.los.find((x:any)=>x.label==="1 notte")?.value || 0 },
-            { bucket: "2-3 notti", value: rel.los.find((x:any)=>x.label==="2-3 notti")?.value || 0 },
-            { bucket: "4-6 notti", value: rel.los.find((x:any)=>x.label==="4-6 notti")?.value || 0 },
-            { bucket: "7+ notti",  value: rel.los.find((x:any)=>x.label==="7+ notti")?.value || 0 },
-          ]);
-        } else {
-          setSerpLOS([]);
-        }
-      }
-
-      if (j.note) {
-        setNotices(prev => Array.from(new Set([...prev, j.note!])));
-      }
-
-      // Merge badge con /api/serp/quota
-      try {
-        const qq = await fetch("/api/serp/quota").then(r=>r.json());
-        if (qq?.ok) {
-          badge.used  = badge.used  ?? qq.this_month_usage;
-          badge.total = badge.total ?? (qq.searches_per_month ?? qq.raw?.searches_per_month);
-          badge.left  = badge.left  ?? (qq.plan_searches_left ?? qq.raw?.plan_searches_left);
-        }
-      } catch {
-        // ignora, badge resta quello parziale
-      }
-      setSerpUsage(badge);
-
-    } catch {
-      setNotices(prev => Array.from(new Set([
-        ...prev,
-        "Errore richiesta SERP: uso dati dimostrativi."
-      ])));
-    }
-  }, [
-    aQuery, aCenter, aMonthISO,
-    askTrend, askChannels, askProvenance, askLOS
-  ]);
-
-  useEffect(() => { fetchSerp(); }, [fetchSerp]);
-  // ---------- UI ----------
+  const disabledGenerate = loading || !query.trim();
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Topbar */}
-      <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
-          <div className="text-sm md:text-base font-semibold text-slate-800">
-            Analisi domanda · <span className="text-indigo-700">{aQuery}</span>
+      {/* Topbar PAR1 */}
+      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+          <div className="text-sm font-semibold">Widget Analisi Domanda – Hospitality</div>
+          <div className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+            SERP {quotaBadge}
           </div>
-          <div className="flex items-center gap-3">
-            {serpUsage && (
-              <span className="text-xs rounded-md px-2 py-1 border bg-slate-100">
-                SERP {serpUsage.used ?? "?"}/{serpUsage.total ?? "?"} · left {serpUsage.left ?? "?"}
-              </span>
-            )}
-          </div>
+          <div className="flex-1" />
+          {note && <div className="text-[12px] text-slate-500">{note}</div>}
         </div>
-      </div>
+      </header>
 
-      {/* Body */}
-      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid md:grid-cols-12 gap-6">
-        {/* Left panel */}
-        <div className="md:col-span-4 space-y-4">
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-3">Filtri</div>
-            <label className="text-xs text-slate-600">Località</label>
-            <div className="flex gap-2 mt-1">
+      <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Colonna sinistra (PAR1) */}
+        <aside className="lg:col-span-4 space-y-3">
+          {/* Località, raggio, mese, meteo */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="text-sm font-semibold">Località</div>
+            <div className="flex gap-2">
               <input
-                value={query} onChange={e=>setQuery(e.currentTarget.value)}
-                className="flex-1 h-9 rounded-md border px-2"
-                placeholder="Città o indirizzo"
+                className="flex-1 h-10 px-3 rounded-xl border"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Es. Firenze"
               />
-              <button onClick={handleSearchLocation} className="h-9 px-3 rounded-md bg-indigo-600 text-white">Cerca</button>
+              <button
+                className="px-3 h-10 rounded-xl border bg-white"
+                onClick={() => fetch(`/api/external/geocode?q=${encodeURIComponent(query)}`).then(r=>r.json()).then(j=>{
+                  const lat = Number(j?.lat), lng = Number(j?.lon);
+                  if (Number.isFinite(lat) && Number.isFinite(lng)) setCenter({lat,lng});
+                }).catch(()=>{})}
+              >Cerca</button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mt-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-600">Raggio</label>
-                <select value={radius} onChange={e=>setRadius(parseInt(e.currentTarget.value))}
-                        className="w-full h-9 rounded-md border px-2 mt-1">
-                  <option value={10}>10 km</option>
-                  <option value={20}>20 km</option>
-                  <option value={30}>30 km</option>
+                <div className="text-xs text-slate-600 mb-1">Raggio</div>
+                <select
+                  className="h-9 px-2 rounded-xl border w-full"
+                  value={radius}
+                  onChange={e => setRadius(Number(e.target.value) as any)}
+                >
+                  {RADIUS_OPTIONS.map(r => <option key={r} value={r}>{r} km</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-600">Mese</label>
+                <div className="text-xs text-slate-600 mb-1">Mese</div>
                 <input
                   type="month"
+                  className="h-9 px-2 rounded-xl border w-full"
                   value={monthISO}
-                  onChange={e=>setMonthISO(e.currentTarget.value)}
-                  className="w-full h-9 rounded-md border px-2 mt-1"
+                  onChange={e => setMonthISO(e.currentTarget.value)}
                 />
               </div>
             </div>
 
-            <div className="mt-4">
-              <label className="text-xs text-slate-600">Tipologie</label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {STRUCTURE_TYPES.map(t => {
-                  const on = types.includes(t);
-                  return (
-                    <button key={t}
-                      onClick={()=>{
-                        setTypes(on ? types.filter(x=>x!==t) : [...types, t]);
-                      }}
-                      className={`h-8 px-3 rounded-full border text-xs ${on ? "bg-indigo-600 text-white border-indigo-600" : "bg-white"}`}
-                    >
-                      {t}
-                    </button>
-                  );
-                })}
-              </div>
+            <div>
+              <div className="text-xs text-slate-600 mb-1">Meteo</div>
+              <select
+                className="h-9 px-2 rounded-xl border w-full"
+                value={wxProvider}
+                onChange={e => setWxProvider(e.target.value as any)}
+              >
+                <option value="open-meteo">Open-Meteo (default)</option>
+                <option value="openweather">OpenWeather (se configurato)</option>
+              </select>
             </div>
 
-            <div className="mt-4">
-              <label className="text-xs text-slate-600">Modalità</label>
-              <div className="flex gap-2 mt-2">
-                <button
-                  className={`h-8 px-3 rounded-md border text-xs ${aMode==='zone'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
-                  onClick={()=>setMode('zone')}
-                >Zona</button>
-                <button
-                  className={`h-8 px-3 rounded-md border text-xs ${aMode==='competitor'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
-                  onClick={()=>setMode('competitor')}
-                >Competitor</button>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-2">
-                Zona = baseline macro domanda; Competitor = stessa curva ma ADR più “aggressivo”.
+            {/* Tipologie (multi-select persistente) */}
+            <div>
+              <div className="text-xs text-slate-600 mb-1">Tipologie</div>
+              <button
+                className="h-9 px-3 rounded-xl border bg-slate-50 w-full text-left"
+                onClick={() => setTypesOpen(v => !v)}
+              >
+                {types.map(t => TYPE_LABEL[t]).join(", ") || "Seleziona…"}
+              </button>
+              {typesOpen && (
+                <div className="mt-2 p-3 border rounded-xl space-y-2">
+                  {TYPE_OPTIONS.map(t => (
+                    <label key={t} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={typesTemp.includes(t)}
+                        onChange={e=>{
+                          if (e.currentTarget.checked) setTypesTemp([...typesTemp, t]);
+                          else setTypesTemp(typesTemp.filter(x => x !== t));
+                        }}
+                      />
+                      {TYPE_LABEL[t]}
+                    </label>
+                  ))}
+                  <div className="flex gap-2 pt-2">
+                    <button className="h-8 px-3 rounded-lg bg-indigo-600 text-white text-xs"
+                      onClick={()=>{ setTypes(typesTemp); setTypesOpen(false); }}
+                    >Applica</button>
+                    <button className="h-8 px-3 rounded-lg bg-slate-200 text-xs"
+                      onClick={()=>{ setTypesTemp(types); setTypesOpen(false); }}
+                    >Annulla</button>
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-500 mt-1">Default: Hotel.</p>
+            </div>
+
+            {/* Dati da chiedere alle API */}
+            <div className="pt-1">
+              <div className="text-sm font-semibold mb-1">Dati da chiedere alle API</div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={askTrend} onChange={e=>setAskTrend(e.currentTarget.checked)} />
+                Andamento domanda (Google Trends)
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={askChannels} onChange={e=>setAskChannels(e.currentTarget.checked)} />
+                Canali di vendita
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={askProvenance} onChange={e=>setAskProvenance(e.currentTarget.checked)} />
+                Provenienza clienti
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={askLOS} onChange={e=>setAskLOS(e.currentTarget.checked)} />
+                Durata media soggiorno (LOS)
+              </label>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Spunta solo i grafici che ti servono: risparmi query su SerpAPI.
               </p>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-slate-600">Meteo</label>
-                <select value={wxProvider} onChange={e=>setWxProvider(e.currentTarget.value as any)}
-                        className="w-full h-9 rounded-md border px-2 mt-1">
-                  <option value="open-meteo">Open-Meteo</option>
-                  <option value="openweather">OpenWeather</option>
-                </select>
+            {/* Modalità */}
+            <div className="pt-1">
+              <div className="text-sm font-semibold mb-1">Modalità</div>
+              <div className="flex gap-2">
+                <button
+                  className={`h-9 px-3 rounded-xl text-sm border ${mode==='zone'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
+                  onClick={() => setMode('zone')}
+                >Zona</button>
+                <button
+                  className={`h-9 px-3 rounded-xl text-sm border ${mode==='competitor'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
+                  onClick={() => setMode('competitor')}
+                >Competitor</button>
               </div>
-              <div>
-                <label className="text-xs text-slate-600">Selettori API</label>
-                <div className="flex flex-col gap-2 mt-1">
-                  <label className="text-[12px]"><input type="checkbox" checked={askTrend} onChange={e=>setAskTrend(e.currentTarget.checked)} /> Andamento</label>
-                  <label className="text-[12px]"><input type="checkbox" checked={askChannels} onChange={e=>setAskChannels(e.currentTarget.checked)} /> Canali</label>
-                  <label className="text-[12px]"><input type="checkbox" checked={askProvenance} onChange={e=>setAskProvenance(e.currentTarget.checked)} /> Provenienza</label>
-                  <label className="text-[12px]"><input type="checkbox" checked={askLOS} onChange={e=>setAskLOS(e.currentTarget.checked)} /> LOS</label>
-                </div>
-              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Zona = baseline dell’area. Competitor = stessa curva ma ADR più “aggressivo”.
+              </p>
             </div>
 
-            <div className="mt-4 flex gap-2">
+            {/* Avanzate: periodo personalizzato (solo grafico) */}
+            <div className="mt-2">
               <button
-                onClick={()=>{
-                  setAQuery(query); setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
-                  replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
-                    { q: query, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
-                }}
-                className="h-9 px-4 rounded-md bg-indigo-600 text-white"
-              >Genera analisi</button>
+                type="button"
+                onClick={() => setRangeOpen(v => !v)}
+                className="text-xs text-slate-600 underline underline-offset-2"
+              >
+                Avanzate: periodo personalizzato (solo grafico)
+              </button>
+              {rangeOpen && (
+                <div className="mt-2 grid gap-2 rounded-lg border p-2 bg-slate-50/60">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[11px] text-slate-600">Da</label>
+                    <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} className="h-8 px-2 rounded-md border text-sm" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[11px] text-slate-600">A</label>
+                    <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} className="h-8 px-2 rounded-md border text-sm" />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      className="px-2 h-7 rounded-md border text-[11px]"
+                      onClick={() => {
+                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
+                        const from = format(addDays(today, -30),'yyyy-MM-dd');
+                        setFromDate(from); setToDate(to);
+                      }}
+                    >Ultimi 30gg</button>
+                    <button
+                      type="button"
+                      className="px-2 h-7 rounded-md border text-[11px]"
+                      onClick={() => {
+                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
+                        const from = format(addDays(today, -90),'yyyy-MM-dd');
+                        setFromDate(from); setToDate(to);
+                      }}
+                    >90gg</button>
+                    <button
+                      type="button"
+                      className="px-2 h-7 rounded-md border text-[11px]"
+                      onClick={() => {
+                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
+                        const from = format(addDays(today, -365),'yyyy-MM-dd');
+                        setFromDate(from); setToDate(to);
+                      }}
+                    >365gg</button>
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-[12px]">
+                    <input type="checkbox" checked={smooth3d} onChange={e=>setSmooth3d(e.currentTarget.checked)} />
+                    Media mobile 3 giorni (grafico)
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    Il calendario resta mensile; il range qui influenza solo “Andamento Domanda”.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* CTA */}
+            <div className="pt-2 flex gap-2">
               <button
+                onClick={fetchSerp}
+                disabled={disabledGenerate}
+                className={`flex-1 h-10 rounded-2xl text-white text-sm font-semibold ${disabledGenerate?'bg-slate-300':'bg-indigo-600 hover:bg-indigo-700'}`}
+              >
+                {loading ? 'Elaboro…' : 'Genera Analisi'}
+              </button>
+              <button
+                className="h-10 px-3 rounded-2xl text-sm border bg-white"
                 onClick={()=>{
-                  const now = new Date();
-                  const defM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
-                  setQuery("Firenze"); setRadius(20); setMonthISO(defM); setTypes(["hotel"]); setMode("zone");
-                  setAskTrend(true); setAskChannels(false); setAskProvenance(false); setAskLOS(false); setWxProvider("open-meteo");
+                  setQuery("Firenze"); setCenter({lat:43.7696, lng:11.2558}); setRadius(20);
+                  setMonthISO(format(new Date(),"yyyy-MM")); setWxProvider("open-meteo");
+                  setTypes(["hotel"]); setTypesOpen(false); setTypesTemp(["hotel"]);
+                  setMode("zone"); setAskTrend(true); setAskChannels(false); setAskProvenance(false); setAskLOS(false);
+                  setFromDate(""); setToDate(""); setSmooth3d(false);
+                  setSerpSeries([]); setRelated(undefined); setNote(undefined);
+                  persistUrl();
                 }}
-                className="h-9 px-4 rounded-md border"
-              >Reset</button>
+              >
+                Reset
+              </button>
             </div>
           </div>
+        </aside>
 
-          {/* Mappa */}
-          <div className="bg-white rounded-2xl border shadow-sm p-0 overflow-hidden">
+        {/* Colonna destra (mappa + calendario + grafici) */}
+        <section className="lg:col-span-8 space-y-6">
+          {/* Mappa PAR1 */}
+          <div className="bg-white rounded-2xl border shadow-sm p-3">
             <div className="h-[360px]">
-              <LocationMap
-                center={aCenter}
-                radius={aRadius * 1000}     // metri
-                label={`${aRadius} km`}
-                onClick={onMapClick}
+              <LeafletMap
+                center={center}
+                radiusKm={radius}
+                onClick={(lat, lng) => setCenter({ lat, lng })}
               />
             </div>
           </div>
 
-          {/* Avvisi */}
-          {notices.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-3 text-xs">
-              {Array.from(new Set(notices)).map((n,i)=>(<div key={i} className="mb-1 last:mb-0">• {n}</div>))}
-            </div>
-          )}
-        </div>
-
-        {/* Right panel */}
-        <div className="md:col-span-8 space-y-4">
-          {/* Calendario domanda (PAR1) */}
+          {/* Calendario PAR1: tessere con pressione + ADR */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="mb-2 text-sm font-semibold">
-              Calendario — {format(parseISO(`${aMonthISO}-01`), "MMMM yyyy", { locale: it })}
+            <div className="text-sm font-semibold mb-2">
+              Calendario Domanda + ADR — {format(parseISO(`${monthISO}-01`), "MMMM yyyy", { locale: it })}
             </div>
-
-            {/* Header giorni settimana */}
-            <div className="grid grid-cols-7 gap-1 text-[11px] text-slate-500 mb-1">
-              {["Lun","Mar","Mer","Gio","Ven","Sab","Dom"].map(d => <div key={d} className="text-center">{d}</div>)}
-            </div>
-
-            <div className="grid grid-cols-7 gap-1">
-              {daysOfMonthWindow(aMonthISO).map((d, idx) => {
-                const iso = format(d, "yyyy-MM-dd");
-                const trendPoint = serpTrend[idx] ? serpTrend[idx].value : 0; // già ricampionata
-                const bg = colorForPressure(trendPoint);
-                const adr = adrFromPressure(trendPoint, aMode);
-
+            <div className="grid grid-cols-7 gap-2">
+              {calendarData.map((d) => {
+                const hue = 12; // arancio/rosso PAR1
+                const light = 92 - Math.round((d.pressure || 0) * 0.5);
+                const bg = `hsl(${hue},90%,${light}%)`;
                 return (
-                  <div key={iso} className="rounded-md p-2 text-xs border"
-                       style={{ backgroundColor: bg, borderColor: "rgba(0,0,0,0.05)" }}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold">{format(d,"d")}</span>
-                      <span className="text-[11px]">€{adr}</span>
-                    </div>
-                    {/* Meteo/icone: solo prossimi 7 giorni */}
-                    {isWithinNextDays(d, 7) && weatherByDate[iso] && (
-                      <div className="mt-1 text-[11px]">
-                        <span className="opacity-80">{Math.round(weatherByDate[iso]?.t ?? 0)}°</span>
-                        {typeof weatherByDate[iso]?.p === "number" && <span className="ml-1 opacity-60">{Math.round(weatherByDate[iso]!.p!)}mm</span>}
-                      </div>
-                    )}
-                    {/* Festività IT */}
-                    {holidays[iso] && <div className="mt-1 text-[10px] italic opacity-80">{holidays[iso]}</div>}
+                  <div key={d.dateISO} className="rounded-xl p-2 border text-center" style={{ background: bg }}>
+                    <div className="text-xs font-semibold">{d.day}</div>
+                    <div className="text-[11px] mt-1">€{d.adr}</div>
                   </div>
                 );
               })}
             </div>
+            <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-2">
+              <span>Bassa domanda</span>
+              <div className="h-1 flex-1 rounded-full" style={{
+                background: "linear-gradient(to right, hsl(12,90%,92%), hsl(12,90%,55%))"
+              }} />
+              <span>Alta domanda</span>
+            </div>
           </div>
-          {/* Andamento domanda (linea/area) */}
+
+          {/* Segmenti (visibili solo se selezionati) */}
+          {(askProvenance || askLOS || askChannels) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl border shadow-sm p-4">
+                <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+                {!related?.provenance?.length ? (
+                  <div className="h-48 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
+                ) : (
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={related.provenance}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" />
+                        <YAxis allowDecimals={false} />
+                        <RTooltip />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-2xl border shadow-sm p-4">
+                <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+                {!related?.los?.length ? (
+                  <div className="h-48 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
+                ) : (
+                  <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={related.los}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" />
+                        <YAxis allowDecimals={false} />
+                        <RTooltip />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+
+              <div className="md:col-span-2 bg-white rounded-2xl border shadow-sm p-4">
+                <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+                {!related?.channels?.length ? (
+                  <div className="h-56 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
+                ) : (
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={related.channels}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="label" />
+                        <YAxis allowDecimals={false} />
+                        <RTooltip />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Grafico in basso: mese o range (con smoothing opzionale) */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="mb-2 text-sm font-semibold">
-              Andamento domanda — {format(parseISO(`${aMonthISO}-01`), "MMMM yyyy", { locale: it })}
+            <div className="text-sm font-semibold mb-2">
+              {fromDate && toDate
+                ? <>Andamento Domanda — {fromDate} → {toDate}</>
+                : <>Andamento Domanda — {format(parseISO(`${monthISO}-01`),'MMMM yyyy',{locale:it})}</>
+              }
             </div>
-
-            {(!serpTrend.length || serpTrend.every(p=>!p.value)) ? (
-              <div className="h-64 grid place-items-center text-sm text-slate-500">
-                Nessun segnale utile per questo periodo/area.
-              </div>
-            ) : (
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={serpTrend}>
-                    <defs>
-                      <linearGradient id="fillTrend" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.25}/>
-                        <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.05}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="dateLabel" />
-                    <YAxis domain={[0,100]} ticks={[0,33,66,100]} />
-                    <RTooltip />
-                    <Area type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={1.6} fill="url(#fillTrend)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={trendRange}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="dateLabel" interval={Math.ceil(Math.max(12, trendRange.length / 12))} />
+                  <YAxis />
+                  <RTooltip />
+                  <defs>
+                    <linearGradient id="gradLine" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#1e3a8a" />
+                      <stop offset="100%" stopColor="#1e3a8a" />
+                    </linearGradient>
+                    <linearGradient id="fillLine" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.03} />
+                    </linearGradient>
+                  </defs>
+                  <Area type="monotone" dataKey="value" fill="url(#fillLine)" stroke="url(#gradLine)" />
+                  <Line type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={1.6} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-
-          {/* Segmenti — Canali */}
-          {askChannels && (
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="mb-2 text-sm font-semibold">Canali</div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={serpChannels}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="channel" />
-                    <YAxis allowDecimals={false} />
-                    <RTooltip />
-                    <Bar dataKey="value" fill="#4f46e5" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Segmenti — Provenienza */}
-          {askProvenance && (
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="mb-2 text-sm font-semibold">Provenienza</div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={serpOrigins}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis allowDecimals={false} />
-                    <RTooltip />
-                    <Bar dataKey="value" fill="#4f46e5" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Segmenti — LOS */}
-          {askLOS && (
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="mb-2 text-sm font-semibold">Lunghezza soggiorno (LOS)</div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={serpLOS}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" />
-                    <YAxis allowDecimals={false} />
-                    <RTooltip />
-                    <Bar dataKey="value" fill="#4f46e5" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }
