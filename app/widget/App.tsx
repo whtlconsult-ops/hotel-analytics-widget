@@ -434,7 +434,8 @@ export default function App(){
   const [radius, setRadius] = useState<number>(20);
   const [monthISO, setMonthISO] = useState<string>(() => {
     const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+    // 👇 coerente con il resto del codice: SOLO YYYY-MM
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
   });
   // Default: SOLO Hotel
   const [types, setTypes] = useState<string[]>(["hotel"]);
@@ -468,7 +469,7 @@ export default function App(){
   // Stato “applicato”
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
-  const [aMonthISO, setAMonthISO] = useState(monthISO);
+  const [aMonthISO, setAMonthISO] = useState(monthISO); // 👈 YYYY-MM
   const [aTypes, setATypes] = useState<string[]>(types);
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>({ lat: 43.7696, lng: 11.2558 });
@@ -494,7 +495,7 @@ export default function App(){
     const center = aCenter;
     const safeR = clampRadiusSilently(aRadius);
     const safeT = aTypes.length ? aTypes.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t)) : ["hotel"];
-    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings); // atteso YYYY-MM
     const safeDays = daysOfMonthWindow(safeMonthISO);
     return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
   }, [aMonthISO, aRadius, aTypes, aCenter]);
@@ -509,7 +510,7 @@ export default function App(){
     if (!search) return;
     const q = search.get("q") ?? "Firenze";
     const r = parseNumParam(search.get("r"), radius);
-    const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
+    const m = search.get("m") ?? monthISO; // 👈 lasciamo "YYYY-MM", niente "-01"
     const rawT = parseListParam(search.get("t"));
     const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
     const t = validT.length ? validT : ["hotel"];
@@ -530,6 +531,7 @@ export default function App(){
     setAskChannels(chQ==="1"); setAskProvenance(prQ==="1"); setAskLOS(losQ==="1");
     setWxProvider(wx);
 
+    // Stato "applicato" in sync
     setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
     setACenter({ lat: 43.7696, lng: 11.2558 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,36 +615,36 @@ export default function App(){
     if (!needTrend && !needRelated) return;
 
     try {
-// === COSTRUZIONE PARAMETRI RICHIESTA ===
-const params = new URLSearchParams();
+      // === COSTRUZIONE PARAMETRI RICHIESTA ===
+      const params = new URLSearchParams();
 
-// query: imponi "<q> hotel"
-params.set("q", `${aQuery} hotel`);
+      // query: imponi "<q> hotel"
+      params.set("q", `${aQuery} hotel`);
 
-// geo
-params.set("lat", String(aCenter.lat));
-params.set("lng", String(aCenter.lng));
+      // geo
+      params.set("lat", String(aCenter.lat));
+      params.set("lng", String(aCenter.lng));
 
-// categoria Travel
-params.set("cat", "203");
+      // categoria Travel
+      params.set("cat", "203");
 
-// parti richieste (trend sempre se spuntato; related se serve)
-params.set("parts", [
-  needTrend ? "trend" : "",
-  needRelated ? "related" : ""
-].filter(Boolean).join(","));
+      // parti richieste (trend sempre se spuntato; related se serve)
+      params.set("parts", [
+        needTrend ? "trend" : "",
+        needRelated ? "related" : ""
+      ].filter(Boolean).join(","));
 
-// timeframe coerente con il MESE selezionato nel calendario
-const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
-const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
-params.set("date", `${monthStart} ${monthEnd}`);
+      // timeframe coerente con il MESE selezionato nel calendario
+      const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
+      const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
+      params.set("date", `${monthStart} ${monthEnd}`);
 
-// bucket related (solo se richiesti)
-if (askChannels)    params.set("ch", "1");
-if (askProvenance)  params.set("prov", "1");
-if (askLOS)         params.set("los", "1");
+      // bucket related (solo se richiesti)
+      if (askChannels)    params.set("ch", "1");
+      if (askProvenance)  params.set("prov", "1");
+      if (askLOS)         params.set("los", "1");
 
-// === FINE COSTRUZIONE PARAMETRI ===
+      // === FINE COSTRUZIONE PARAMETRI ===
 
       const r = await fetch(`/api/serp/demand?${params.toString()}`);
       const j: SerpDemandPayload = await r.json();
@@ -717,6 +719,7 @@ if (askLOS)         params.set("los", "1");
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
+
 // ===== Block 3/4 =====
   // CSV/GS (ridotto)
   useEffect(() => {
