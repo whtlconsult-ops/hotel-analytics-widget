@@ -613,6 +613,7 @@ export default function App(){
     if (!needTrend && !needRelated) return;
 
     try {
+// Costruiamo i parametri in modo esplicito
 const params = new URLSearchParams();
 params.set("q", `${aQuery} hotel`);
 params.set("lat", String(aCenter.lat));
@@ -623,12 +624,12 @@ params.set("parts", [
   needRelated ? "related" : ""
 ].filter(Boolean).join(","));
 
-// === NOVITÀ: timeframe coerente con il mese del calendario ===
+// === Timeframe coerente con il mese del calendario ===
 const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
 const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
 params.set("date", `${monthStart} ${monthEnd}`);
 
-// Flag per i bucket related (li passiamo solo se richiesti)
+// Flag per i bucket related (solo se richiesti)
 if (askChannels)    params.set("ch", "1");
 if (askProvenance)  params.set("prov", "1");
 if (askLOS)         params.set("los", "1");
