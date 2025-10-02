@@ -606,7 +606,7 @@ export default function App(){
       .catch(() => setWeatherByDate({}));
   }, [normalized.center, aMonthISO, wxProvider]);
 
-  /* ----- SERPAPI: linea + segmenti + quota ----- */
+    /* ----- SERPAPI: linea + segmenti + quota ----- */
   const fetchSerp = useCallback(async () => {
     if (!aCenter) return;
 
@@ -650,75 +650,99 @@ export default function App(){
       const j: SerpDemandPayload = await r.json();
 
       if (!j?.ok) {
-        setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."])));
+        setNotices(prev => Array.from(new Set([
+          ...prev,
+          (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."
+        ])));
         return;
       }
 
       // Quota SERP (parziale dalla stessa response)
-      let badge = {
-        used: j.usage?.this_month_usage,
+      let badge: { used?: number; total?: number; left?: number } = {
+        used:  j.usage?.this_month_usage,
         total: j.usage?.searches_per_month,
-        left: j.usage?.plan_searches_left
-      } as any;
+        left:  j.usage?.plan_searches_left
+      };
 
+      // Serie per il grafico (ricampionata sul mese corrente)
       if (needTrend && Array.isArray(j.series)) {
         setSerpTrend(resampleToDays(j.series, aMonthISO));
       } else if (!needTrend) {
         setSerpTrend([]);
       }
 
+      // Related (canali, provenienza, LOS)
       if (needRelated && j.related) {
         const rel = j.related;
 
         if (askChannels) {
           setSerpChannels([
-            { channel: "Booking",  value: rel.channels.find((x)=>x.label==="booking")?.value || 0 },
-            { channel: "Airbnb",   value: rel.channels.find((x)=>x.label==="airbnb")?.value || 0 },
-            { channel: "Diretto",  value: rel.channels.find((x)=>x.label==="diretto")?.value || 0 },
-            { channel: "Expedia",  value: rel.channels.find((x)=>x.label==="expedia")?.value || 0 },
-            { channel: "Altro",    value: rel.channels.find((x)=>x.label==="altro")?.value || 0 },
+            { channel: "Booking",  value: rel.channels.find((x:any)=>x.label==="booking")?.value || 0 },
+            { channel: "Airbnb",   value: rel.channels.find((x:any)=>x.label==="airbnb")?.value || 0 },
+            { channel: "Diretto",  value: rel.channels.find((x:any)=>x.label==="diretto")?.value || 0 },
+            { channel: "Expedia",  value: rel.channels.find((x:any)=>x.label==="expedia")?.value || 0 },
+            { channel: "Altro",    value: rel.channels.find((x:any)=>x.label==="altro")?.value || 0 },
           ]);
-        } else { setSerpChannels([]); }
+        } else {
+          setSerpChannels([]);
+        }
 
         if (askProvenance) {
           setSerpOrigins([
-            { name: "Italia",   value: rel.provenance.find((x)=>x.label==="italia")?.value || 0 },
-            { name: "Germania", value: rel.provenance.find((x)=>x.label==="germania")?.value || 0 },
-            { name: "Francia",  value: rel.provenance.find((x)=>x.label==="francia")?.value || 0 },
-            { name: "USA",      value: rel.provenance.find((x)=>x.label==="usa")?.value || 0 },
-            { name: "UK",       value: rel.provenance.find((x)=>x.label==="uk")?.value || 0 },
+            { name: "Italia",   value: rel.provenance.find((x:any)=>x.label==="italia")?.value || 0 },
+            { name: "Germania", value: rel.provenance.find((x:any)=>x.label==="germania")?.value || 0 },
+            { name: "Francia",  value: rel.provenance.find((x:any)=>x.label==="francia")?.value || 0 },
+            { name: "USA",      value: rel.provenance.find((x:any)=>x.label==="usa")?.value || 0 },
+            { name: "UK",       value: rel.provenance.find((x:any)=>x.label==="uk")?.value || 0 },
           ]);
-        } else { setSerpOrigins([]); }
+        } else {
+          setSerpOrigins([]);
+        }
 
         if (askLOS) {
           setSerpLOS([
-            { bucket: "1 notte",  value: rel.los.find((x)=>x.label==="1 notte")?.value || 0 },
-            { bucket: "2-3 notti",value: rel.los.find((x)=>x.label==="2-3 notti")?.value || 0 },
-            { bucket: "4-6 notti",value: rel.los.find((x)=>x.label==="4-6 notti")?.value || 0 },
-            { bucket: "7+ notti", value: rel.los.find((x)=>x.label==="7+ notti")?.value || 0 },
+            { bucket: "1 notte",   value: rel.los.find((x:any)=>x.label==="1 notte")?.value || 0 },
+            { bucket: "2-3 notti", value: rel.los.find((x:any)=>x.label==="2-3 notti")?.value || 0 },
+            { bucket: "4-6 notti", value: rel.los.find((x:any)=>x.label==="4-6 notti")?.value || 0 },
+            { bucket: "7+ notti",  value: rel.los.find((x:any)=>x.label==="7+ notti")?.value || 0 },
           ]);
-        } else { setSerpLOS([]); }
+        } else {
+          setSerpLOS([]);
+        }
       }
 
-      if (j.note) setNotices(prev => Array.from(new Set([...prev, j.note!])));
+      if (j.note) {
+        setNotices(prev => Array.from(new Set([...prev, j.note!])));
+      }
 
       // Merge badge con /api/serp/quota
       try {
-        const q = await fetch("/api/serp/quota").then(r=>r.json());
-        if (q?.ok) {
-          badge.used  = badge.used  ?? q.this_month_usage;
-          badge.total = badge.total ?? q.searches_per_month ?? q.raw?.searches_per_month;
-          badge.left  = badge.left  ?? q.plan_searches_left ?? q.raw?.plan_searches_left;
+        const qq = await fetch("/api/serp/quota").then(r=>r.json());
+        if (qq?.ok) {
+          badge.used  = badge.used  ?? qq.this_month_usage;
+          badge.total = badge.total ?? (qq.searches_per_month ?? qq.raw?.searches_per_month);
+          badge.left  = badge.left  ?? (qq.plan_searches_left ?? qq.raw?.plan_searches_left);
         }
-      } catch {}
+      } catch {
+        // ignora, badge resta quello parziale
+      }
       setSerpUsage(badge);
 
     } catch {
-      setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
+      setNotices(prev => Array.from(new Set([
+        ...prev,
+        "Errore richiesta SERP: uso dati dimostrativi."
+      ])));
     }
-  }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
+  }, [
+    aQuery, aCenter, aMonthISO,
+    askTrend, askChannels, askProvenance, askLOS
+  ]);
 
-  useEffect(() => { fetchSerp(); }, [fetchSerp]);
+  // esegui al mount e quando cambia qualcosa di rilevante
+  useEffect(() => {
+    fetchSerp();
+  }, [fetchSerp]);
 
 // ===== Block 3/4 =====
   // CSV/GS (ridotto)
