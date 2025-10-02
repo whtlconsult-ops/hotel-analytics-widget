@@ -1,659 +1,1040 @@
 // app/widget/App.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
+import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import {
-  format, parseISO, startOfMonth, endOfMonth, addDays,
-} from "date-fns";
-import {
-  ResponsiveContainer, LineChart, Line, Area, CartesianGrid, XAxis, YAxis, Tooltip as RTooltip,
-  BarChart, Bar
+  PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
 } from "recharts";
+import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
-/* ================== Map (PAR1: stessa posizione/estetica) ================== */
-/* Usiamo react-leaflet via dynamic import (no SSR). Se nel tuo progetto hai già
-   un Map.tsx proprietario, puoi ignorare questa sezione e usare quello. */
-const LeafletMap = dynamic(async () => {
-  const L = await import("react-leaflet");
-  return function MapBox(props: {
-    center: { lat: number; lng: number };
-    radiusKm: number;
-    onClick?: (lat: number, lng: number) => void;
-  }) {
-    const { MapContainer, TileLayer, Circle, Marker, useMapEvents } = L as any;
-    const Clicker = () => {
-      useMapEvents({
-        click(e: any) { props.onClick?.(e.latlng.lat, e.latlng.lng); }
-      });
-      return null;
-    };
-    return (
-      <MapContainer
-        center={[props.center.lat, props.center.lng]}
-        zoom={13}
-        style={{ width: "100%", height: "100%", borderRadius: 16 }}
-        scrollWheelZoom
-      >
-        <TileLayer
-          attribution='&copy; OpenStreetMap'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <Marker position={[props.center.lat, props.center.lng]} />
-        <Circle center={[props.center.lat, props.center.lng]} radius={props.radiusKm * 1000} />
-        <Clicker />
-      </MapContainer>
-    );
-  };
-}, { ssr: false });
+// Mappa (no SSR)
+const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
-/* ================== Tipi risposta backend ================== */
-type RelatedBuckets = {
-  channels: { label: string; value: number }[];
-  provenance: { label: string; value: number }[];
-  los: { label: string; value: number }[];
+/* ---------- Tipi ---------- */
+type LatLng = { lat: number; lng: number };
+type Mode = "zone" | "competitor";
+
+type DataRow = {
+  date: Date | null;
+  adr: number;
+  occ: number;
+  los: number;
+  channel: string;
+  provenance: string;
+  type: string;
+  lat: number;
+  lng: number;
 };
-type SerpResp = {
+
+type Normalized = {
+  warnings: string[];
+  safeMonthISO: string;
+  safeDays: Date[];
+  center: (LatLng & { label?: string }) | null;
+  safeR: number;
+  safeT: string[];
+  isBlocked: boolean;
+};
+
+type SerpDemandPayload = {
   ok: boolean;
-  series: { date: string; score: number }[];
-  related?: RelatedBuckets;
+  series?: Array<{ date: string; score: number }>;
+  related?: {
+    channels: Array<{ label: string; value: number }>;
+    provenance: Array<{ label: string; value: number }>;
+    los: Array<{ label: string; value: number }>;
+  };
+  usage?: any;
   note?: string;
 };
-type QuotaResp = {
-  ok: boolean;
-  total_searches_left?: number;
-  plan_searches_left?: number;
-  this_month_usage?: number;
+
+/* ---------- Costanti & Tema ---------- */
+const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
+const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
+const RADIUS_OPTIONS = [10,20,30] as const;
+
+const typeLabels: Record<string,string> = {
+  hotel:"Hotel", agriturismo:"Agriturismo", casa_vacanza:"Case Vacanza",
+  villaggio_turistico:"Villaggi Turistici", resort:"Resort", "b&b":"B&B", affittacamere:"Affittacamere"
 };
 
-/* ================== Costanti PAR1 ================== */
-type Mode = "zone" | "competitor";
-const RADIUS_OPTIONS = [10, 20, 30] as const;
-const TYPE_OPTIONS = ["hotel", "agriturismo", "casa_vacanza", "villaggio_turistico", "resort", "b&b", "affittacamere"] as const;
-const TYPE_LABEL: Record<(typeof TYPE_OPTIONS)[number], string> = {
-  hotel: "Hotel",
-  agriturismo: "Agriturismo",
-  casa_vacanza: "Casa Vacanza",
-  villaggio_turistico: "Villaggio Turistico",
-  resort: "Resort",
-  "b&b": "B&B",
-  affittacamere: "Affittacamere",
+const THEME = {
+  chart: {
+    pie: { innerRadius: 60, outerRadius: 110, paddingAngle: 4, cornerRadius: 8 },
+    bar: { margin: { top: 8, right: 16, left: 0, bottom: 0 }, tickSize: 12 },
+    barWide: { margin: { top: 8, right: 16, left: 0, bottom: 30 }, tickSize: 12 },
+    line: { stroke: "#1e3a8a", strokeWidth: 2, dotRadius: 2 },
+  },
+  palette: {
+    barBlue: ["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"],
+    barOrange: ["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"],
+    solid: ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#eab308","#06b6d4"]
+  }
 };
+const solidColor = (i:number)=> THEME.palette.solid[i % THEME.palette.solid.length];
 
-/* ================== Helper PAR1 (calendario/serie) ================== */
-function daysOfMonthWindow(monthISO: string): Date[] {
-  const s = startOfMonth(parseISO(`${monthISO}-01`));
-  const e = endOfMonth(parseISO(`${monthISO}-01`));
-  const out: Date[] = [];
-  let d = s;
-  while (d <= e) { out.push(d); d = addDays(d, 1); }
-  return out;
+/* ---------- Utilità ---------- */
+function rand(min:number, max:number){ return Math.floor(Math.random()*(max-min+1))+min; }
+function shade(hex: string, percent: number) {
+  const m = hex.replace('#',''); const num = parseInt(m, 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + Math.round(255 * percent)));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + Math.round(255 * percent)));
+  const b = Math.min(255, Math.max(0, (num & 0x0000FF) + Math.round(255 * percent)));
+  return `#${(1 << 24 | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }
-function resampleToDays(series: { date: string; score: number }[], monthISO: string) {
-  const monthDays = daysOfMonthWindow(monthISO);
-  if (!series?.length) {
-    return monthDays.map(d => ({ dateLabel: format(d, "d MMM", { locale: it }), value: 0 }));
+function pressureFor(date: Date){
+  const dow = getDay(date);
+  const base = 60 + (date.getDate()*2);
+  const wkndBoost = (dow===0 || dow===6) ? 25 : (dow===5 ? 18 : 0);
+  return base + wkndBoost;
+}
+function adrFromCompetitors(date: Date, mode: Mode){
+  const base = 90 + (date.getDate()%7)*5;
+  return Math.round(base + (mode==="competitor"? 15:0));
+}
+function colorForPressure(p:number, pmin:number, pmax:number){
+  const spread = Math.max(1,(pmax-pmin));
+  const t = (p - pmin) / spread;
+  const stops = [[255,255,204],[255,237,160],[254,217,118],[254,178,76],[253,141,60],[252,78,42],[227,26,28]];
+  const idx = Math.min(stops.length-1, Math.max(0, Math.floor(t*(stops.length-1))));
+  const [r,g,b] = stops[idx];
+  return `rgb(${r},${g},${b})`;
+}
+function contrastColor(rgb:string){
+  const m = rgb.match(/rgb\((\d+),(\d+),(\d+)\)/);
+  if(!m) return "#000";
+  const r = +m[1], g=+m[2], b=+m[3];
+  const brightness = 0.299*r + 0.587*g + 0.114*b;
+  return brightness < 150 ? "#fff" : "#000";
+}
+function safeParseMonthISO(v:string|undefined|null, warnings:string[]): string{
+  const now = new Date();
+  const def = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+  if(!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)){ warnings.push("Mese non valido: fallback al mese corrente"); return def; }
+  return v;
+}
+function safeDaysOfMonth(monthISO:string, warnings:string[]): Date[]{
+  try{
+    const d = parseISO(monthISO);
+    return eachDayOfInterval({start: startOfMonth(d), end: endOfMonth(d)});
+  }catch{
+    warnings.push("Errore nel parsing data: fallback mese corrente");
+    const now = new Date();
+    return eachDayOfInterval({start: startOfMonth(now), end: endOfMonth(now)});
   }
-  const m = new Map<string, number>();
-  series.forEach(p => m.set(p.date.slice(0, 10), Number(p.score) || 0));
-  let last = 0;
-  return monthDays.map(d => {
-    const iso = format(d, "yyyy-MM-dd");
-    if (m.has(iso)) last = m.get(iso)!;
-    return { dateLabel: format(d, "d MMM", { locale: it }), value: last };
-  });
 }
-function daysBetween(fromISO: string, toISO: string) {
-  const s = parseISO(fromISO), e = parseISO(toISO);
-  const out: Date[] = [];
-  let d = s;
-  while (d <= e) { out.push(d); d = addDays(d, 1); }
-  return out;
+function safeRadius(r:number, warnings:string[]): number{
+  if(!(RADIUS_OPTIONS as readonly number[]).includes(r)){ warnings.push("Raggio non valido: fallback 20km"); return 20; }
+  return r;
 }
-function resampleToRange(series: { date: string; score: number }[], fromISO: string, toISO: string) {
-  const days = daysBetween(fromISO, toISO);
-  if (!series?.length) {
-    return days.map(d => ({ dateLabel: format(d, "d MMM", { locale: it }), value: 0 }));
+function safeTypes(ts:string[], warnings:string[]): string[]{
+  if(!Array.isArray(ts) || ts.length===0){ warnings.push("Nessuna tipologia selezionata: fallback a Hotel"); return ["hotel"]; }
+  return ts.filter(t=> (STRUCTURE_TYPES as readonly string[]).includes(t));
+}
+function parseListParam(s?: string | null) { if (!s) return []; return s.split(",").map(decodeURIComponent).map(v => v.trim()).filter(Boolean); }
+function parseNumParam(s?: string | null, def = 0) { const n = Number(s); return Number.isFinite(n) ? n : def; }
+function makeShareUrl(pathname: string, opts: {
+  q: string; r: number; m: string; t: string[]; mode: Mode;
+  dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("q", opts.q); params.set("r", String(opts.r)); params.set("m", opts.m.slice(0,7));
+  if (opts.t.length > 0 && opts.t.length < (STRUCTURE_TYPES as readonly string[]).length) {
+    params.set("t", opts.t.map(encodeURIComponent).join(","));
   }
-  const m = new Map<string, number>();
-  series.forEach(p => m.set(p.date.slice(0, 10), Number(p.score) || 0));
-  let last = 0;
-  return days.map(d => {
-    const iso = format(d, "yyyy-MM-dd");
-    if (m.has(iso)) last = m.get(iso)!;
-    return { dateLabel: format(d, "d MMM", { locale: it }), value: last };
-  });
+  params.set("mode", opts.mode);
+  if (opts.dataSource === "csv" && opts.csvUrl) { params.set("src","csv"); params.set("csv", opts.csvUrl); }
+  else if (opts.dataSource === "gsheet" && opts.gsId) { params.set("src","gsheet"); params.set("id",opts.gsId); if (opts.gsGid) params.set("gid",opts.gsGid); if (opts.gsSheet) params.set("sheet",opts.gsSheet); }
+  return `${pathname}?${params.toString()}`;
 }
-function movingAverage(arr: number[], k = 3) {
-  if (k <= 1) return arr.slice();
-  const half = Math.floor(k / 2);
-  return arr.map((_, i) => {
-    let s = 0, c = 0;
-    for (let j = i - half; j <= i + half; j++) {
-      if (j >= 0 && j < arr.length) { s += arr[j]; c++; }
-    }
-    return c ? s / c : arr[i];
-  });
+function replaceUrlWithState(
+  router: ReturnType<typeof useRouter>, pathname: string,
+  opts: { q: string; r: number; m: string; t: string[]; mode: Mode; dataSource: "none"|"csv"|"gsheet"; csvUrl: string; gsId: string; gsGid: string; gsSheet: string; }
+) {
+  const url = makeShareUrl(pathname, opts);
+  try { router.replace(url, { scroll: false }); } catch {}
+  try { if (typeof window !== "undefined") window.history.replaceState({}, "", url); } catch {}
+  return url;
 }
-function normalize0to100(values: number[]): number[] {
-  if (!values.length) return [];
-  const min = Math.min(...values), max = Math.max(...values);
-  const den = Math.max(1, max - min);
-  return values.map(v => Math.round(((v - min) / den) * 100));
+function isWithinNextDays(d: Date, n = 7) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const max   = new Date(today); max.setDate(today.getDate() + n);
+  const dd = new Date(d); dd.setHours(0,0,0,0);
+  return dd >= today && dd <= max;
 }
-function ensureHotelQ(q: string) {
-  return /hotel/i.test(q) ? q.trim() : `${q.trim()} hotel`;
-}
-function adrFromPressure(p: number, mode: Mode) {
-  const baseMin = 80, baseMax = 140;
-  const est = baseMin + (p / 100) * (baseMax - baseMin);
-  return Math.round(mode === "competitor" ? est * 1.10 : est);
-}
-export default function AppWidget() {
-  /* ======= Stato PAR1 invariato ======= */
-  const [dataSource] = useState<"none">("none"); // placeholder PAR1
-  const [query, setQuery] = useState("Firenze");
-  const [center, setCenter] = useState<{ lat: number; lng: number }>({ lat: 43.7696, lng: 11.2558 });
-  const [radius, setRadius] = useState<(typeof RADIUS_OPTIONS)[number]>(20);
-  const [monthISO, setMonthISO] = useState(format(new Date(), "yyyy-MM"));
-  const [wxProvider, setWxProvider] = useState<"open-meteo" | "openweather">("open-meteo");
 
-  const [types, setTypes] = useState<(typeof TYPE_OPTIONS)[number][]>(["hotel"]);
-  const [typesOpen, setTypesOpen] = useState(false);
-  const [typesTemp, setTypesTemp] = useState<(typeof TYPE_OPTIONS)[number][]>(["hotel"]);
+/* ---------- Default ---------- */
+const DEFAULT_QUERY = "Firenze";
+const DEFAULT_CENTER = { lat: 43.7696, lng: 11.2558 };
 
+/* ---------- Calendario Heatmap ---------- */
+function CalendarHeatmap({
+  monthDate,
+  data
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}}[]}){
+  const start = startOfMonth(monthDate);
+  const end = endOfMonth(monthDate);
+  const days = eachDayOfInterval({start, end});
+  const pvals = data.map(d=>d.pressure).filter(Number.isFinite);
+  const pmin = Math.min(...(pvals.length? pvals : [0]));
+  const pmax = Math.max(...(pvals.length? pvals : [1]));
+  const firstDow = (getDay(start)+6)%7;
+  const totalCells = firstDow + days.length;
+  const rows = Math.ceil(totalCells/7);
+
+  return (
+    <div className="w-full">
+      <div className="text-sm mb-1 grid grid-cols-7 gap-px text-center text-neutral-500">
+        {WEEKDAYS.map((w,i)=> <div key={i} className="py-1 font-medium">{w}</div>)}
+      </div>
+
+      <div className="grid grid-cols-7 gap-3">
+        {Array.from({length: rows*7}).map((_,i)=>{
+          const dayIndex = i - firstDow;
+          const d = days[dayIndex];
+          const dayData = d && data.find(x=> x.date.toDateString()===d.toDateString());
+          if(dayIndex<0 || !d){ return <div key={i} className="h-24 bg-white border border-black/20 rounded-2xl"/>; }
+          const isSat = ((getDay(d))===6);
+          const pressure = dayData?.pressure ?? 0;
+          const adr = dayData?.adr ?? 0;
+          const fill = colorForPressure(pressure,pmin,pmax);
+          const txtColor = contrastColor(fill);
+
+          return (
+            <div key={i} className="h-24 rounded-2xl border-2 border-black relative overflow-hidden">
+              <div className="absolute inset-x-0 top-0 h-1/2 bg-white px-2 flex items-center justify-between">
+                <span className={`text-sm ${isSat?"text-red-600":"text-black"}`}>{format(d,"d",{locale:it})}</span>
+                <span className={`text-xs ${isSat?"text-red-600":"text-neutral-600"}`}>{format(d,"EEE",{locale:it})}</span>
+              </div>
+
+              <div className="absolute inset-x-0 bottom-0 h-1/2 px-2 flex items-center justify-center" style={{background: fill}}>
+                <span className="font-bold" style={{color: txtColor}}>€{adr}</span>
+              </div>
+
+              {dayData?.holidayName ? (
+                <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
+              ) : null}
+
+              {dayData?.wx?.t != null ? (
+                <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">{dayData.wx.t.toFixed(0)}°C</div>
+              ) : null}
+
+              {dayData?.wx?.code != null && isWithinNextDays(d, 7) ? (
+                <div className="absolute bottom-1 left-1" title="Previsione">
+                  <WeatherIcon kind={codeToKind(dayData.wx.code)} className="h-[18px] w-[18px]" />
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-3 flex items-center justify-center gap-4">
+        <span className="text-xs">Bassa domanda</span>
+        <div className="h-2 w-48 rounded-full" style={{background:"linear-gradient(90deg, rgb(255,255,204), rgb(227,26,28))"}}/>
+        <span className="text-xs">Alta domanda</span>
+      </div>
+    </div>
+  );
+}
+/* ---------- Multi-select Tipologie ---------- */
+function TypesMultiSelect({
+  value,
+  onChange,
+  allTypes,
+  labels,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  allTypes: readonly string[];
+  labels: Record<string, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const toggle = (t: string) => {
+    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+  };
+
+  const summary =
+    value.length === 0 ? "Nessuna" :
+    value.length === allTypes.length ? "Tutte" :
+    `${value.length} selezionate`;
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
+      >
+        <span className="truncate">
+          {summary}
+          {value.length > 0 && value.length < allTypes.length ? (
+            <span className="ml-2 text-xs text-neutral-500">
+              {value.slice().sort().map((t) => labels[t] || t).slice(0, 2).join(", ")}
+              {value.length > 2 ? "…" : ""}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2">
+          <ul className="space-y-1 max-h-64 overflow-auto pr-1">
+            {allTypes.map((t) => {
+              const active = value.includes(t);
+              return (
+                <li key={t}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(t)}
+                    className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                    role="option"
+                    aria-selected={active}
+                  >
+                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}>
+                      {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                    </span>
+                    <span className="text-neutral-800">{labels[t] || t}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="mt-2 flex items-center justify-between border-t pt-2">
+            <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([])}>
+              Pulisci
+            </button>
+            <div className="space-x-2">
+              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([...allTypes])}>
+                Seleziona tutte
+              </button>
+              <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={() => setOpen(false)}>
+                Applica
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- APP ---------- */
+export default function App(){
+  const router = useRouter();
+  const search = useSearchParams();
+
+  // Avvisi (silenzio "raggio non valido" al primo mount)
+  const [notices, setNotices] = useState<string[]>([]);
+  const firstMountRef = useRef(true);
+
+  // Filtri UI
   const [mode, setMode] = useState<Mode>("zone");
+  const [query, setQuery] = useState(DEFAULT_QUERY);
+  const [radius, setRadius] = useState<number>(20);
+  const [monthISO, setMonthISO] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+  });
+  // Default richiesto: SOLO Hotel
+  const [types, setTypes] = useState<string[]>(["hotel"]);
 
-  // Toggle API (PAR1)
-  const [askTrend, setAskTrend] = useState(true);
-  const [askChannels, setAskChannels] = useState(false);
-  const [askProvenance, setAskProvenance] = useState(false);
-  const [askLOS, setAskLOS] = useState(false);
+  // Selettori SERP (risparmio query)
+  const [askTrend, setAskTrend] = useState<boolean>(true);
+  const [askRelated, setAskRelated] = useState<boolean>(false);
 
-  // Avanzate: intervallo personalizzato & smoothing (nuovo, opt-in)
-  const [rangeOpen, setRangeOpen] = useState(false);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [smooth3d, setSmooth3d] = useState(false);
+  // Sorgenti CSV/GS (opzionali)
+  const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
+  const [csvUrl, setCsvUrl] = useState("");
+  const [gsId, setGsId] = useState("");
+  const [gsSheet, setGsSheet] = useState("Sheet1");
+  const [gsGid, setGsGid] = useState("");
+  const [strictSheet, setStrictSheet] = useState(true);
 
-  // Dati
-  const [serpSeries, setSerpSeries] = useState<SerpResp["series"]>([]);
-  const [related, setRelated] = useState<RelatedBuckets | undefined>(undefined);
-  const [note, setNote] = useState<string | undefined>(undefined);
-  const [quota, setQuota] = useState<QuotaResp | null>(null);
+  const [rawRows, setRawRows] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  /* ======= Quota badge ======= */
-  async function fetchQuota() {
+  // Festività + Meteo
+  const [holidays, setHolidays] = useState<Record<string, string>>({});
+  const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
+
+  // Quota/badge
+  const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
+
+  // SERP buckets/serie
+  const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
+  const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
+  const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
+  const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
+
+  // Stato applicato
+  const [aQuery, setAQuery] = useState(query);
+  const [aRadius, setARadius] = useState(radius);
+  const [aMonthISO, setAMonthISO] = useState(monthISO);
+  const [aTypes, setATypes] = useState<string[]>(types);
+  const [aMode, setAMode] = useState<Mode>(mode);
+  const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>(DEFAULT_CENTER);
+
+  const hasChanges = useMemo(() =>
+    aQuery !== query || aRadius !== radius || aMonthISO !== monthISO || aMode !== mode || aTypes.join(",") !== types.join(",") || askTrend !== true || askRelated !== false,
+  [aQuery, query, aRadius, radius, aMonthISO, monthISO, aMode, mode, aTypes, types, askTrend, askRelated]);
+
+  // Normalizzazione
+  const normalized: Normalized = useMemo(()=>{
+    const warnings: string[] = [];
+    const center = aCenter;
+    const safeR = safeRadius(aRadius, warnings);
+    const safeT = safeTypes(aTypes, warnings);
+    const safeMonthISO = safeParseMonthISO(aMonthISO, warnings);
+    const safeDays = safeDaysOfMonth(safeMonthISO, warnings);
+    return { warnings, safeMonthISO, safeDays, center: center ?? null, safeR, safeT, isBlocked: !center };
+  }, [aMonthISO, aRadius, aTypes, aCenter]);
+
+  // Avvisi (silenzia “Raggio non valido…” al primo render)
+  useEffect(() => {
+    let list = normalized.warnings.slice();
+    if (firstMountRef.current) list = list.filter(w => !w.toLowerCase().includes("raggio non valido"));
+    setNotices(prev => (prev.join("|") === list.join("|") ? prev : list));
+    if (firstMountRef.current) firstMountRef.current = false;
+  }, [normalized.warnings]);
+
+  // Leggi stato da URL al mount
+  useEffect(() => {
+    if (!search) return;
+    const q = search.get("q") ?? DEFAULT_QUERY;
+    const r = parseNumParam(search.get("r"), radius);
+    const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
+    const rawT = parseListParam(search.get("t"));
+    const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
+    const t = validT.length ? validT : ["hotel"]; // default solo hotel
+    const modeParam: Mode = (search.get("mode") === "competitor" ? "competitor" : "zone");
+    setQuery(q); setRadius(r); setMonthISO(m); setTypes(t); setMode(modeParam);
+    setAQuery(q); setARadius(r); setAMonthISO(m); setATypes(t); setAMode(modeParam);
+    setACenter(DEFAULT_CENTER);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* ----- Geocoding: input → coord ----- */
+  const handleSearchLocation = useCallback(async () => {
+    const q = (query || "").trim();
+    if (!q) return;
     try {
-      const r = await fetch("/api/serp/quota", { cache: "no-store" });
-      const j: QuotaResp = await r.json();
-      setQuota(j);
-    } catch { /* ignore */ }
-  }
-  const quotaBadge = useMemo(() => {
-    if (!quota?.ok) return "—/—";
-    const left = quota.total_searches_left ?? quota.plan_searches_left;
-    const used = quota.this_month_usage;
-    return (left == null || used == null) ? "—/—" : `${used}/${used + left} (rimasti ${left})`;
-  }, [quota]);
+      const res = await fetch(`/api/external/geocode?q=${encodeURIComponent(q)}`);
+      const j = await res.json();
+      const item = Array.isArray(j?.results) ? j.results[0] : j?.result || j;
+      const lat = Number(item?.lat ?? item?.latitude);
+      const lng = Number(item?.lng ?? item?.longitude);
+      const name = String(item?.name ?? item?.display_name ?? q);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        setACenter({ lat, lng }); setAQuery(name);
+        setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
+        replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
+          { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet });
+      } else { alert("Località non trovata"); }
+    } catch { alert("Errore di geocoding"); }
+  }, [query, radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
 
-  /* ======= URL share (PAR1 compat) ======= */
-  function persistUrl() {
-    const url = new URL(globalThis?.location?.href || "");
-    const p = url.searchParams;
-    p.set("q", query); p.set("r", String(radius)); p.set("m", monthISO);
-    p.set("mode", mode);
-    p.set("trend", askTrend ? "1" : "0");
-    p.set("ch", askChannels ? "1" : "0");
-    p.set("prov", askProvenance ? "1" : "0");
-    p.set("los", askLOS ? "1" : "0");
-    p.set("t", types.join(","));
-    if (fromDate && toDate) { p.set("from", fromDate); p.set("to", toDate); } else { p.delete("from"); p.delete("to"); }
-    try { history.replaceState({}, "", `${url.pathname}?${p.toString()}`); } catch {}
+  /* ----- Reverse geocoding (click mappa) ----- */
+  const onMapClick = useCallback(async ({ lat, lng }: { lat: number; lng: number }) => {
+    let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    try { const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`); const j = r.ok ? await r.json() : null; if (j) name = String(j?.name ?? j?.display_name ?? name); } catch {}
+    setQuery(name);
+    setACenter({ lat, lng }); setAQuery(name);
+    setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
+    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
+      { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet });
+  }, [radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, router]);
+
+  /* ----- Festività IT ----- */
+  useEffect(() => {
+    const y = Number(aMonthISO.slice(0, 4));
+    if (!y) return;
+    fetch(`/api/external/holidays?year=${y}&country=IT`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok) return;
+        const map: Record<string, string> = {};
+        (j.holidays || []).forEach((h: any) => { map[h.date] = h.localName || h.name; });
+        setHolidays(map);
+      })
+      .catch(() => {});
+  }, [aMonthISO]);
+
+  /* ----- Meteo ----- */
+  useEffect(() => {
+    if (!normalized.center || !aMonthISO) { setWeatherByDate({}); return; }
+    const { lat, lng } = normalized.center;
+    fetch(`/api/external/weather?lat=${lat}&lng=${lng}&monthISO=${encodeURIComponent(aMonthISO)}`)
+      .then(r => r.json())
+      .then((j) => {
+        if (!j?.ok || !j.weather?.daily) { setWeatherByDate({}); return; }
+        const daily = j.weather.daily;
+        const out: Record<string, { t?: number; p?: number; code?: number }> = {};
+        (daily.time || []).forEach((d: string, i: number) => {
+          out[d] = {
+            t: Array.isArray(daily.temperature_2m_mean) ? daily.temperature_2m_mean[i] : undefined,
+            p: Array.isArray(daily.precipitation_sum) ? daily.precipitation_sum[i] : undefined,
+            code: Array.isArray(daily.weathercode) ? daily.weathercode[i] : undefined,
+          };
+        });
+        setWeatherByDate(out);
+      })
+      .catch(() => setWeatherByDate({}));
+  }, [normalized.center, aMonthISO]);
+
+  /* ----- Utility: ricampionamento giornaliero (mese-1, mese, mese+1) ----- */
+  function resampleToDays(weekly: Array<{date:string; score:number}>, monthISO: string) {
+    const monthDate = parseISO(monthISO);
+    const prevStart = startOfMonth(new Date(monthDate.getFullYear(), monthDate.getMonth()-1, 1));
+    const nextEnd   = endOfMonth(new Date(monthDate.getFullYear(), monthDate.getMonth()+1, 1));
+    const days = eachDayOfInterval({ start: prevStart, end: nextEnd });
+    const pts = weekly.map(p => ({ t: new Date(p.date).getTime(), v: p.score })).sort((a,b)=> a.t-b.t);
+    if (pts.length === 0) return days.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
+    return days.map(d => {
+      const t = d.getTime();
+      let i = 0;
+      while (i < pts.length && pts[i].t <= t) i++;
+      if (i === 0)  return { dateLabel: format(d,"d MMM",{locale:it}), value: pts[0].v };
+      if (i >= pts.length) return { dateLabel: format(d,"d MMM",{locale:it}), value: pts[pts.length-1].v };
+      const p0 = pts[i-1], p1 = pts[i];
+      const ratio = (t - p0.t) / (p1.t - p0.t);
+      const val = Math.round(p0.v + (p1.v - p0.v) * Math.max(0, Math.min(1, ratio)));
+      return { dateLabel: format(d,"d MMM",{locale:it}), value: val };
+    });
   }
 
-  useEffect(() => { fetchQuota(); /* on mount */ }, []);
-  /* ======= SERP fetch ======= */
-  async function fetchSerp() {
-    setLoading(true);
+  /* ----- Fetch SERP: serie & buckets + merge quota ----- */
+  const fetchSerp = useCallback(async () => {
+    if (!aCenter || (!askTrend && !askRelated)) return;
+
     try {
-      // mese del calendario come fallback
-      const mStart = format(startOfMonth(parseISO(`${monthISO}-01`)), "yyyy-MM-dd");
-      const mEnd   = format(endOfMonth(parseISO(`${monthISO}-01`)),  "yyyy-MM-dd");
-      // se attivo il range, uso quello
-      const dFrom = (fromDate && toDate) ? fromDate : mStart;
-      const dTo   = (fromDate && toDate) ? toDate   : mEnd;
+      const params = new URLSearchParams({
+        q: `${aQuery} hotel`,
+        lat: String(aCenter.lat),
+        lng: String(aCenter.lng),
+        monthISO: aMonthISO,
+        date: "today 12-m",
+        cat: "203",
+        parts: [askTrend ? "trend" : "", askRelated ? "related" : ""].filter(Boolean).join(","),
+      });
 
-      const parts: string[] = [];
-      if (askTrend) parts.push("trend");
-      if (askChannels || askProvenance || askLOS) parts.push("related");
+      const r = await fetch(`/api/serp/demand?${params.toString()}`);
+      const j: SerpDemandPayload = await r.json();
 
-      const u = new URLSearchParams();
-      u.set("q", ensureHotelQ(query));
-      u.set("lat", String(center.lat));
-      u.set("lng", String(center.lng));
-      u.set("date", `${dFrom} ${dTo}`);
-      u.set("cat", "203");
-      u.set("parts", parts.join(",") || "trend");
-      if (askChannels)   u.set("ch", "1");
-      if (askProvenance) u.set("prov", "1");
-      if (askLOS)        u.set("los", "1");
-
-      const r = await fetch(`/api/serp/demand?${u.toString()}`, { cache: "no-store" });
-      const j: SerpResp = await r.json();
-
-      if (!j.ok) {
-        setSerpSeries([]); setRelated(undefined);
-        setNote(j.note || "Nessun dato disponibile per i parametri selezionati.");
-      } else {
-        setSerpSeries(Array.isArray(j.series) ? j.series : []);
-        setRelated(j.related); setNote(j.note);
+      if (!j?.ok) {
+        setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."])));
+        return;
       }
+
+      // Badge quota: prova da usage; poi merge con /api/serp/quota
+      let badge = {
+        used: j.usage?.this_month_usage,
+        total: j.usage?.searches_per_month,
+        left: j.usage?.plan_searches_left
+      } as any;
+
+      // Serie → ricampionamento
+      if (askTrend && Array.isArray(j.series)) {
+        setSerpTrend(resampleToDays(j.series, aMonthISO));
+      }
+
+      // Buckets
+      if (askRelated && j.related) {
+        const rel = j.related;
+        setSerpChannels([
+          { channel: "Booking",  value: rel.channels.find((x)=>x.label==="booking")?.value || 0 },
+          { channel: "Airbnb",   value: rel.channels.find((x)=>x.label==="airbnb")?.value || 0 },
+          { channel: "Diretto",  value: rel.channels.find((x)=>x.label==="diretto")?.value || 0 },
+          { channel: "Expedia",  value: rel.channels.find((x)=>x.label==="expedia")?.value || 0 },
+          { channel: "Altro",    value: rel.channels.find((x)=>x.label==="altro")?.value || 0 },
+        ]);
+        setSerpOrigins([
+          { name: "Italia",   value: rel.provenance.find((x)=>x.label==="italia")?.value || 0 },
+          { name: "Germania", value: rel.provenance.find((x)=>x.label==="germania")?.value || 0 },
+          { name: "Francia",  value: rel.provenance.find((x)=>x.label==="francia")?.value || 0 },
+          { name: "USA",      value: rel.provenance.find((x)=>x.label==="usa")?.value || 0 },
+          { name: "UK",       value: rel.provenance.find((x)=>x.label==="uk")?.value || 0 },
+        ]);
+        setSerpLOS([
+          { bucket: "1 notte",  value: rel.los.find((x)=>x.label==="1 notte")?.value || 0 },
+          { bucket: "2-3 notti",value: rel.los.find((x)=>x.label==="2-3 notti")?.value || 0 },
+          { bucket: "4-6 notti",value: rel.los.find((x)=>x.label==="4-6 notti")?.value || 0 },
+          { bucket: "7+ notti", value: rel.los.find((x)=>x.label==="7+ notti")?.value || 0 },
+        ]);
+      }
+
+      if (j.note) setNotices(prev => Array.from(new Set([...prev, j.note!])));
+
+      // Merge badge con /api/serp/quota (unifica dati mancanti)
+      try {
+        const q = await fetch("/api/serp/quota").then(r=>r.json());
+        if (q?.ok) {
+          badge.used  = badge.used  ?? q.this_month_usage;
+          badge.total = badge.total ?? q.raw?.searches_per_month ?? q.searches_per_month;
+          badge.left  = badge.left  ?? q.plan_searches_left ?? q.raw?.plan_searches_left;
+        }
+      } catch {}
+      setSerpUsage(badge);
     } catch {
-      setSerpSeries([]); setRelated(undefined); setNote("Errore nel recupero dati.");
-    } finally {
-      setLoading(false);
-      persistUrl();
-      fetchQuota();
+      setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
     }
-  }
+  }, [aQuery, aCenter, aMonthISO, askTrend, askRelated]);
 
-  /* ======= Derivate: calendario dal mese (ricampionamento giornaliero) ======= */
-  const monthDays = useMemo(() => daysOfMonthWindow(monthISO), [monthISO]);
-  const trendMonth = useMemo(() => resampleToDays(serpSeries, monthISO), [serpSeries, monthISO]);
-  const pressures = useMemo(() => normalize0to100(trendMonth.map(p => p.value || 0)), [trendMonth]);
-  const calendarData = useMemo(() => monthDays.map((d, i) => ({
-    dateISO: format(d, "yyyy-MM-dd"),
-    day: format(d, "d", { locale: it }),
-    pressure: pressures[i] || 0,
-    adr: adrFromPressure(pressures[i] || 0, mode),
-  })), [monthDays, pressures, mode]);
+  useEffect(() => { fetchSerp(); }, [fetchSerp]);
 
-  /* ======= Derivate: grafico in basso (range o mese) + smoothing opzionale ======= */
-  const trendRangeBase = useMemo(() => {
-    if (fromDate && toDate) return resampleToRange(serpSeries, fromDate, toDate);
-    return resampleToDays(serpSeries, monthISO);
-  }, [serpSeries, fromDate, toDate, monthISO]);
+  // CSV / GSheet loader (breve)
+  useEffect(() => {
+    if (dataSource === "none") return;
+    setLoading(true);
+    (async () => {
+      try {
+        let url = "";
+        if (dataSource === "csv") url = csvUrl.trim();
+        else {
+          if (!gsId) throw new Error("Sheet ID mancante");
+          url = strictSheet
+            ? `https://docs.google.com/spreadsheets/d/${gsId}/export?format=csv&gid=${encodeURIComponent(gsGid||"0")}`
+            : `https://docs.google.com/spreadsheets/d/${gsId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(gsSheet||"Sheet1")}`;
+        }
+        const txt = await fetch(url).then(r=>r.text());
+        const lines = txt.split(/\r?\n/).filter(Boolean);
+        if (lines.length < 2) { setRawRows([]); return; }
+        const delim = lines[0].includes(";") ? ";" : ",";
+        const headers = lines[0].split(delim).map(h=>h.toLowerCase().trim());
+        const rows = lines.slice(1).map(line=>{
+          const cells = line.split(delim);
+          const obj: any = {};
+          headers.forEach((h,i)=>obj[h]=cells[i]??"");
+          return obj;
+        });
+        const toNum = (v:string)=> Number(String(v).replace(",","."));
+        const toD = (v:string)=> new Date(v);
+        const norm: DataRow[] = rows.map((r:any)=>({
+          date: toD(r.date||r.data||r.giorno),
+          adr: toNum(r.adr||r.adr_medio||r.prezzo_medio)||0,
+          occ: toNum(r.occ||r.occupazione||r.occ_rate)||0,
+          los: toNum(r.los||r.notti||r.soggiorno)||0,
+          channel: r.channel||r.canale||"Altro",
+          provenance: r.provenance||r.country||r.nazione||"Altro",
+          type: r.type||r.tipo||"",
+          lat: toNum(r.lat||r.latitude)||0,
+          lng: toNum(r.lng||r.longitude)||0,
+        })).filter(r=>!!r.date);
+        setRawRows(norm);
+      } catch (e:any) {
+        setLoadError(String(e?.message||e));
+      } finally { setLoading(false); }
+    })();
+  }, [dataSource, csvUrl, gsId, gsGid, gsSheet, strictSheet]);
 
-  const trendRange = useMemo(() => {
-    if (!smooth3d) return trendRangeBase;
-    const sm = movingAverage(trendRangeBase.map(x => x.value), 3);
-    return trendRangeBase.map((p, i) => ({ ...p, value: sm[i] }));
-  }, [trendRangeBase, smooth3d]);
+  /* ----- Derivate per UI ----- */
+  const monthDate = useMemo(()=> {
+    if(!aMonthISO) return new Date();
+    try { return parseISO(aMonthISO); } catch { return new Date(); }
+  }, [aMonthISO]);
 
-  const disabledGenerate = loading || !query.trim();
+  // domanda (line chart): se non arriva SERP, usa fallback
+  const demand = useMemo(()=> (serpTrend.length>0
+    ? serpTrend
+    : safeDaysOfMonth(aMonthISO,[]).map(d=> ({ dateLabel: format(d,"d MMM",{locale:it}), value: pressureFor(d)+rand(-10,10) }))
+  ), [serpTrend, aMonthISO]);
+
+  // ADR factors per tipologia
+  const ADR_FACTORS: Record<string, number> = {
+    hotel: 1.00, resort: 1.15, "casa_vacanza": 0.95, agriturismo: 0.92, "b&b": 0.88,
+    affittacamere: 0.90, "villaggio_turistico": 1.05,
+  };
+  const selectedFactor = (aTypes.length ? aTypes : ["hotel"])
+    .map(t => ADR_FACTORS[t] ?? 1.0)
+    .reduce((a,b)=> a+b, 0) / (aTypes.length || 1);
+
+  const calendarData = useMemo(() => {
+    const base: Array<{date: Date; pressure:number; adr:number; holidayName?:string; wx?:{t?:number;p?:number;code?:number}}> = [];
+    const days = safeDaysOfMonth(aMonthISO, []);
+    for (const d of days) {
+      const iso = format(d,"yyyy-MM-dd");
+      // prendo valore domanda del grafico (già ricampionato)
+      const demandVal = demand.find(x => x.dateLabel === format(d,"d MMM",{locale:it}))?.value;
+      const press = demandVal != null ? demandVal : pressureFor(d);
+      const adrBase = adrFromCompetitors(d, aMode);
+      const adr = Math.round(adrBase * selectedFactor);
+      base.push({
+        date: d,
+        pressure: press,
+        adr,
+        holidayName: holidays[iso],
+        wx: weatherByDate[iso] || undefined,
+      });
+    }
+    return base;
+  }, [aMonthISO, aMode, aTypes, holidays, weatherByDate, demand]);
+
+  const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : [
+    { name:"Italia", value: 42 },{ name:"Germania", value: 22 },{ name:"Francia", value: 14 },{ name:"USA", value: 10 },{ name:"UK", value: 12 }
+  ]), [serpOrigins]);
+
+  const los = useMemo(()=> (serpLOS.length>0 ? serpLOS : [
+    { bucket:"1 notte", value: 15 },{ bucket:"2-3 notti", value: 46 },{ bucket:"4-6 notti", value: 29 },{ bucket:"7+ notti", value: 10 },
+  ]), [serpLOS]);
+
+  const channels = useMemo(()=> (serpChannels.length>0 ? serpChannels : [
+    { channel:"Booking", value:36 },{ channel:"Airbnb", value:26 },{ channel:"Diretto", value:22 },{ channel:"Expedia", value:11 },{ channel:"Altro", value:5 },
+  ]), [serpChannels]);
+
+  const meteoCovered = useMemo(
+    () => calendarData.filter((d: any) => d?.wx?.code != null && isWithinNextDays(d.date, 7)).length,
+    [calendarData]
+  );
+
+  // Reset
+  const handleReset = useCallback(() => {
+    const now = new Date();
+    const m = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+    setQuery(DEFAULT_QUERY); setRadius(20); setMonthISO(m); setTypes(["hotel"]); setMode("zone");
+    setAQuery(DEFAULT_QUERY); setARadius(20); setAMonthISO(m); setATypes(["hotel"]); setAMode("zone"); setACenter(DEFAULT_CENTER);
+    setNotices([]); setWeatherByDate({});
+    setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]); setSerpTrend([]);
+    setSerpUsage(null); setAskTrend(true); setAskRelated(false);
+    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), {
+      q: DEFAULT_QUERY, r: 20, m, t: ["hotel"], mode: "zone", dataSource, csvUrl, gsId, gsGid, gsSheet
+    });
+  }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
+  // Share link
+  const [shareUrl, setShareUrl] = useState<string>("");
+
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Topbar PAR1 */}
-      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="text-sm font-semibold">Widget Analisi Domanda – Hospitality</div>
-          <div className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-            SERP {quotaBadge}
+      {/* Topbar */}
+      <div className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">Widget Analisi Domanda – Hospitality</h1>
+            {serpUsage && (serpUsage.total || serpUsage.left || serpUsage.used) && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border bg-white">
+                <TrendingUp className="h-3.5 w-3.5" />
+                SERP {serpUsage.used ?? "?"}/{serpUsage.total ?? "?"} (rimasti {serpUsage.left ?? "?"})
+              </span>
+            )}
           </div>
-          <div className="flex-1" />
-          {note && <div className="text-[12px] text-slate-500">{note}</div>}
+          <button
+            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+            onClick={handleReset}
+            title="Reset"
+          >
+            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
+          </button>
         </div>
-      </header>
+      </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Colonna sinistra (PAR1) */}
-        <aside className="lg:col-span-4 space-y-3">
-          {/* Località, raggio, mese, meteo */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <div className="text-sm font-semibold">Località</div>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 h-10 px-3 rounded-xl border"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder="Es. Firenze"
-              />
-              <button
-                className="px-3 h-10 rounded-xl border bg-white"
-                onClick={() => fetch(`/api/external/geocode?q=${encodeURIComponent(query)}`).then(r=>r.json()).then(j=>{
-                  const lat = Number(j?.lat), lng = Number(j?.lon);
-                  if (Number.isFinite(lat) && Number.isFinite(lng)) setCenter({lat,lng});
-                }).catch(()=>{})}
-              >Cerca</button>
+      {/* Body */}
+      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+        {/* SIDEBAR */}
+        <aside className="space-y-6">
+          {/* Sorgente dati opzionale */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="text-sm font-semibold">Sorgente Dati</div>
+            <div className="flex items-center gap-2">
+              <label className="w-28 text-sm text-slate-700">Tipo</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+                <option value="none">Nessuna (demo)</option>
+                <option value="csv">CSV URL</option>
+                <option value="gsheet">Google Sheet</option>
+              </select>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="text-xs text-slate-600 mb-1">Raggio</div>
-                <select
-                  className="h-9 px-2 rounded-xl border w-full"
-                  value={radius}
-                  onChange={e => setRadius(Number(e.target.value) as any)}
-                >
-                  {RADIUS_OPTIONS.map(r => <option key={r} value={r}>{r} km</option>)}
-                </select>
+            {dataSource === "csv" && (
+              <div className="flex items-center gap-2">
+                <label className="w-28 text-sm text-slate-700">CSV URL</label>
+                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
               </div>
-              <div>
-                <div className="text-xs text-slate-600 mb-1">Mese</div>
+            )}
+            {dataSource === "gsheet" && (
+              <>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Sheet ID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Nome foglio</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Sheet GID</label>
+                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-sm text-slate-700">Modalità</label>
+                  <div className="flex items-center gap-2">
+                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
+                  </div>
+                </div>
+              </>
+            )}
+            {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
+            {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
+            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+          </section>
+
+          {/* Località / Raggio / Mese / Tipologie */}
+          <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Località</label>
+              <div className="flex gap-2 w-full">
                 <input
-                  type="month"
-                  className="h-9 px-2 rounded-xl border w-full"
-                  value={monthISO}
-                  onChange={e => setMonthISO(e.currentTarget.value)}
+                  className="border rounded px-2 h-9 w-full"
+                  placeholder="Città o indirizzo"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSearchLocation(); } }}
                 />
+                <button type="button" className="px-3 h-9 rounded border bg-white hover:bg-slate-50" onClick={handleSearchLocation}>
+                  Cerca
+                </button>
               </div>
             </div>
 
-            <div>
-              <div className="text-xs text-slate-600 mb-1">Meteo</div>
-              <select
-                className="h-9 px-2 rounded-xl border w-full"
-                value={wxProvider}
-                onChange={e => setWxProvider(e.target.value as any)}
-              >
-                <option value="open-meteo">Open-Meteo (default)</option>
-                <option value="openweather">OpenWeather (se configurato)</option>
+            <div className="flex items-center gap-2">
+              <Route className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Raggio</label>
+              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
+                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
 
-            {/* Tipologie (multi-select persistente) */}
-            <div>
-              <div className="text-xs text-slate-600 mb-1">Tipologie</div>
-              <button
-                className="h-9 px-3 rounded-xl border bg-slate-50 w-full text-left"
-                onClick={() => setTypesOpen(v => !v)}
-              >
-                {types.map(t => TYPE_LABEL[t]).join(", ") || "Seleziona…"}
-              </button>
-              {typesOpen && (
-                <div className="mt-2 p-3 border rounded-xl space-y-2">
-                  {TYPE_OPTIONS.map(t => (
-                    <label key={t} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={typesTemp.includes(t)}
-                        onChange={e=>{
-                          if (e.currentTarget.checked) setTypesTemp([...typesTemp, t]);
-                          else setTypesTemp(typesTemp.filter(x => x !== t));
-                        }}
-                      />
-                      {TYPE_LABEL[t]}
-                    </label>
-                  ))}
-                  <div className="flex gap-2 pt-2">
-                    <button className="h-8 px-3 rounded-lg bg-indigo-600 text-white text-xs"
-                      onClick={()=>{ setTypes(typesTemp); setTypesOpen(false); }}
-                    >Applica</button>
-                    <button className="h-8 px-3 rounded-lg bg-slate-200 text-xs"
-                      onClick={()=>{ setTypesTemp(types); setTypesOpen(false); }}
-                    >Annulla</button>
-                  </div>
-                </div>
-              )}
-              <p className="text-[11px] text-slate-500 mt-1">Default: Hotel.</p>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-slate-700"/>
+              <label className="w-28 text-sm text-slate-700">Mese</label>
+              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
             </div>
 
-            {/* Dati da chiedere alle API */}
-            <div className="pt-1">
-              <div className="text-sm font-semibold mb-1">Dati da chiedere alle API</div>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={askTrend} onChange={e=>setAskTrend(e.currentTarget.checked)} />
-                Andamento domanda (Google Trends)
+            {/* Tipologie */}
+            <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels} />
+
+            {/* Selettori SERP */}
+            <div className="rounded-xl border bg-white p-3">
+              <div className="text-sm font-semibold mb-2">Dati da chiedere alle API</div>
+              <label className="flex items-center gap-2 text-sm mb-1">
+                <input type="checkbox" checked={askTrend} onChange={(e)=> setAskTrend(e.currentTarget.checked)} />
+                <span>Domanda (Google Trends)</span>
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={askChannels} onChange={e=>setAskChannels(e.currentTarget.checked)} />
-                Canali di vendita
+                <input type="checkbox" checked={askRelated} onChange={(e)=> setAskRelated(e.currentTarget.checked)} />
+                <span>Segmenti (canali, provenienza, LOS)</span>
               </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={askProvenance} onChange={e=>setAskProvenance(e.currentTarget.checked)} />
-                Provenienza clienti
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={askLOS} onChange={e=>setAskLOS(e.currentTarget.checked)} />
-                Durata media soggiorno (LOS)
-              </label>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Spunta solo i grafici che ti servono: risparmi query su SerpAPI.
+              <p className="mt-2 text-[11px] text-slate-500">
+                Suggerito: attiva <b>Domanda</b> sempre, abilita <b>Segmenti</b> solo quando serve (risparmi query).
               </p>
             </div>
 
-            {/* Modalità */}
-            <div className="pt-1">
-              <div className="text-sm font-semibold mb-1">Modalità</div>
-              <div className="flex gap-2">
-                <button
-                  className={`h-9 px-3 rounded-xl text-sm border ${mode==='zone'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
-                  onClick={() => setMode('zone')}
-                >Zona</button>
-                <button
-                  className={`h-9 px-3 rounded-xl text-sm border ${mode==='competitor'?'bg-indigo-600 text-white border-indigo-600':'bg-white'}`}
-                  onClick={() => setMode('competitor')}
-                >Competitor</button>
+            {/* Modalità + Pulsante + Link */}
+            <div className="grid grid-cols-1 gap-3 mt-2">
+              <div className="flex items-center gap-3">
+                <label className="w-28 text-sm text-slate-700">Modalità</label>
+                <div className="inline-flex rounded-xl border overflow-hidden">
+                  <button className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("zone")}>Zona</button>
+                  <button className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`} onClick={()=> setMode("competitor")}>Competitor</button>
+                </div>
               </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Zona = baseline dell’area. Competitor = stessa curva ma ADR più “aggressivo”.
-              </p>
-            </div>
 
-            {/* Avanzate: periodo personalizzato (solo grafico) */}
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => setRangeOpen(v => !v)}
-                className="text-xs text-slate-600 underline underline-offset-2"
-              >
-                Avanzate: periodo personalizzato (solo grafico)
-              </button>
-              {rangeOpen && (
-                <div className="mt-2 grid gap-2 rounded-lg border p-2 bg-slate-50/60">
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="text-[11px] text-slate-600">Da</label>
-                    <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} className="h-8 px-2 rounded-md border text-sm" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="text-[11px] text-slate-600">A</label>
-                    <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} className="h-8 px-2 rounded-md border text-sm" />
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      className="px-2 h-7 rounded-md border text-[11px]"
-                      onClick={() => {
-                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
-                        const from = format(addDays(today, -30),'yyyy-MM-dd');
-                        setFromDate(from); setToDate(to);
-                      }}
-                    >Ultimi 30gg</button>
-                    <button
-                      type="button"
-                      className="px-2 h-7 rounded-md border text-[11px]"
-                      onClick={() => {
-                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
-                        const from = format(addDays(today, -90),'yyyy-MM-dd');
-                        setFromDate(from); setToDate(to);
-                      }}
-                    >90gg</button>
-                    <button
-                      type="button"
-                      className="px-2 h-7 rounded-md border text-[11px]"
-                      onClick={() => {
-                        const today = new Date(); const to = format(today,'yyyy-MM-dd');
-                        const from = format(addDays(today, -365),'yyyy-MM-dd');
-                        setFromDate(from); setToDate(to);
-                      }}
-                    >365gg</button>
-                  </div>
-                  <label className="mt-2 flex items-center gap-2 text-[12px]">
-                    <input type="checkbox" checked={smooth3d} onChange={e=>setSmooth3d(e.currentTarget.checked)} />
-                    Media mobile 3 giorni (grafico)
-                  </label>
-                  <p className="text-[11px] text-slate-500">
-                    Il calendario resta mensile; il range qui influenza solo “Andamento Domanda”.
-                  </p>
-                </div>
-              )}
-            </div>
+              <div>
+                <button
+                  className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!hasChanges}
+                  onClick={() => {
+                    const next = { q: query, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet };
+                    setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
+                    if (!aCenter) setACenter(DEFAULT_CENTER);
+                    const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
+                    setShareUrl(url);
+                    // chiama subito le SERP (in base ai checkbox)
+                    fetchSerp();
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2"/>
+                  {hasChanges ? "Genera Analisi" : "Aggiornato"}
+                </button>
 
-            {/* CTA */}
-            <div className="pt-2 flex gap-2">
-              <button
-                onClick={fetchSerp}
-                disabled={disabledGenerate}
-                className={`flex-1 h-10 rounded-2xl text-white text-sm font-semibold ${disabledGenerate?'bg-slate-300':'bg-indigo-600 hover:bg-indigo-700'}`}
-              >
-                {loading ? 'Elaboro…' : 'Genera Analisi'}
-              </button>
-              <button
-                className="h-10 px-3 rounded-2xl text-sm border bg-white"
-                onClick={()=>{
-                  setQuery("Firenze"); setCenter({lat:43.7696, lng:11.2558}); setRadius(20);
-                  setMonthISO(format(new Date(),"yyyy-MM")); setWxProvider("open-meteo");
-                  setTypes(["hotel"]); setTypesOpen(false); setTypesTemp(["hotel"]);
-                  setMode("zone"); setAskTrend(true); setAskChannels(false); setAskProvenance(false); setAskLOS(false);
-                  setFromDate(""); setToDate(""); setSmooth3d(false);
-                  setSerpSeries([]); setRelated(undefined); setNote(undefined);
-                  persistUrl();
-                }}
-              >
-                Reset
-              </button>
+                {shareUrl && (
+                  <div className="mt-2">
+                    <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
+                    <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs" value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl} readOnly onFocus={(e)=> e.currentTarget.select()} />
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          </section>
+
+          {/* Avvisi */}
+          {notices.length>0 && (
+            <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+              <div className="text-sm font-semibold text-amber-900">Avvisi</div>
+              <ul className="list-disc ml-5 text-sm text-amber-900">{notices.map((n,i)=> <li key={i}>{n}</li>)}</ul>
+            </section>
+          )}
         </aside>
 
-        {/* Colonna destra (mappa + calendario + grafici) */}
-        <section className="lg:col-span-8 space-y-6">
-          {/* Mappa PAR1 */}
-          <div className="bg-white rounded-2xl border shadow-sm p-3">
-            <div className="h-[360px]">
-              <LeafletMap
-                center={center}
-                radiusKm={radius}
-                onClick={(lat, lng) => setCenter({ lat, lng })}
+        {/* MAIN */}
+        <main className="space-y-6">
+          {/* MAPPA */}
+          <div className="bg-white rounded-2xl border shadow-sm p-0">
+            <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
+              <LocationMap
+                center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
+                radius={normalized.safeR * 1000}
+                label={aQuery || "Località"}
+                onClick={onMapClick}
               />
             </div>
           </div>
 
-          {/* Calendario PAR1: tessere con pressione + ADR */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">
-              Calendario Domanda + ADR — {format(parseISO(`${monthISO}-01`), "MMMM yyyy", { locale: it })}
+          {/* CALENDARIO */}
+          <div className="bg-white rounded-2xl border shadow-sm p-6">
+            <div className="text-lg font-semibold mb-3 flex items-center gap-2">
+              <span>Calendario Domanda + ADR – {format(monthDate, "LLLL yyyy", { locale: it })}</span>
+              {meteoCovered > 0 && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                  Meteo attivo · {meteoCovered} gg
+                </span>
+              )}
             </div>
-            <div className="grid grid-cols-7 gap-2">
-              {calendarData.map((d) => {
-                const hue = 12; // arancio/rosso PAR1
-                const light = 92 - Math.round((d.pressure || 0) * 0.5);
-                const bg = `hsl(${hue},90%,${light}%)`;
-                return (
-                  <div key={d.dateISO} className="rounded-xl p-2 border text-center" style={{ background: bg }}>
-                    <div className="text-xs font-semibold">{d.day}</div>
-                    <div className="text-[11px] mt-1">€{d.adr}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-2">
-              <span>Bassa domanda</span>
-              <div className="h-1 flex-1 rounded-full" style={{
-                background: "linear-gradient(to right, hsl(12,90%,92%), hsl(12,90%,55%))"
-              }} />
-              <span>Alta domanda</span>
-            </div>
+            <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
 
-          {/* Segmenti (visibili solo se selezionati) */}
-          {(askProvenance || askLOS || askChannels) && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl border shadow-sm p-4">
-                <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-                {!related?.provenance?.length ? (
-                  <div className="h-48 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
-                ) : (
-                  <div className="h-48">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={related.provenance}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" />
-                        <YAxis allowDecimals={false} />
-                        <RTooltip />
-                        <Bar dataKey="value" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-white rounded-2xl border shadow-sm p-4">
-                <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-                {!related?.los?.length ? (
-                  <div className="h-48 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
-                ) : (
-                  <div className="h-48">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={related.los}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" />
-                        <YAxis allowDecimals={false} />
-                        <RTooltip />
-                        <Bar dataKey="value" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-
-              <div className="md:col-span-2 bg-white rounded-2xl border shadow-sm p-4">
-                <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-                {!related?.channels?.length ? (
-                  <div className="h-56 grid place-items-center text-sm text-slate-500">Nessun segnale utile per questo periodo/area.</div>
-                ) : (
-                  <div className="h-56">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={related.channels}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" />
-                        <YAxis allowDecimals={false} />
-                        <RTooltip />
-                        <Bar dataKey="value" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
+          {/* Grafici: Provenienza + LOS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+              <ResponsiveContainer width="100%" height={360}>
+                <PieChart margin={{ bottom: 24 }}>
+                  <defs>
+                    {provenance.map((_, i) => {
+                      const base = solidColor(i);
+                      return (
+                        <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.25)} />
+                          <stop offset="100%" stopColor={shade(base, -0.12)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+                  <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                    innerRadius={THEME.chart.pie.innerRadius} outerRadius={THEME.chart.pie.outerRadius}
+                    paddingAngle={THEME.chart.pie.paddingAngle} cornerRadius={THEME.chart.pie.cornerRadius}
+                    labelLine={false} label={({ percent }) => `${Math.round((percent || 0)*100)}%`} isAnimationActive
+                    style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}>
+                    {provenance.map((_, i) => (
+                      <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
+                    ))}
+                  </Pie>
+                  <RTooltip />
+                  <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
-          )}
 
-          {/* Grafico in basso: mese o range (con smoothing opzionale) */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">
-              {fromDate && toDate
-                ? <>Andamento Domanda — {fromDate} → {toDate}</>
-                : <>Andamento Domanda — {format(parseISO(`${monthISO}-01`),'MMMM yyyy',{locale:it})}</>
-              }
-            </div>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendRange}>
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={los} margin={THEME.chart.bar.margin}>
+                  <defs>
+                    {los.map((_, i) => {
+                      const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                      return (
+                        <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.2)} />
+                          <stop offset="100%" stopColor={shade(base, -0.15)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="dateLabel" interval={Math.ceil(Math.max(12, trendRange.length / 12))} />
+                  <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
                   <YAxis />
                   <RTooltip />
-                  <defs>
-                    <linearGradient id="gradLine" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#1e3a8a" />
-                      <stop offset="100%" stopColor="#1e3a8a" />
-                    </linearGradient>
-                    <linearGradient id="fillLine" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.2} />
-                      <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.03} />
-                    </linearGradient>
-                  </defs>
-                  <Area type="monotone" dataKey="value" fill="url(#fillLine)" stroke="url(#gradLine)" />
-                  <Line type="monotone" dataKey="value" stroke="#1e3a8a" strokeWidth={1.6} dot={false} />
-                </LineChart>
+                  <Bar dataKey="value" radius={[8,8,0,0]}>
+                    {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
-        </section>
-      </main>
+
+          {/* Canali */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+            <ResponsiveContainer width="100%" height={360}>
+              <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                <defs>
+                  {channels.map((_, i) => {
+                    const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                    return (
+                      <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={shade(base, 0.18)} />
+                        <stop offset="100%" stopColor={shade(base, -0.15)} />
+                      </linearGradient>
+                    );
+                  })}
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
+                <YAxis />
+                <RTooltip />
+                <Bar dataKey="value" radius={[8,8,0,0]}>
+                  {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Andamento Domanda (mese-1, mese, mese+1) */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={demand}>
+                <defs>
+                  <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
+                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
+                  </linearGradient>
+                  <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
+                    <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="dateLabel" tick={{fontSize: 12}} interval={3}/>
+                <YAxis />
+                <RTooltip />
+                <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
+                <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                  dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
+                  activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }} isAnimationActive />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
