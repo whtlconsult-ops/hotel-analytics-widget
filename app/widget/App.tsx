@@ -613,26 +613,36 @@ export default function App(){
     if (!needTrend && !needRelated) return;
 
     try {
-// Costruiamo i parametri in modo esplicito
+// === COSTRUZIONE PARAMETRI RICHIESTA ===
 const params = new URLSearchParams();
+
+// query: imponi "<q> hotel"
 params.set("q", `${aQuery} hotel`);
+
+// geo
 params.set("lat", String(aCenter.lat));
 params.set("lng", String(aCenter.lng));
+
+// categoria Travel
 params.set("cat", "203");
+
+// parti richieste (trend sempre se spuntato; related se serve)
 params.set("parts", [
   needTrend ? "trend" : "",
   needRelated ? "related" : ""
 ].filter(Boolean).join(","));
 
-// === Timeframe coerente con il mese del calendario ===
+// timeframe coerente con il MESE selezionato nel calendario
 const monthStart = format(startOfMonth(parseISO(`${aMonthISO}-01`)), "yyyy-MM-dd");
 const monthEnd   = format(endOfMonth(parseISO(`${aMonthISO}-01`)),  "yyyy-MM-dd");
 params.set("date", `${monthStart} ${monthEnd}`);
 
-// Flag per i bucket related (solo se richiesti)
+// bucket related (solo se richiesti)
 if (askChannels)    params.set("ch", "1");
 if (askProvenance)  params.set("prov", "1");
 if (askLOS)         params.set("los", "1");
+
+// === FINE COSTRUZIONE PARAMETRI ===
 
       const r = await fetch(`/api/serp/demand?${params.toString()}`);
       const j: SerpDemandPayload = await r.json();
