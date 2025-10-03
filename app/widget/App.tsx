@@ -1048,82 +1048,80 @@ export default function App(){
             )}
           </div>
 
-{/* Andamento domanda (nuovo stile area) */}
+{/* Andamento domanda (nuovo stile area — versione safe) */}
 <div className="bg-white rounded-2xl border shadow-sm p-4">
   <div className="mb-2 text-sm font-semibold">
     Andamento domanda — {format(parseISO(`${aMonthISO}-01`), "MMMM yyyy", { locale: it })}
   </div>
 
-  {/* Tooltip custom con ADR stimato */}
-  {(() => {
-    const TrendTooltip = ({ active, payload, label }: any) => {
-      if (!active || !payload?.length) return null;
-      const pressure = Number(payload[0]?.value ?? 0);
-      const adr = adrFromPressure(pressure, aMode);
-      return (
-        <div className="rounded-md border bg-white p-2 text-xs shadow">
-          <div className="font-medium mb-1">{label}</div>
-          <div>Domanda: <b>{Math.round(pressure)}</b></div>
-          <div>ADR stim.: <b>€{adr}</b></div>
-        </div>
-      );
-    };
-
-    if (!serpTrend.length || serpTrend.every(p => !p.value)) {
-      return (
-        <div className="h-64 grid place-items-center text-sm text-slate-500">
-          Nessun segnale utile per questo periodo/area.
-        </div>
-      );
-    }
-
-    return (
-      <div className="relative h-72">
-        {/* Colonna sinistra con etichette come nello screenshot */}
-        <div className="absolute left-0 top-3 bottom-10 w-12 flex flex-col justify-between text-slate-400 text-xs select-none pointer-events-none">
-          <span>Alta</span>
-          <span>Media</span>
-          <span>Bassa</span>
-        </div>
-
-        {/* Chart con padding a sinistra per far spazio alle etichette */}
-        <div className="absolute inset-0 pl-12">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={serpTrend}
-              margin={{ top: 12, right: 6, bottom: 8, left: 0 }}
-            >
-              <defs>
-                <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.22} />
-                  <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.05} />
-                </linearGradient>
-              </defs>
-
-              {/* Griglia orizzontale leggera; niente verticale */}
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-
-              {/* Asse X: giorni del mese, compatibile con PAR1 */}
-              <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
-
-              {/* Asse Y nascosto (usiamo le etichette “Bassa/Media/Alta”) */}
-              <YAxis domain={[0, 100]} hide />
-
-              <RTooltip content={<TrendTooltip />} />
-
-              {/* Linea morbida + riempimento */}
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke="#1e3a8a"
-                strokeWidth={2.2}
-                fill="url(#trendFill)"
-                activeDot={{ r: 3 }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+  {(!serpTrend.length || serpTrend.every(p => !p.value)) ? (
+    <div className="h-64 grid place-items-center text-sm text-slate-500">
+      Nessun segnale utile per questo periodo/area.
+    </div>
+  ) : (
+    <div className="relative h-72">
+      {/* Colonna sinistra con etichette “Bassa / Media / Alta” */}
+      <div className="absolute left-0 top-3 bottom-10 w-12 flex flex-col justify-between text-slate-400 text-xs select-none pointer-events-none">
+        <span>Alta</span>
+        <span>Media</span>
+        <span>Bassa</span>
       </div>
-    );
-  })()}
+
+      {/* Chart con padding a sinistra per far spazio alle etichette */}
+      <div className="absolute inset-0 pl-12">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart
+            data={serpTrend}
+            margin={{ top: 12, right: 6, bottom: 8, left: 0 }}
+          >
+            <defs>
+              <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#1e3a8a" stopOpacity={0.22} />
+                <stop offset="100%" stopColor="#1e3a8a" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+
+            {/* Griglia orizzontale leggera; niente verticale */}
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+
+            {/* Asse X: giorni del mese (coerente con PAR1) */}
+            <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
+
+            {/* Asse Y nascosto (usiamo etichette laterali) */}
+            <YAxis domain={[0, 100]} hide />
+
+            {/* Tooltip inline con ADR stimato (no funzioni dichiarate nel blocco) */}
+            <RTooltip
+              content={(props: any) => {
+                const { active, payload, label } = props || {};
+                if (!active || !payload?.length) return null;
+                const pressure = Number(payload[0]?.value ?? 0);
+                // ADR stimato (uguale alla logica del calendario)
+                const baseMin = 80, baseMax = 140;
+                const est = baseMin + (pressure / 100) * (baseMax - baseMin);
+                const adr = Math.round(aMode === "competitor" ? est * 1.10 : est);
+                return (
+                  <div className="rounded-md border bg-white p-2 text-xs shadow">
+                    <div className="font-medium mb-1">{label}</div>
+                    <div>Domanda: <b>{Math.round(pressure)}</b></div>
+                    <div>ADR stim.: <b>€{adr}</b></div>
+                  </div>
+                );
+              }}
+            />
+
+            {/* Linea morbida + riempimento */}
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke="#1e3a8a"
+              strokeWidth={2.2}
+              fill="url(#trendFill)"
+              activeDot={{ r: 3 }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )}
 </div>
