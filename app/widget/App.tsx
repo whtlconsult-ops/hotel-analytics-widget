@@ -10,7 +10,7 @@ import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO }
 import { it } from "date-fns/locale";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area, ResponsiveContainer, Legend
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, AreaChart, ResponsiveContainer, Legend
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
@@ -1048,14 +1048,14 @@ export default function App(){
             )}
           </div>
 
-{/* Andamento domanda (nuovo stile area — versione safe) */}
+{/* Andamento Domanda (area style) */}
 <div className="bg-white rounded-2xl border shadow-sm p-4">
-  <div className="mb-2 text-sm font-semibold">
-    Andamento domanda — {format(parseISO(`${aMonthISO}-01`), "MMMM yyyy", { locale: it })}
+  <div className="text-sm font-semibold mb-2">
+    Andamento domanda — {format(monthDate, "LLLL yyyy", { locale: it })}
   </div>
 
   {(!serpTrend.length || serpTrend.every(p => !p.value)) ? (
-    <div className="h-64 grid place-items-center text-sm text-slate-500">
+    <div className="h-56 flex items-center justify-center text-sm text-slate-500">
       Nessun segnale utile per questo periodo/area.
     </div>
   ) : (
@@ -1081,22 +1081,22 @@ export default function App(){
               </linearGradient>
             </defs>
 
-            {/* Griglia orizzontale leggera; niente verticale */}
+            {/* Griglia orizzontale; niente verticale */}
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
 
-            {/* Asse X: giorni del mese (coerente con PAR1) */}
+            {/* Asse X: label già pronte in serpTrend.dateLabel */}
             <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
 
-            {/* Asse Y nascosto (usiamo etichette laterali) */}
+            {/* Asse Y nascosto: usiamo etichette laterali */}
             <YAxis domain={[0, 100]} hide />
 
-            {/* Tooltip inline con ADR stimato (no funzioni dichiarate nel blocco) */}
+            {/* Tooltip inline (ADR stimato) */}
             <RTooltip
               content={(props: any) => {
                 const { active, payload, label } = props || {};
                 if (!active || !payload?.length) return null;
                 const pressure = Number(payload[0]?.value ?? 0);
-                // ADR stimato (uguale alla logica del calendario)
+                // ADR stimato compatibile con PAR1 (baseline semplice)
                 const baseMin = 80, baseMax = 140;
                 const est = baseMin + (pressure / 100) * (baseMax - baseMin);
                 const adr = Math.round(aMode === "competitor" ? est * 1.10 : est);
