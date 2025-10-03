@@ -1048,14 +1048,14 @@ export default function App(){
             )}
           </div>
 
-{/* Andamento Domanda (area style) */}
+{/* Andamento Domanda (area style, PAR1-friendly) */}
 <div className="bg-white rounded-2xl border shadow-sm p-4">
-  <div className="text-sm font-semibold mb-2">
-    Andamento domanda — {format(monthDate, "LLLL yyyy", { locale: it })}
+  <div className="mb-2 text-sm font-semibold">
+    Andamento domanda — {format(parseISO(`${aMonthISO}-01`), "MMMM yyyy", { locale: it })}
   </div>
 
   {(!serpTrend.length || serpTrend.every(p => !p.value)) ? (
-    <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+    <div className="h-64 grid place-items-center text-sm text-slate-500">
       Nessun segnale utile per questo periodo/area.
     </div>
   ) : (
@@ -1081,22 +1081,22 @@ export default function App(){
               </linearGradient>
             </defs>
 
-            {/* Griglia orizzontale; niente verticale */}
+            {/* Griglia orizzontale leggera; niente verticale */}
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
 
-            {/* Asse X: label già pronte in serpTrend.dateLabel */}
+            {/* Giorni del mese (serpTrend ha già dateLabel) */}
             <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
 
-            {/* Asse Y nascosto: usiamo etichette laterali */}
+            {/* Y nascosto: usiamo le etichette laterali */}
             <YAxis domain={[0, 100]} hide />
 
-            {/* Tooltip inline (ADR stimato) */}
+            {/* Tooltip inline con ADR stimato (coerente col calendario) */}
             <RTooltip
               content={(props: any) => {
                 const { active, payload, label } = props || {};
                 if (!active || !payload?.length) return null;
                 const pressure = Number(payload[0]?.value ?? 0);
-                // ADR stimato compatibile con PAR1 (baseline semplice)
+                // ADR stimato semplice (come PAR1)
                 const baseMin = 80, baseMax = 140;
                 const est = baseMin + (pressure / 100) * (baseMax - baseMin);
                 const adr = Math.round(aMode === "competitor" ? est * 1.10 : est);
@@ -1125,3 +1125,10 @@ export default function App(){
     </div>
   )}
 </div>
+
+{/* chiusure del layout */}
+</div> {/* end: md:col-span-8 */}
+</div> {/* end: grid */}
+</div> {/* end: page wrapper */}
+);
+}
