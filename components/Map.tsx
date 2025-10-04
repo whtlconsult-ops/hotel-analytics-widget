@@ -121,7 +121,10 @@ export default function LocationMap({
         style={{ height: "100%", width: "100%" }}
       >
         <ResizeFix center={ll} bounds={fb} />
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+/>
         <ClickCatcher onClick={onClick} />
         <RadiusOverlay center={ll} radius={radius} label={label} />
       </MapContainer>

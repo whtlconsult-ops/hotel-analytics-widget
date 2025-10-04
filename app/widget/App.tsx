@@ -664,22 +664,6 @@ export default function App(){
     [calendarData]
   );
 
-  const handleReset = useCallback(() => {
-    const now = new Date();
-    const m = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-    setQuery("Firenze"); setRadius(20); setMonthISO(m); setTypes(["hotel"]); setMode("zone");
-    setAQuery("Firenze"); setARadius(20); setAMonthISO(m); setATypes(["hotel"]); setAMode("zone"); setACenter({ lat: 43.7696, lng: 11.2558 });
-    setAskTrend(true); setAskChannels(false); setAskProvenance(false); setAskLOS(false); setWxProvider("open-meteo");
-    setNotices([]); setWeatherByDate({});
-    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), {
-      q: "Firenze", r: 20, m, t: ["hotel"], mode: "zone",
-      dataSource, csvUrl, gsId, gsGid, gsSheet,
-      askTrend: true, askChannels: false, askProvenance: false, askLOS: false, wxProvider: "open-meteo"
-    });
-  }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
-
-  const [shareUrl, setShareUrl] = useState<string>("");
-
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
