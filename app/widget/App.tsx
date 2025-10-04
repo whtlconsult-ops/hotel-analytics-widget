@@ -454,6 +454,7 @@ export default function App(){
       askTrend: true, askChannels: false, askProvenance: false, askLOS: false, wxProvider: "open-meteo"
     });
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
+const [shareUrl, setShareUrl] = useState<string>("");
 
   // Geocoding ricerca (PAR1)
   const handleSearchLocation = useCallback(async () => {
