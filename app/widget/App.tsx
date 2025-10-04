@@ -989,7 +989,8 @@ const [shareUrl, setShareUrl] = useState<string>("");
                     setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
                     if (!aCenter) setACenter({ lat: 43.7696, lng: 11.2558 });
                     const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
-                    setShareUrl(url);
+const share = makeShareUrl((typeof window !== "undefined" ? location.pathname : "/"), next);
+setShareUrl(share);
                     fetchSerp();
                   }}
                 >
