@@ -642,6 +642,19 @@ export default function App(){
     try { return parseISO(aMonthISO); } catch { return new Date(); }
   }, [aMonthISO]);
 
+  /** --- Helpers (PAR1) - domanda/ADR demo --- */
+  function pressureFor(date: Date){
+    const dow = getDay(date);
+    const base = 60 + (date.getDate() * 2);
+    const wkndBoost = (dow === 0 || dow === 6) ? 25 : (dow === 5 ? 18 : 0);
+    return base + wkndBoost;
+  }
+
+  function adrFromCompetitors(date: Date, mode: Mode){
+    const base = 80 + (date.getDate() % 7) * 3;
+    return Math.round(base + (mode === "competitor" ? 12 : 0));
+  }
+
 // ===== Block 4/4 =====
   // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
