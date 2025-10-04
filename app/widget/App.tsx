@@ -14,6 +14,117 @@ import {
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
+/* ---------- Multi-select Tipologie (PAR1) ---------- */
+function TypesMultiSelect({
+  value,
+  onChange,
+  allTypes,
+  labels,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  allTypes: readonly string[];
+  labels: Record<string, string>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const toggle = (t: string) => {
+    if (value.includes(t)) onChange(value.filter((x) => x !== t));
+    else onChange([...value, t]);
+  };
+  const selectAll = () => onChange([...allTypes]);
+  const clearAll = () => onChange([]);
+
+  const summary =
+    value.length === 0
+      ? "Nessuna selezione"
+      : value.length === allTypes.length
+      ? "Tutte"
+      : `${value.length} selezionate`;
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 rounded-xl border border-neutral-300 px-3 text-sm flex items-center justify-between hover:border-neutral-400 transition bg-white"
+      >
+        <span className="truncate">
+          {summary}
+          {value.length > 0 && value.length < allTypes.length ? (
+            <span className="ml-2 text-xs text-neutral-500">
+              {value
+                .slice()
+                .sort()
+                .map((t) => labels[t] || t)
+                .slice(0, 2)
+                .join(", ")}
+              {value.length > 2 ? "…" : ""}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2">
+          <ul className="space-y-1 max-h-64 overflow-auto pr-1">
+            {allTypes.map((t) => {
+              const active = value.includes(t);
+              return (
+                <li key={t}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(t)}
+                    className={`w-full flex items-center justify-between rounded-lg px-2 py-2 text-sm ${
+                      active ? "bg-slate-50 border border-slate-200" : "hover:bg-neutral-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      {active ? <Check className="h-4 w-4" /> : <span className="inline-block h-4 w-4 rounded border" />}
+                      <span>{labels[t] || t}</span>
+                    </span>
+                    <span className="text-xs text-neutral-500">{active ? "Selezionato" : ""}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="mt-2 flex items-center justify-between px-1">
+            <button
+              type="button"
+              onClick={selectAll}
+              className="text-xs rounded-md px-2 py-1 border bg-white hover:bg-neutral-50"
+            >
+              Seleziona tutte
+            </button>
+            <button
+              type="button"
+              onClick={clearAll}
+              className="text-xs rounded-md px-2 py-1 bg-slate-900 text-white hover:bg-slate-800"
+            >
+              Pulisci
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Mappa senza SSR
 const LocationMap = dynamic(() => import("../../components/Map"), { ssr: false });
 
