@@ -556,41 +556,48 @@ export default function App(){
     });
 
     const res = await fetch(`/api/serp/demand?${params.toString()}`);
-    const j: any = await res.json();
+    const j = await res.json();
 
     if (!j || j.ok !== true) {
-      setNotices(prev => Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."])));
-      setSerpTrend([]); setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
+      setNotices(prev =>
+        Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."]))
+      );
+      setSerpTrend([]);
+      setSerpChannels([]);
+      setSerpOrigins([]);
+      setSerpLOS([]);
       return;
     }
 
     // --- Trend (ultimi 12 mesi) ---
-   const pts = (j.series as any[]).map((s: any) => {
-  return {
-    dateLabel: format(parseISO(String(s.date)), "LLL yy", { locale: it }),
-    value: Number(s.score) || 0,
-  } as { dateLabel: string; value: number };
-});
-setSerpTrend(pts);
+    if (needTrend && Array.isArray(j.series)) {
+      const pts = (j.series as any[]).map((s: any) => {
+        const dStr = typeof s.date === "string" ? s.date : String(s.date);
+        return {
+          dateLabel: format(parseISO(dStr), "LLL yy", { locale: it }),
+          value: Number(s.score) || 0,
+        } as { dateLabel: string; value: number };
+      });
+      setSerpTrend(pts);
     } else {
       setSerpTrend([]);
     }
 
     // --- Related (canali / provenienza / los) ---
     if (needRelated) {
-      const rel = j.related ?? { channels: [], provenance: [], los: [] };
+      const rel = j.related || { channels: [], provenance: [], los: [] };
 
-      const ch: ChannelRow[] = (rel.channels || []).map((x: any) => ({
+      const ch = (Array.isArray(rel.channels) ? rel.channels : []).map((x: any) => ({
         channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
         value: Number(x.value) || 0,
       }));
 
-      const or: OriginRow[] = (rel.provenance || []).map((x: any) => ({
+      const or = (Array.isArray(rel.provenance) ? rel.provenance : []).map((x: any) => ({
         name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
         value: Number(x.value) || 0,
       }));
 
-      const lo: LOSRow[] = (rel.los || []).map((x: any) => ({
+      const lo = (Array.isArray(rel.los) ? rel.los : []).map((x: any) => ({
         bucket: String(x.label || ""),
         value: Number(x.value) || 0,
       }));
@@ -599,7 +606,9 @@ setSerpTrend(pts);
       setSerpOrigins(or);
       setSerpLOS(lo);
     } else {
-      setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
+      setSerpChannels([]);
+      setSerpOrigins([]);
+      setSerpLOS([]);
     }
 
     // --- Badge quota (best-effort, ignora errori) ---
@@ -608,16 +617,19 @@ setSerpTrend(pts);
       const q = await qres.json();
       if (q && q.ok) {
         const badge = {
-          used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage,
-          total: (j.usage && j.usage.searches_per_month) ?? q.searches_per_month,
-          left:  (j.usage && j.usage.plan_searches_left) ?? q.plan_searches_left,
+          used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage ?? undefined,
+          total: (j.usage && j.usage.searches_per_month) ?? q.searches_per_month ?? undefined,
+          left:  (j.usage && j.usage.plan_searches_left) ?? q.plan_searches_left ?? undefined,
         };
         setSerpUsage(badge);
       }
-    } catch (e) { /* ignore quota error */ }
-
+    } catch (e) {
+      // ignore
+    }
   } catch (e) {
-    setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
+    setNotices(prev =>
+      Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."]))
+    );
   }
 }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
