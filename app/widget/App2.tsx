@@ -66,12 +66,11 @@ const losF = noneSelected ? true : search.get("los") === "1";
     })();
   }, [q, ch, prov, losF]);
 
-  const backHref = useMemo(() => {
-  // Ricostruisce la query string in modo sicuro
-  const entries = Array.from(search.entries());
-  const qs = entries.map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-  return "/" + (qs ? `?${qs}` : "");
-}, [search]);
+  const [backHref, setBackHref] = useState<string>("/");
+useEffect(() => {
+  const qs = typeof window !== "undefined" ? window.location.search : "";
+  setBackHref("/" + (qs || ""));
+}, []);
 
   return (
     <div className="min-h-screen bg-slate-50">
