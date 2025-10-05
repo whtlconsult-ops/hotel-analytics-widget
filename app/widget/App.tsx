@@ -559,9 +559,10 @@ export default function App(){
       const j: SerpDemandPayload = await r.json();
 
       if (!j?.ok) {
-        setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Errore richiesta SERP: uso dati dimostrativi."])));
-        return;
-      }
+  setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Nessun dato SERP per la query/periodo."])));
+  setSerpTrend([]); setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
+  return;
+}
 
       // Quota SERP (parziale dalla stessa response)
       let badge = {
@@ -581,6 +582,7 @@ const rel = j.related ?? { channels: [], provenance: [], los: [] };
 } else if (!needTrend) {
   setSerpTrend([]);
 }
+const rel = j.related ?? { channels: [], provenance: [], los: [] };
 
         if (askChannels) {
           setSerpChannels([
