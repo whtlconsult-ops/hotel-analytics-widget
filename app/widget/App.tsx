@@ -8,7 +8,8 @@ import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp 
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import {
-  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer,
+  Tooltip as RTooltip, PieChart, Pie, Cell, Legend, BarChart, Bar
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
@@ -65,9 +66,14 @@ const typeLabels: Record<string,string> = {
 const THEME = {
   chart: {
     line: { stroke: "#1e3a8a", strokeWidth: 2, dotRadius: 2 },
+    pie:  { innerRadius: 60, outerRadius: 100, paddingAngle: 2, cornerRadius: 6 },
+    bar:  { margin: { top: 16, right: 16, left: 8, bottom: 16 }, tickSize: 12 },
+    barWide: { margin: { top: 8, right: 16, left: 8, bottom: 24 }, tickSize: 11 },
   },
   palette: {
-    solid: ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#eab308","#06b6d4"]
+    solid: ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#eab308","#06b6d4"],
+    barBlue:   ["#60a5fa","#3b82f6","#2563eb","#1d4ed8","#1e40af"],
+    barOrange: ["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"],
   }
 };
 const solidColor = (i:number)=> THEME.palette.solid[i % THEME.palette.solid.length];
@@ -326,6 +332,17 @@ function TypesMultiSelect({
     </div>
   );
 }
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0];
+  return (
+    <div className="rounded-lg bg-white border px-2 py-1 text-xs">
+      <div className="font-medium">{label}</div>
+      <div>{(p.name ?? "Valore")}: <b>{p.value}</b></div>
+    </div>
+  );
+}
+
 export default function App(){
   const router = useRouter();
   const search = useSearchParams();
@@ -346,6 +363,8 @@ export default function App(){
 
   // Meteo provider (client side) — di default Open-Meteo
   const [wxProvider, setWxProvider] = useState<"open-meteo"|"openweather">("open-meteo");
+  const [shareUrl, setShareUrl] = useState<string>("");
+
 
   // Selettori SERP (uno per grafico)
   const [askTrend, setAskTrend] = useState(true);            // Andamento domanda
@@ -631,6 +650,11 @@ export default function App(){
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
+const monthDate = useMemo(() => {
+  if (!aMonthISO) return new Date();
+  try { return parseISO(aMonthISO); } catch (e) { return new Date(); }
+}, [aMonthISO]);
+
     // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
     const days = daysOfMonthWindow(aMonthISO);
