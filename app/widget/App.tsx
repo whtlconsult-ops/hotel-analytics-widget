@@ -274,7 +274,7 @@ const CalendarHeatmap = ({ monthDate, data }: { monthDate: Date; data: any[] }) 
               )}
               {wx && (
                 <div className="flex items-center gap-1 text-[11px] text-slate-600 mt-0.5">
-                  <WeatherIcon code={wx.code} className="w-4 h-4" />
+                 <WeatherIcon kind={codeToKind(wx.code)} className="w-4 h-4" />
                   <span>{codeToKind(wx.code)}</span>
                   {wx.tmin!=null && wx.tmax!=null && <span>· {Math.round(wx.tmin)}–{Math.round(wx.tmax)}°C</span>}
                 </div>
