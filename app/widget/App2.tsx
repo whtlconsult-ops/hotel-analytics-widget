@@ -10,55 +10,60 @@ type ChannelRow = { channel: string; value: number };
 type OriginRow  = { name: string; value: number };
 type LOSRow     = { bucket: string; value: number };
 
-const COLORS = ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#06b6d4"];
+const COLORS = ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#06b6d4","#f43f5e"];
 
 export default function App2(){
   const search = useSearchParams();
-  const q = search.get("q") || "Firenze";
+
+  const q   = search.get("q")   || "Firenze";
+  const ch  = search.get("ch")  === "1";
+  const prov= search.get("prov")=== "1";
+  const losF= search.get("los") === "1";
 
   const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [origins,  setOrigins]  = useState<OriginRow[]>([]);
   const [los,      setLOS]      = useState<LOSRow[]>([]);
   const [notes,    setNotes]    = useState<string[]>([]);
 
-  useEffect(()=> {
-    (async ()=>{
+  useEffect(() => {
+    (async () => {
       try {
-        const params = new URLSearchParams({ q, parts:"related", ch:"1", prov:"1", los:"1", date:"today 12-m", cat:"203" });
+        // Chiediamo solo i RELATED: canali/provenienza/los (in base ai toggle passati)
+        const params = new URLSearchParams({
+          q, parts: "related", date: "today 12-m", cat: "203",
+          ch: ch ? "1" : "0",
+          prov: prov ? "1" : "0",
+          los: losF ? "1" : "0",
+        });
         const r = await fetch(`/api/serp/demand?${params.toString()}`);
         const j = await r.json();
         if (!j?.ok || !j.related) { setNotes(p=>[...p,"Nessun related disponibile"]); return; }
-        const rel = j.related;
-        setChannels([
-          { channel:"Booking", value: rel.channels.find((x:any)=>x.label==="booking")?.value || 0 },
-          { channel:"Airbnb",  value: rel.channels.find((x:any)=>x.label==="airbnb")?.value || 0 },
-          { channel:"Diretto", value: rel.channels.find((x:any)=>x.label==="diretto")?.value || 0 },
-          { channel:"Expedia", value: rel.channels.find((x:any)=>x.label==="expedia")?.value || 0 },
-          { channel:"Altro",   value: rel.channels.find((x:any)=>x.label==="altro")?.value || 0 },
-        ]);
-        setOrigins([
-          { name:"Italia",   value: rel.provenance.find((x:any)=>x.label==="italia")?.value || 0 },
-          { name:"Germania", value: rel.provenance.find((x:any)=>x.label==="germania")?.value || 0 },
-          { name:"Francia",  value: rel.provenance.find((x:any)=>x.label==="francia")?.value || 0 },
-          { name:"USA",      value: rel.provenance.find((x:any)=>x.label==="usa")?.value || 0 },
-          { name:"UK",       value: rel.provenance.find((x:any)=>x.label==="uk")?.value || 0 },
-        ]);
-        setLOS([
-          { bucket:"1 notte",   value: rel.los.find((x:any)=>x.label==="1 notte")?.value || 0 },
-          { bucket:"2-3 notti", value: rel.los.find((x:any)=>x.label==="2-3 notti")?.value || 0 },
-          { bucket:"4-6 notti", value: rel.los.find((x:any)=>x.label==="4-6 notti")?.value || 0 },
-          { bucket:"7+ notti",  value: rel.los.find((x:any)=>x.label==="7+ notti")?.value || 0 },
-        ]);
+
+        const rel = j.related || {};
+        if (ch && Array.isArray(rel.channels)) {
+          setChannels(rel.channels.map((x:any)=>({
+            channel: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()),
+            value: Number(x.value)||0
+          })));
+        }
+        if (prov && Array.isArray(rel.provenance)) {
+          setOrigins(rel.provenance.map((x:any)=>({
+            name: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()),
+            value: Number(x.value)||0
+          })));
+        }
+        if (losF && Array.isArray(rel.los)) {
+          setLOS(rel.los.map((x:any)=>({ bucket: x.label, value: Number(x.value)||0 })));
+        }
       } catch (e:any) {
         setNotes(p=>[...p, String(e?.message||e)]);
       }
     })();
-  }, [q]);
+  }, [q, ch, prov, losF]);
 
-  const backHref = useMemo(()=>{
-    const p = new URLSearchParams(search as any);
-    const qs = p.toString();
-    return (typeof window !== "undefined" ? location.pathname : "/").replace(/\/grafica\/?$/,"") + (qs ? `?${qs}` : "");
+  const backHref = useMemo(() => {
+    const qs = search.toString();
+    return "/" + (qs ? `?${qs}` : "");
   }, [search]);
 
   return (
@@ -76,58 +81,65 @@ export default function App2(){
         )}
 
         {/* Provenienza */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-          {origins.length===0 || origins.every(x=>(x.value||0)===0) ? (
-            <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={360}>
-              <PieChart>
-                <Pie data={origins} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={110} paddingAngle={2} cornerRadius={6}>
-                  {origins.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} stroke="#fff" strokeWidth={2}/>)}
-                </Pie>
-                <RTooltip />
-                <Legend verticalAlign="bottom" iconType="circle" />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        {prov && (
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+            {origins.length === 0 || origins.every(x => (x.value || 0) === 0) ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <PieChart>
+                  <Pie data={origins} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={110} paddingAngle={2} cornerRadius={6} labelLine={false}
+                    label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}>
+                    {origins.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} stroke="#fff" strokeWidth={2}/>)}
+                  </Pie>
+                  <RTooltip />
+                  <Legend verticalAlign="bottom" iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
 
         {/* LOS */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-          {los.length===0 || los.every(x=>(x.value||0)===0) ? (
-            <div className="h-48 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={los} margin={{ top: 16, right: 16, left: 8, bottom: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="bucket" />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value" radius={[8,8,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        {losF && (
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+            {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
+              <div className="h-48 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={los} margin={{ top: 16, right: 16, left: 8, bottom: 16 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="bucket" />
+                  <YAxis />
+                  <RTooltip />
+                  <Bar dataKey="value" radius={[8,8,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
 
         {/* Canali */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4">
-          <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-          {channels.length===0 || channels.every(x=>(x.value||0)===0) ? (
-            <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={channels} margin={{ top: 8, right: 16, left: 8, bottom: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="channel" interval={0} height={40} />
-                <YAxis />
-                <RTooltip />
-                <Bar dataKey="value" radius={[8,8,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        {ch && (
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+            {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <BarChart data={channels} margin={{ top: 8, right: 16, left: 8, bottom: 24 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="channel" interval={0} height={40} />
+                  <YAxis />
+                  <RTooltip />
+                  <Bar dataKey="value" radius={[8,8,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

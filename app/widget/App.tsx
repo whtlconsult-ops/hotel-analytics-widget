@@ -650,6 +650,26 @@ export default function App(){
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
+// Link per la pagina "Grafica": /grafica + query string corrente (o ricostruita dagli stati applicati)
+const graficaHref = useMemo(() => {
+  if (typeof window !== "undefined" && location.search) {
+    return "/grafica" + location.search;
+  }
+  const p = new URLSearchParams();
+  if (aQuery) p.set("q", aQuery);
+  if (typeof aRadius === "number") p.set("r", String(aRadius));
+  if (aMonthISO) p.set("m", aMonthISO);
+  if (Array.isArray(aTypes) && aTypes.length) p.set("t", aTypes.join(","));
+  if (aMode) p.set("mode", aMode);
+  if (wxProvider) p.set("wx", wxProvider);
+  if (askTrend) p.set("trend", "1");
+  if (askChannels) p.set("ch", "1");
+  if (askProvenance) p.set("prov", "1");
+  if (askLOS) p.set("los", "1");
+  const qs = p.toString();
+  return "/grafica" + (qs ? `?${qs}` : "");
+}, [aQuery, aRadius, aMonthISO, aTypes, aMode, wxProvider, askTrend, askChannels, askProvenance, askLOS]);
+
 const monthDate = useMemo(() => {
   if (!aMonthISO) return new Date();
   try { return parseISO(aMonthISO); } catch (e) { return new Date(); }
@@ -898,6 +918,15 @@ const monthDate = useMemo(() => {
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Genera Analisi
                 </button>
+
+<div className="mt-2">
+  <a
+    href={graficaHref}
+    className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-white hover:bg-slate-50"
+  >
+    Apri pagina Grafica
+  </a>
+</div>
 
                 {shareUrl && (
                   <div className="mt-2">
