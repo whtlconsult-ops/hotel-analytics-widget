@@ -15,10 +15,15 @@ const COLORS = ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#06
 export default function App2(){
   const search = useSearchParams();
 
-  const q   = search.get("q")   || "Firenze";
-  const ch  = search.get("ch")  === "1";
-  const prov= search.get("prov")=== "1";
-  const losF= search.get("los") === "1";
+const q = search.get("q") || "Firenze";
+const hasCh   = search.has("ch");
+const hasProv = search.has("prov");
+const hasLos  = search.has("los");
+const noneSelected = !hasCh && !hasProv && !hasLos;
+
+const ch   = noneSelected ? true : search.get("ch") === "1";
+const prov = noneSelected ? true : search.get("prov") === "1";
+const losF = noneSelected ? true : search.get("los") === "1";
 
   const [channels, setChannels] = useState<ChannelRow[]>([]);
   const [origins,  setOrigins]  = useState<OriginRow[]>([]);
@@ -62,9 +67,11 @@ export default function App2(){
   }, [q, ch, prov, losF]);
 
   const backHref = useMemo(() => {
-    const qs = search.toString();
-    return "/" + (qs ? `?${qs}` : "");
-  }, [search]);
+  // Ricostruisce la query string in modo sicuro
+  const entries = Array.from(search.entries());
+  const qs = entries.map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  return "/" + (qs ? `?${qs}` : "");
+}, [search]);
 
   return (
     <div className="min-h-screen bg-slate-50">

@@ -649,11 +649,8 @@ export default function App(){
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
-// Link per la pagina "Grafica": /grafica + query string corrente (o ricostruita dagli stati applicati)
+// Link per la pagina "Grafica": se tutti i toggle sono OFF, forziamo ch/prov/los a ON
 const graficaHref = useMemo(() => {
-  if (typeof window !== "undefined" && location.search) {
-    return "/grafica" + location.search;
-  }
   const p = new URLSearchParams();
   if (aQuery) p.set("q", aQuery);
   if (typeof aRadius === "number") p.set("r", String(aRadius));
@@ -662,9 +659,12 @@ const graficaHref = useMemo(() => {
   if (aMode) p.set("mode", aMode);
   if (wxProvider) p.set("wx", wxProvider);
   if (askTrend) p.set("trend", "1");
-  if (askChannels) p.set("ch", "1");
-  if (askProvenance) p.set("prov", "1");
-  if (askLOS) p.set("los", "1");
+
+  const noneSelected = !askChannels && !askProvenance && !askLOS;
+  p.set("ch",   (askChannels   || noneSelected) ? "1" : "0");
+  p.set("prov", (askProvenance || noneSelected) ? "1" : "0");
+  p.set("los",  (askLOS        || noneSelected) ? "1" : "0");
+
   const qs = p.toString();
   return "/grafica" + (qs ? `?${qs}` : "");
 }, [aQuery, aRadius, aMonthISO, aTypes, aMode, wxProvider, askTrend, askChannels, askProvenance, askLOS]);
