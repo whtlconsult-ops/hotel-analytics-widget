@@ -157,8 +157,8 @@ function replaceUrlWithState(
     askTrend:boolean; askChannels:boolean; askProvenance:boolean; askLOS:boolean; wxProvider:string; }
 ) {
   const url = makeShareUrl(pathname, opts);
-  try { router.replace(url, { scroll: false }); } catch (_e: any) {}
-  try { if (typeof window !== "undefined") window.history.replaceState({}, "", url); } catch (_e: any) {}
+  try { router.replace(url, { scroll: false }); } catch (e) {}
+  try { if (typeof window !== "undefined") window.history.replaceState({}, "", url); } catch (e) {}
   return url;
 }
 function isWithinNextDays(d: Date, n = 7) {
@@ -479,13 +479,13 @@ export default function App(){
         replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
           { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
       } else { alert("Località non trovata"); }
-    } catch (_e: any) { alert("Errore di geocoding"); }
+    } catch (e) { alert("Errore di geocoding"); }
   }, [query, radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider, router]);
 
   /* ----- Reverse geocoding (click mappa) ----- */
   const onMapClick = useCallback(async ({ lat, lng }: { lat: number; lng: number }) => {
     let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-    try { const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`); const j = r.ok ? await r.json() : null; if (j) name = String(j?.name ?? j?.display_name ?? name); } catch (_e: any) {}
+    try { const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`); const j = r.ok ? await r.json() : null; if (j) name = String(j?.name ?? j?.display_name ?? name); } catch (e) {}
     setQuery(name);
     setACenter({ lat, lng }); setAQuery(name);
     setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
@@ -622,10 +622,10 @@ export default function App(){
           badge.total = badge.total ?? q.searches_per_month ?? q.raw?.searches_per_month;
           badge.left  = badge.left  ?? q.plan_searches_left ?? q.raw?.plan_searches_left;
         }
-      } catch (_e: any) {}
+      } catch (e) {}
       setSerpUsage(badge);
 
-    } catch (_e: any) {
+    } catch (e) {
       setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
     }
   }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
@@ -679,7 +679,7 @@ export default function App(){
 
   const monthDate = useMemo(()=> {
     if(!aMonthISO) return new Date();
-    try { return parseISO(aMonthISO); } catch (_e: any) { return new Date(); }
+    try { return parseISO(aMonthISO); } catch (e) { return new Date(); }
   }, [aMonthISO]);
 
   // Calendario (pressione + adr dimostrativi)
