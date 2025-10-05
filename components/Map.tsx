@@ -130,8 +130,6 @@ export default function LocationMap({
   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
   {...OSM_ATTR}
 />
-  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-/>
         <ClickCatcher onClick={onClick} />
         <RadiusOverlay center={ll} radius={radius} label={label} />
       </MapContainer>
