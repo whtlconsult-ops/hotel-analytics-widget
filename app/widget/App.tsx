@@ -8,8 +8,7 @@ import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp 
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import {
-  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer,
-  Tooltip as RTooltip, PieChart, Pie, Cell, Legend, BarChart, Bar
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
@@ -978,123 +977,6 @@ const monthDate = useMemo(() => {
               )}
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
-          </div>
-
-          {/* Grafici: Provenienza + LOS */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-
-              {provenance.length === 0 || provenance.every(x => (x.value || 0) === 0) ? (
-                <div className="h-56 flex items-center justify-center text-sm text-slate-500">
-                  Nessun segnale utile per questo periodo/area.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={360}>
-                  <PieChart margin={{ bottom: 24 }}>
-                    <defs>
-                      {provenance.map((_, i) => {
-                        const base = solidColor(i);
-                        return (
-                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.25)} />
-                            <stop offset="100%" stopColor={shade(base, -0.12)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <Pie
-                      data={provenance}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={THEME.chart.pie.innerRadius}
-                      outerRadius={THEME.chart.pie.outerRadius}
-                      paddingAngle={THEME.chart.pie.paddingAngle}
-                      cornerRadius={THEME.chart.pie.cornerRadius}
-                      labelLine={false}
-                      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
-                      isAnimationActive
-                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,15))" }}
-                    >
-                      {provenance.map((_, i) => (
-                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
-                      ))}
-                    </Pie>
-                    <RTooltip content={<CustomTooltip />} />
-                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-
-              {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
-                <div className="h-48 flex items-center justify-center text-sm text-slate-500">
-                  Nessun segnale utile per questo periodo/area.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={los} margin={THEME.chart.bar.margin}>
-                    <defs>
-                      {los.map((_, i) => {
-                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
-                        return (
-                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.2)} />
-                            <stop offset="100%" stopColor={shade(base, -0.15)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" tick={{ fontSize: THEME.chart.bar.tickSize }} />
-                    <YAxis />
-                    <RTooltip content={<CustomTooltip />} />
-                    <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                      {los.map((_, i) => (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-
-          {/* Canali */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-
-            {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
-              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
-                Nessun segnale utile per questo periodo/area.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
-                  <defs>
-                    {channels.map((_, i) => {
-                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
-                      return (
-                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.18)} />
-                          <stop offset="100%" stopColor={shade(base, -0.15)} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{ fontSize: THEME.chart.barWide.tickSize }} height={40} />
-                  <YAxis />
-                  <RTooltip content={<CustomTooltip />} />
-                  <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                    {channels.map((_, i) => (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
           </div>
 
           {/* Andamento Domanda */}
