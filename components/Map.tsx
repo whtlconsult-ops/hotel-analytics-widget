@@ -5,11 +5,6 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Map as LeafletMap } from "leaflet";
 import L from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
-// Workaround typing: react-leaflet v4 non tipizza 'attribution' su TileLayer, ma Leaflet lo supporta
-const OSM_ATTR = {
-  attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-} as any;
 
 /** Mantiene la mappa in forma su cambi center/bounds e su resize */
 function ResizeFix({
@@ -126,10 +121,7 @@ export default function LocationMap({
         style={{ height: "100%", width: "100%" }}
       >
         <ResizeFix center={ll} bounds={fb} />
-        <TileLayer
-  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-  {...OSM_ATTR}
-/>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <ClickCatcher onClick={onClick} />
         <RadiusOverlay center={ll} radius={radius} label={label} />
       </MapContainer>
