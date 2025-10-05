@@ -571,14 +571,16 @@ export default function App(){
         left: j.usage?.plan_searches_left
       } as any;
 
-      if (needTrend && Array.isArray(j.series)) {
-        setSerpTrend(resampleToDays(j.series, aMonthISO));
-      } else if (!needTrend) {
-        setSerpTrend([]);
-      }
-
-      if (needRelated && j.related) {
-        const rel = j.related;
+     if (needTrend && Array.isArray(j.series)) {
+  // Usa l’intera serie “today 12-m” (tipicamente settimanale)
+  const points = j.series.map(s => ({
+    dateLabel: format(parseISO(s.date), "LLL yy", { locale: it }),
+    value: Number(s.score) || 0,
+  }));
+  setSerpTrend(points);
+} else if (!needTrend) {
+  setSerpTrend([]);
+}
 
         if (askChannels) {
           setSerpChannels([
@@ -716,6 +718,12 @@ export default function App(){
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
 
   const [shareUrl, setShareUrl] = useState<string>("");
+// HREF per pagina Grafica: usa il path corrente + query del link condivisibile
+const graficaHref = useMemo(() => {
+  const base = (typeof window !== "undefined" ? location.pathname : "/");
+  const qs = shareUrl.includes("?") ? shareUrl.slice(shareUrl.indexOf("?")) : "";
+  return base.replace(/\/$/, "") + "/grafica" + qs;
+}, [shareUrl]);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -895,6 +903,14 @@ export default function App(){
                   <RefreshCw className="h-4 w-4 mr-2"/>
                   Genera Analisi
                 </button>
+<div className="mt-2">
+  <a
+    href={graficaHref}
+    className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-white hover:bg-slate-50"
+  >
+    Apri pagina Grafica
+  </a>
+</div>
 
                 {shareUrl && (
                   <div className="mt-2">
@@ -941,116 +957,10 @@ export default function App(){
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
-          {/* Grafici: Provenienza + LOS */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
-
-              {provenance.length === 0 || provenance.every(x => (x.value || 0) === 0) ? (
-                <div className="h-56 flex items-center justify-center text-sm text-slate-500">
-                  Nessun segnale utile per questo periodo/area.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={360}>
-                  <PieChart margin={{ bottom: 24 }}>
-                    <defs>
-                      {provenance.map((_, i) => {
-                        const base = solidColor(i);
-                        return (
-                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.25)} />
-                            <stop offset="100%" stopColor={shade(base, -0.12)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <Pie data={provenance} dataKey="value" nameKey="name" cx="50%" cy="50%"
-                      innerRadius={THEME.chart.pie.innerRadius} outerRadius={THEME.chart.pie.outerRadius}
-                      paddingAngle={THEME.chart.pie.paddingAngle} cornerRadius={THEME.chart.pie.cornerRadius}
-                      labelLine={false} label={({ percent }) => `${Math.round((percent || 0)*100)}%`} isAnimationActive
-                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,.15))" }}>
-                      {provenance.map((_, i) => (
-                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
-                      ))}
-                    </Pie>
-                    <RTooltip />
-                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-
-            <div className="bg-white rounded-2xl border shadow-sm p-4">
-              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
-
-              {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
-                <div className="h-48 flex items-center justify-center text-sm text-slate-500">
-                  Nessun segnale utile per questo periodo/area.
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={los} margin={THEME.chart.bar.margin}>
-                    <defs>
-                      {los.map((_, i) => {
-                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
-                        return (
-                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={shade(base, 0.2)} />
-                            <stop offset="100%" stopColor={shade(base, -0.15)} />
-                          </linearGradient>
-                        );
-                      })}
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" tick={{fontSize: THEME.chart.bar.tickSize}} />
-                    <YAxis />
-                    <RTooltip />
-                    <Bar dataKey="value" radius={[8,8,0,0]}>
-                      {los.map((_,i)=> (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-
-          {/* Canali */}
-          <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
-
-            {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
-              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
-                Nessun segnale utile per questo periodo/area.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
-                  <defs>
-                    {channels.map((_, i) => {
-                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
-                      return (
-                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={shade(base, 0.18)} />
-                          <stop offset="100%" stopColor={shade(base, -0.15)} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} tick={{fontSize: THEME.chart.barWide.tickSize}} height={40} />
-                  <YAxis />
-                  <RTooltip />
-                  <Bar dataKey="value" radius={[8,8,0,0]}>
-                    {channels.map((_,i)=> (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
+         
           {/* Andamento Domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
+            <div className="text-sm font-semibold mb-2">Andamento Domanda – Ultimi 12 mesi</div>
 
             {serpTrend.length === 0 || serpTrend.every(p => (p.value || 0) === 0) ? (
               <div className="h-56 flex items-center justify-center text-sm text-slate-500">
