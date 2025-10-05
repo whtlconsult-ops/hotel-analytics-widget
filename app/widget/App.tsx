@@ -9,8 +9,7 @@ import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp 
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { it } from "date-fns/locale";
 import {
-  PieChart, Pie, Cell, Tooltip as RTooltip, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Legend
+  XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
 } from "recharts";
 import { WeatherIcon, codeToKind } from "../../components/WeatherIcon";
 
@@ -570,6 +569,7 @@ export default function App(){
         total: j.usage?.searches_per_month,
         left: j.usage?.plan_searches_left
       } as any;
+const rel = j.related ?? { channels: [], provenance: [], los: [] };
 
      if (needTrend && Array.isArray(j.series)) {
   // Usa l’intera serie “today 12-m” (tipicamente settimanale)
