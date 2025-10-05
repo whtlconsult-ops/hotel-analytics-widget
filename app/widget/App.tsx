@@ -66,6 +66,7 @@ type SerpDemandPayload = {
   };
   usage?: any;
   note?: string;
+  error?: string;
 };
 
 const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
