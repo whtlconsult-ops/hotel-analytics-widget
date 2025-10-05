@@ -1,4 +1,3 @@
-// ===== Block 1/4 =====
 // app/widget/App.tsx
 "use client";
 
@@ -44,7 +43,7 @@ type Normalized = {
 
 type SerpDemandPayload = {
   ok: boolean;
-  series?: Array<{ date: string; score: number }>; // per linea
+  series?: Array<{ date: string; score: number }>;
   related?: {
     channels: Array<{ label: string; value: number }>;
     provenance: Array<{ label: string; value: number }>;
@@ -56,7 +55,6 @@ type SerpDemandPayload = {
 
 const WEEKDAYS = ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"];
 const STRUCTURE_TYPES = ["hotel","agriturismo","casa_vacanza","villaggio_turistico","resort","b&b","affittacamere"] as const;
-// accettiamo 10/20/30 ma **non** mostriamo avviso se diverso (clamp silenzioso)
 const RADIUS_OPTIONS = [10,20,30] as const;
 
 const typeLabels: Record<string,string> = {
@@ -66,14 +64,9 @@ const typeLabels: Record<string,string> = {
 
 const THEME = {
   chart: {
-    pie: { innerRadius: 60, outerRadius: 110, paddingAngle: 4, cornerRadius: 8 },
-    bar: { margin: { top: 8, right: 16, left: 0, bottom: 0 }, tickSize: 12 },
-    barWide: { margin: { top: 8, right: 16, left: 0, bottom: 30 }, tickSize: 12 },
     line: { stroke: "#1e3a8a", strokeWidth: 2, dotRadius: 2 },
   },
   palette: {
-    barBlue: ["#93c5fd","#60a5fa","#3b82f6","#1d4ed8"],
-    barOrange: ["#fdba74","#fb923c","#f97316","#ea580c","#c2410c"],
     solid: ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#eab308","#06b6d4"]
   }
 };
@@ -165,19 +158,6 @@ function isWithinNextDays(d: Date, n = 7) {
   const max   = new Date(today); max.setDate(today.getDate() + n);
   const dd = new Date(d); dd.setHours(0,0,0,0);
   return dd >= today && dd <= max;
-}
-function resampleToDays(series: {date:string; score:number}[], monthISO: string) {
-  const monthDays = daysOfMonthWindow(monthISO);
-  if (!series?.length) return monthDays.map(d => ({ dateLabel: format(d,"d MMM",{locale:it}), value: 0 }));
-  const m = new Map<string, number>();
-  series.forEach(p => m.set(p.date.slice(0,10), Number(p.score)||0));
-  let lastSeen = 0;
-  return monthDays.map(d=>{
-    const iso = format(d,"yyyy-MM-dd");
-    const v = m.get(iso);
-    if (v != null) lastSeen = v;
-    return { dateLabel: format(d, "d MMM", { locale: it }), value: lastSeen };
-  });
 }
 
 /* ---------- Calendario Heatmap (con badge meteo) ---------- */
@@ -346,7 +326,6 @@ function TypesMultiSelect({
     </div>
   );
 }
-// ===== Block 2/4 =====
 export default function App(){
   const router = useRouter();
   const search = useSearchParams();
@@ -374,7 +353,7 @@ export default function App(){
   const [askProvenance, setAskProvenance] = useState(false); // Provenienza
   const [askLOS, setAskLOS] = useState(false);               // LOS
 
-  // Dati esterni già presenti nel tuo widget
+  // Dati esterni (CSV/GSheet)
   const [dataSource, setDataSource] = useState<"none"|"csv"|"gsheet">("none");
   const [csvUrl, setCsvUrl] = useState("");
   const [gsId, setGsId] = useState("");
@@ -399,8 +378,27 @@ export default function App(){
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>({ lat: 43.7696, lng: 11.2558 });
 
-  // Contatore SerpAPI
+  // Contatore SerpAPI + polling
   const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const q = await fetch("/api/serp/quota").then(r => r.json());
+        if (!alive) return;
+        if (q?.ok) {
+          setSerpUsage({
+            used:  q.this_month_usage ?? q.raw?.this_month_usage,
+            total: q.searches_per_month ?? q.raw?.searches_per_month,
+            left:  q.plan_searches_left ?? q.raw?.plan_searches_left,
+          });
+        }
+      } catch {}
+    };
+    pull();
+    const id = setInterval(pull, 15 * 60 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   // Stato per grafici
   const [serpChannels, setSerpChannels] = useState<Array<{ channel: string; value: number }>>([]);
@@ -491,7 +489,6 @@ export default function App(){
     replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
       { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
   }, [radius, monthISO, types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider, router]);
-
   /* ----- Festività IT ----- */
   useEffect(() => {
     const y = Number(aMonthISO.slice(0, 4));
@@ -531,162 +528,110 @@ export default function App(){
   }, [normalized.center, aMonthISO, wxProvider]);
 
   /* ----- SERPAPI: linea + segmenti + quota ----- */
- const fetchSerp = useCallback(async () => {
-  if (!aCenter) return;
+  const fetchSerp = useCallback(async () => {
+    if (!aCenter) return;
 
-  const needTrend = askTrend === true;
-  const needRelated = !!(askChannels || askProvenance || askLOS);
-  if (!needTrend && !needRelated) return;
+    const needTrend = askTrend === true;
+    const needRelated = !!(askChannels || askProvenance || askLOS);
+    if (!needTrend && !needRelated) return;
 
-  try {
-    const parts: string[] = [];
-    if (needTrend) parts.push("trend");
-    if (needRelated) parts.push("related");
-
-    const params = new URLSearchParams({
-      q: aQuery || "",
-      lat: String(aCenter.lat),
-      lng: String(aCenter.lng),
-      date: "today 12-m",
-      cat: "203",
-      parts: parts.join(","),
-      ch: askChannels ? "1" : "0",
-      prov: askProvenance ? "1" : "0",
-      los: askLOS ? "1" : "0",
-    });
-
-    const res = await fetch(`/api/serp/demand?${params.toString()}`);
-    const j = await res.json();
-
-    if (!j || j.ok !== true) {
-      setNotices(prev =>
-        Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."]))
-      );
-      setSerpTrend([]);
-      setSerpChannels([]);
-      setSerpOrigins([]);
-      setSerpLOS([]);
-      return;
-    }
-
-    // --- Trend (ultimi 12 mesi) ---
-    if (needTrend && Array.isArray(j.series)) {
-      const pts = (j.series as any[]).map((s: any) => {
-        const dStr = typeof s.date === "string" ? s.date : String(s.date);
-        return {
-          dateLabel: format(parseISO(dStr), "LLL yy", { locale: it }),
-          value: Number(s.score) || 0,
-        } as { dateLabel: string; value: number };
-      });
-      setSerpTrend(pts);
-    } else {
-      setSerpTrend([]);
-    }
-
-    // --- Related (canali / provenienza / los) ---
-    if (needRelated) {
-      const rel = j.related || { channels: [], provenance: [], los: [] };
-
-      const ch = (Array.isArray(rel.channels) ? rel.channels : []).map((x: any) => ({
-        channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
-        value: Number(x.value) || 0,
-      }));
-
-      const or = (Array.isArray(rel.provenance) ? rel.provenance : []).map((x: any) => ({
-        name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
-        value: Number(x.value) || 0,
-      }));
-
-      const lo = (Array.isArray(rel.los) ? rel.los : []).map((x: any) => ({
-        bucket: String(x.label || ""),
-        value: Number(x.value) || 0,
-      }));
-
-      setSerpChannels(ch);
-      setSerpOrigins(or);
-      setSerpLOS(lo);
-    } else {
-      setSerpChannels([]);
-      setSerpOrigins([]);
-      setSerpLOS([]);
-    }
-
-    // --- Badge quota (best-effort, ignora errori) ---
     try {
-      const qres = await fetch("/api/serp/quota");
-      const q = await qres.json();
-      if (q && q.ok) {
-        const badge = {
-          used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage ?? undefined,
-          total: (j.usage && j.usage.searches_per_month) ?? q.searches_per_month ?? undefined,
-          left:  (j.usage && j.usage.plan_searches_left) ?? q.plan_searches_left ?? undefined,
-        };
-        setSerpUsage(badge);
+      const parts: string[] = [];
+      if (needTrend) parts.push("trend");
+      if (needRelated) parts.push("related");
+
+      const params = new URLSearchParams({
+        q: aQuery || "",
+        lat: String(aCenter.lat),
+        lng: String(aCenter.lng),
+        date: "today 12-m",
+        cat: "203",
+        parts: parts.join(","),
+        ch: askChannels ? "1" : "0",
+        prov: askProvenance ? "1" : "0",
+        los: askLOS ? "1" : "0",
+      });
+
+      const res = await fetch(`/api/serp/demand?${params.toString()}`);
+      const j = await res.json();
+
+      if (!j || j.ok !== true) {
+        setNotices(prev =>
+          Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."]))
+        );
+        setSerpTrend([]);
+        setSerpChannels([]);
+        setSerpOrigins([]);
+        setSerpLOS([]);
+        return;
+      }
+
+      // --- Trend (ultimi 12 mesi) ---
+      if (needTrend && Array.isArray(j.series)) {
+        const pts = (j.series as any[]).map((s: any) => {
+          const dStr = typeof s.date === "string" ? s.date : String(s.date);
+          return {
+            dateLabel: format(parseISO(dStr), "LLL yy", { locale: it }),
+            value: Number(s.score) || 0,
+          } as { dateLabel: string; value: number };
+        });
+        setSerpTrend(pts);
+      } else {
+        setSerpTrend([]);
+      }
+
+      // --- Related (canali / provenienza / los) ---
+      if (needRelated) {
+        const rel = j.related || { channels: [], provenance: [], los: [] };
+
+        const ch = (Array.isArray(rel.channels) ? rel.channels : []).map((x: any) => ({
+          channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+          value: Number(x.value) || 0,
+        }));
+
+        const or = (Array.isArray(rel.provenance) ? rel.provenance : []).map((x: any) => ({
+          name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+          value: Number(x.value) || 0,
+        }));
+
+        const lo = (Array.isArray(rel.los) ? rel.los : []).map((x: any) => ({
+          bucket: String(x.label || ""),
+          value: Number(x.value) || 0,
+        }));
+
+        setSerpChannels(ch);
+        setSerpOrigins(or);
+        setSerpLOS(lo);
+      } else {
+        setSerpChannels([]);
+        setSerpOrigins([]);
+        setSerpLOS([]);
+      }
+
+      // --- Badge quota (best-effort, ignora errori) ---
+      try {
+        const qres = await fetch("/api/serp/quota");
+        const q = await qres.json();
+        if (q && q.ok) {
+          const badge = {
+            used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage ?? undefined,
+            total: (j.usage && j.usage.searches_per_month) ?? q.searches_per_month ?? undefined,
+            left:  (j.usage && j.usage.plan_searches_left) ?? q.plan_searches_left ?? undefined,
+          };
+          setSerpUsage(badge);
+        }
+      } catch (e) {
+        // ignore
       }
     } catch (e) {
-      // ignore
+      setNotices(prev =>
+        Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."]))
+      );
     }
-  } catch (e) {
-    setNotices(prev =>
-      Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."]))
-    );
-  }
-}, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
+  }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
-
-// ===== Block 3/4 =====
-  // CSV/GS (ridotto)
-  useEffect(() => {
-    if (dataSource === "none") return;
-    setLoading(true);
-    (async () => {
-      try {
-        let url = "";
-        if (dataSource === "csv") url = csvUrl.trim();
-        else {
-          if (!gsId) throw new Error("Sheet ID mancante");
-          url = strictSheet
-            ? `https://docs.google.com/spreadsheets/d/${gsId}/export?format=csv&gid=${encodeURIComponent(gsGid||"0")}`
-            : `https://docs.google.com/spreadsheets/d/${gsId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(gsSheet||"Sheet1")}`;
-        }
-        const txt = await fetch(url).then(r=>r.text());
-        const lines = txt.split(/\r?\n/).filter(Boolean);
-        if (lines.length < 2) { setRawRows([]); return; }
-        const delim = lines[0].includes(";") ? ";" : ",";
-        const headers = lines[0].split(delim).map(h=>h.toLowerCase().trim());
-        const rows = lines.slice(1).map(line=>{
-          const cells = line.split(delim);
-          const obj: any = {};
-          headers.forEach((h,i)=>obj[h]=cells[i]??"");
-          return obj;
-        });
-        const toNum = (v:string)=> Number(String(v).replace(",","."));
-        const toD = (v:string)=> new Date(v);
-        const norm: DataRow[] = rows.map((r:any)=>({
-          date: toD(r.date||r.data||r.giorno),
-          adr: toNum(r.adr||r.adr_medio||r.prezzo_medio)||0,
-          occ: toNum(r.occ||r.occupazione||r.occ_rate)||0,
-          los: toNum(r.los||r.notti||r.soggiorno)||0,
-          channel: r.channel||r.canale||"Altro",
-          provenance: r.provenance||r.country||r.nazione||"Altro",
-          type: r.type||r.tipo||"",
-          lat: toNum(r.lat||r.latitude)||0,
-          lng: toNum(r.lng||r.longitude)||0,
-        })).filter(r=>!!r.date);
-        setRawRows(norm);
-      } catch (e:any) {
-        setLoadError(String(e?.message||e));
-      } finally { setLoading(false); }
-    })();
-  }, [dataSource, csvUrl, gsId, gsGid, gsSheet, strictSheet]);
-
-  const monthDate = useMemo(()=> {
-    if(!aMonthISO) return new Date();
-    try { return parseISO(aMonthISO); } catch (e) { return new Date(); }
-  }, [aMonthISO]);
-
-  // Calendario (pressione + adr dimostrativi)
+    // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
     const days = daysOfMonthWindow(aMonthISO);
     return days.map(d => ({
@@ -698,9 +643,9 @@ export default function App(){
     }));
   }, [aMonthISO, aMode, holidays, weatherByDate]);
 
-  const provenance = useMemo(()=> (serpOrigins.length>0 ? serpOrigins : []), [serpOrigins]);
-  const los = useMemo(()=> (serpLOS.length>0 ? serpLOS : []), [serpLOS]);
-  const channels = useMemo(()=> (serpChannels.length>0 ? serpChannels : []), [serpChannels]);
+  const provenance = useMemo(() => (serpOrigins.length > 0 ? serpOrigins : []), [serpOrigins]);
+  const los = useMemo(() => (serpLOS.length > 0 ? serpLOS : []), [serpLOS]);
+  const channels = useMemo(() => (serpChannels.length > 0 ? serpChannels : []), [serpChannels]);
 
   const meteoCovered = useMemo(
     () => calendarData.filter((d: any) => d?.wx?.code != null && isWithinNextDays(d.date, 7)).length,
@@ -709,7 +654,7 @@ export default function App(){
 
   const handleReset = useCallback(() => {
     const now = new Date();
-    const m = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+    const m = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
     setQuery("Firenze"); setRadius(20); setMonthISO(m); setTypes(["hotel"]); setMode("zone");
     setAQuery("Firenze"); setARadius(20); setAMonthISO(m); setATypes(["hotel"]); setAMode("zone"); setACenter({ lat: 43.7696, lng: 11.2558 });
     setAskTrend(true); setAskChannels(false); setAskProvenance(false); setAskLOS(false); setWxProvider("open-meteo");
@@ -720,14 +665,6 @@ export default function App(){
       askTrend: true, askChannels: false, askProvenance: false, askLOS: false, wxProvider: "open-meteo"
     });
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
-
-  const [shareUrl, setShareUrl] = useState<string>("");
-// HREF per pagina Grafica: usa il path corrente + query del link condivisibile
-const graficaHref = useMemo(() => {
-  const base = (typeof window !== "undefined" ? location.pathname : "/");
-  const qs = shareUrl.includes("?") ? shareUrl.slice(shareUrl.indexOf("?")) : "";
-  return base.replace(/\/$/, "") + "/grafica" + qs;
-}, [shareUrl]);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -748,7 +685,7 @@ const graficaHref = useMemo(() => {
             onClick={handleReset}
             title="Reset"
           >
-            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4"/> Reset</span>
+            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4" /> Reset</span>
           </button>
         </div>
       </div>
@@ -762,7 +699,11 @@ const graficaHref = useMemo(() => {
             <div className="text-sm font-semibold">Sorgente Dati</div>
             <div className="flex items-center gap-2">
               <label className="w-28 text-sm text-slate-700">Tipo</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full" value={dataSource} onChange={(e)=> setDataSource(e.target.value as any)}>
+              <select
+                className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-full"
+                value={dataSource}
+                onChange={(e) => setDataSource(e.target.value as any)}
+              >
                 <option value="none">Nessuna (demo)</option>
                 <option value="csv">CSV URL</option>
                 <option value="gsheet">Google Sheet</option>
@@ -771,27 +712,47 @@ const graficaHref = useMemo(() => {
             {dataSource === "csv" && (
               <div className="flex items-center gap-2">
                 <label className="w-28 text-sm text-slate-700">CSV URL</label>
-                <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={csvUrl} onChange={e=> setCsvUrl(e.target.value)} placeholder="https://.../out:csv&sheet=Foglio1" />
+                <input
+                  className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                  value={csvUrl}
+                  onChange={(e) => setCsvUrl(e.target.value)}
+                  placeholder="https://…&tqx=out:csv&sheet=Foglio1"
+                />
               </div>
             )}
             {dataSource === "gsheet" && (
               <>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Sheet ID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsId} onChange={e=> setGsId(e.target.value)} placeholder="1AbC…" />
+                  <input
+                    className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                    value={gsId}
+                    onChange={(e) => setGsId(e.target.value)}
+                    placeholder="1AbC…"
+                  />
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Nome foglio</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsSheet} onChange={e=> setGsSheet(e.target.value)} placeholder="Foglio1 / Sheet1" />
+                  <label className="w-28 text-sm text-slate-700">Sheet</label>
+                  <input
+                    className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                    value={gsSheet}
+                    onChange={(e) => setGsSheet(e.target.value)}
+                    placeholder="Sheet1"
+                  />
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="w-28 text-sm text-slate-700">Sheet GID</label>
-                  <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm" value={gsGid} onChange={e=> setGsGid(e.target.value)} placeholder="es. 0 (#gid=...)" />
+                  <label className="w-28 text-sm text-slate-700">GID</label>
+                  <input
+                    className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+                    value={gsGid}
+                    onChange={(e) => setGsGid(e.target.value)}
+                    placeholder="es. 0 (#gid=…)"
+                  />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="w-28 text-sm text-slate-700">Modalità</label>
                   <div className="flex items-center gap-2">
-                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e)=> setStrictSheet(e.currentTarget.checked)} />
+                    <input id="strict" type="checkbox" checked={strictSheet} onChange={(e) => setStrictSheet(e.currentTarget.checked)} />
                     <label htmlFor="strict" className="text-sm">Rigida (consigliata)</label>
                   </div>
                 </div>
@@ -799,13 +760,13 @@ const graficaHref = useMemo(() => {
             )}
             {loading && <div className="text-xs text-slate-600">Caricamento dati…</div>}
             {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
-            {rawRows.length>0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
+            {rawRows.length > 0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
 
           {/* Località / Raggio / Mese / Tipologie / Meteo provider */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
             <div className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-slate-700"/>
+              <MapPin className="h-5 w-5 text-slate-700" />
               <label className="w-28 text-sm text-slate-700">Località</label>
               <div className="flex gap-2 w-full">
                 <input
@@ -822,104 +783,107 @@ const graficaHref = useMemo(() => {
             </div>
 
             <div className="flex items-center gap-2">
-              <Route className="h-5 w-5 text-slate-700"/>
+              <Route className="h-5 w-5 text-slate-700" />
               <label className="w-28 text-sm text-slate-700">Raggio</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40" value={String(radius)} onChange={(e)=> setRadius(parseInt(e.target.value))}>
-                {RADIUS_OPTIONS.map(r=> <option key={r} value={r}>{r} km</option>)}
+              <select
+                className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-40"
+                value={String(radius)}
+                onChange={(e) => setRadius(parseInt(e.target.value))}
+              >
+                {RADIUS_OPTIONS.map(r => <option key={r} value={r}>{r} km</option>)}
               </select>
             </div>
 
             <div className="flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-slate-700"/>
+              <CalendarDays className="h-5 w-5 text-slate-700" />
               <label className="w-28 text-sm text-slate-700">Mese</label>
-              <input type="month" value={monthISO ? monthISO.slice(0,7) : ""} onChange={e=> setMonthISO(`${e.target.value||""}-01`)} className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"/>
+              <input
+                type="month"
+                value={monthISO ? monthISO.slice(0, 7) : ""}
+                onChange={e => setMonthISO(`${e.target.value || ""}-01`)}
+                className="w-48 h-9 rounded-xl border border-slate-300 px-2 text-sm"
+              />
             </div>
+
+            <TypesMultiSelect
+              value={types}
+              onChange={setTypes}
+              allTypes={STRUCTURE_TYPES}
+              labels={typeLabels}
+            />
 
             <div className="flex items-center gap-2">
               <label className="w-28 text-sm text-slate-700">Meteo</label>
-              <select className="h-9 rounded-xl border border-slate-300 px-2 text-sm w-48" value={wxProvider} onChange={(e)=> setWxProvider(e.target.value as any)}>
-                <option value="open-meteo">Open-Meteo (default)</option>
-                <option value="openweather">OpenWeather (se configurato)</option>
-              </select>
+              <div className="flex items-center gap-4">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="radio" name="wx" checked={wxProvider === "open-meteo"} onChange={() => setWxProvider("open-meteo")} />
+                  Open-Meteo
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="radio" name="wx" checked={wxProvider === "openweather"} onChange={() => setWxProvider("openweather")} />
+                  OpenWeather (demo)
+                </label>
+              </div>
             </div>
 
-            <TypesMultiSelect value={types} onChange={setTypes} allTypes={STRUCTURE_TYPES} labels={typeLabels} />
-
-            {/* Selettori SERP */}
-            <div className="rounded-xl border bg-white p-3">
-              <div className="text-sm font-semibold mb-2">Dati da chiedere alle API</div>
-              <label className="flex items-center gap-2 text-sm mb-1">
-                <input type="checkbox" checked={askTrend} onChange={(e)=> setAskTrend(e.currentTarget.checked)} />
-                <span>Andamento domanda (Google Trends)</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm mb-1">
-                <input type="checkbox" checked={askChannels} onChange={(e)=> setAskChannels(e.currentTarget.checked)} />
-                <span>Canali di vendita</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm mb-1">
-                <input type="checkbox" checked={askProvenance} onChange={(e)=> setAskProvenance(e.currentTarget.checked)} />
-                <span>Provenienza clienti</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={askLOS} onChange={(e)=> setAskLOS(e.currentTarget.checked)} />
-                <span>Durata media soggiorno (LOS)</span>
-              </label>
-              <p className="mt-2 text-[11px] text-slate-500">
-                Spunta solo i grafici che ti servono: risparmi query su SerpAPI.
-              </p>
-            </div>
-
-            {/* Modalità + Pulsante + Link condivisibile */}
-            <div className="grid grid-cols-1 gap-3 mt-2">
-              <div className="flex items-center gap-3">
-                <label className="w-28 text-sm text-slate-700">Modalità</label>
-                <div className="inline-flex rounded-xl border overflow-hidden">
-                  <button
-                    title="Analizza la domanda “macro” dell’area selezionata (es. “Firenze hotel”). Curva di interesse locale e ADR neutro."
-                    className={`px-3 py-1 text-sm ${mode==="zone"?"bg-slate-900 text-white":"bg-white text-slate-900"}`}
-                    onClick={()=> setMode("zone")}
-                  >
-                    Zona
-                  </button>
-                  <button
-                    title="Vista competitor: stessa curva di domanda (fonte Trends free), ma ADR stimato più aggressivo per contesto competitivo."
-                    className={`px-3 py-1 text-sm ${mode==="competitor"?"bg-slate-900 text-white":"bg-white text-slate-900"}`}
-                    onClick={()=> setMode("competitor")}
-                  >
-                    Competitor
-                  </button>
-                </div>
+            {/* SERP & diagnostica */}
+            <div className="mt-2 border-t pt-3 space-y-2">
+              <div className="text-sm font-semibold">Dati Esterni (Google Trends via SerpAPI)</div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={askTrend} onChange={(e) => setAskTrend(e.currentTarget.checked)} />
+                  Andamento
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={askChannels} onChange={(e) => setAskChannels(e.currentTarget.checked)} />
+                  Canali
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={askProvenance} onChange={(e) => setAskProvenance(e.currentTarget.checked)} />
+                  Provenienza
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={askLOS} onChange={(e) => setAskLOS(e.currentTarget.checked)} />
+                  LOS
+                </label>
               </div>
 
               <div>
+                <div className="text-xs text-slate-600 mb-2">
+                  {serpUsage?.used != null && serpUsage?.total != null
+                    ? <>Quota SERP usata: <b>{serpUsage.used}</b> / {serpUsage.total} (rimasti {serpUsage.left ?? "?"})</>
+                    : <>Quota SERP non rilevata</>}
+                </div>
+
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => {
-                    const next = { q: query, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet,
-                      askTrend, askChannels, askProvenance, askLOS, wxProvider };
+                    const next = {
+                      q: query, r: radius, m: monthISO, t: types, mode,
+                      dataSource, csvUrl, gsId, gsGid, gsSheet,
+                      askTrend, askChannels, askProvenance, askLOS, wxProvider
+                    };
                     setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
                     if (!aCenter) setACenter({ lat: 43.7696, lng: 11.2558 });
-                    const url = replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
-                    setShareUrl(url);
+                    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
+                    const share = makeShareUrl((typeof window !== "undefined" ? location.pathname : "/"), next);
+                    setShareUrl(share);
                     fetchSerp();
                   }}
                 >
-                  <RefreshCw className="h-4 w-4 mr-2"/>
+                  <RefreshCw className="h-4 w-4 mr-2" />
                   Genera Analisi
                 </button>
-<div className="mt-2">
-  <a
-    href={graficaHref}
-    className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-white hover:bg-slate-50"
-  >
-    Apri pagina Grafica
-  </a>
-</div>
 
                 {shareUrl && (
                   <div className="mt-2">
                     <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
-                    <input className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs" value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl} readOnly onFocus={(e)=> e.currentTarget.select()} />
+                    <input
+                      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-xs"
+                      value={typeof window !== "undefined" ? `${location.origin}${shareUrl}` : shareUrl}
+                      readOnly
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
                   </div>
                 )}
               </div>
@@ -927,22 +891,23 @@ const graficaHref = useMemo(() => {
           </section>
 
           {/* Avvisi */}
-          {notices.length>0 && (
+          {notices.length > 0 && (
             <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
               <div className="text-sm font-semibold text-amber-900">Avvisi</div>
-              <ul className="list-disc ml-5 text-sm text-amber-900">{notices.map((n,i)=> <li key={i}>{n}</li>)}</ul>
+              <ul className="list-disc ml-5 text-sm text-amber-900">
+                {notices.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
             </section>
           )}
         </aside>
-
         {/* MAIN */}
         <main className="space-y-6">
           {/* MAPPA */}
           <div className="bg-white rounded-2xl border shadow-sm p-0">
             <div className="h-72 md:h-[400px] lg:h-[480px] overflow-hidden rounded-2xl">
               <LocationMap
-                center={normalized.center ? { lat: normalized.center.lat, lng: normalized.center.lng } : null}
-                radius={normalized.safeR * 1000}
+                center={aCenter ? { lat: aCenter.lat, lng: aCenter.lng } : null}
+                radius={aRadius * 1000}
                 label={aQuery || "Località"}
                 onClick={onMapClick}
               />
@@ -961,10 +926,127 @@ const graficaHref = useMemo(() => {
             </div>
             <CalendarHeatmap monthDate={monthDate} data={calendarData} />
           </div>
-         
+
+          {/* Grafici: Provenienza + LOS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Provenienza Clienti</div>
+
+              {provenance.length === 0 || provenance.every(x => (x.value || 0) === 0) ? (
+                <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+                  Nessun segnale utile per questo periodo/area.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={360}>
+                  <PieChart margin={{ bottom: 24 }}>
+                    <defs>
+                      {provenance.map((_, i) => {
+                        const base = solidColor(i);
+                        return (
+                          <linearGradient key={i} id={`gradSlice-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.25)} />
+                            <stop offset="100%" stopColor={shade(base, -0.12)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <Pie
+                      data={provenance}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={THEME.chart.pie.innerRadius}
+                      outerRadius={THEME.chart.pie.outerRadius}
+                      paddingAngle={THEME.chart.pie.paddingAngle}
+                      cornerRadius={THEME.chart.pie.cornerRadius}
+                      labelLine={false}
+                      label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}
+                      isAnimationActive
+                      style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,15))" }}
+                    >
+                      {provenance.map((_, i) => (
+                        <Cell key={i} fill={`url(#gradSlice-${i})`} stroke="#ffffff" strokeWidth={2} />
+                      ))}
+                    </Pie>
+                    <RTooltip content={<CustomTooltip />} />
+                    <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ color: "#111827", fontWeight: 600 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl border shadow-sm p-4">
+              <div className="text-sm font-semibold mb-2">Durata Media Soggiorno (LOS)</div>
+
+              {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
+                <div className="h-48 flex items-center justify-center text-sm text-slate-500">
+                  Nessun segnale utile per questo periodo/area.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={los} margin={THEME.chart.bar.margin}>
+                    <defs>
+                      {los.map((_, i) => {
+                        const base = THEME.palette.barBlue[i % THEME.palette.barBlue.length];
+                        return (
+                          <linearGradient key={i} id={`gradBarLOS-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={shade(base, 0.2)} />
+                            <stop offset="100%" stopColor={shade(base, -0.15)} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="bucket" tick={{ fontSize: THEME.chart.bar.tickSize }} />
+                    <YAxis />
+                    <RTooltip content={<CustomTooltip />} />
+                    <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                      {los.map((_, i) => (<Cell key={i} fill={`url(#gradBarLOS-${i})`} />))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Canali */}
+          <div className="bg-white rounded-2xl border shadow-sm p-4">
+            <div className="text-sm font-semibold mb-2">Canali di Vendita</div>
+
+            {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
+              <div className="h-56 flex items-center justify-center text-sm text-slate-500">
+                Nessun segnale utile per questo periodo/area.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={360}>
+                <BarChart data={channels} margin={THEME.chart.barWide.margin}>
+                  <defs>
+                    {channels.map((_, i) => {
+                      const base = THEME.palette.barOrange[i % THEME.palette.barOrange.length];
+                      return (
+                        <linearGradient key={i} id={`gradBarCH-${i}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={shade(base, 0.18)} />
+                          <stop offset="100%" stopColor={shade(base, -0.15)} />
+                        </linearGradient>
+                      );
+                    })}
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="channel" interval={0} tick={{ fontSize: THEME.chart.barWide.tickSize }} height={40} />
+                  <YAxis />
+                  <RTooltip content={<CustomTooltip />} />
+                  <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                    {channels.map((_, i) => (<Cell key={i} fill={`url(#gradBarCH-${i})`} />))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
           {/* Andamento Domanda */}
           <div className="bg-white rounded-2xl border shadow-sm p-4">
-            <div className="text-sm font-semibold mb-2">Andamento Domanda – Ultimi 12 mesi</div>
+            <div className="text-sm font-semibold mb-2">Andamento Domanda – {format(monthDate, "LLLL yyyy", { locale: it })}</div>
 
             {serpTrend.length === 0 || serpTrend.every(p => (p.value || 0) === 0) ? (
               <div className="h-56 flex items-center justify-center text-sm text-slate-500">
@@ -984,13 +1066,19 @@ const graficaHref = useMemo(() => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="dateLabel" tick={{fontSize: 12}} interval={3}/>
+                  <XAxis dataKey="dateLabel" tick={{ fontSize: 12 }} interval={3} />
                   <YAxis />
-                  <RTooltip />
+                  <RTooltip content={<CustomTooltip />} />
                   <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                  <Line type="monotone" dataKey="value" stroke="url(#gradLineStroke)" strokeWidth={THEME.chart.line.strokeWidth + 0.5}
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="url(#gradLineStroke)"
+                    strokeWidth={THEME.chart.line.strokeWidth + 0.5}
                     dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }} isAnimationActive />
+                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
+                    isAnimationActive
+                  />
                 </LineChart>
               </ResponsiveContainer>
             )}
