@@ -565,11 +565,10 @@ export default function App(){
     }
 
     // --- Trend (ultimi 12 mesi) ---
-    if (needTrend && Array.isArray(j.series)) {
-      const pts: SerpPoint[] = j.series.map((s: any) => ({
-        dateLabel: format(parseISO(String(s.date)), "LLL yy", { locale: it }),
-        value: Number(s.score) || 0,
-      }));
+    const pts = j.series.map((s: any) => ({
+  dateLabel: format(parseISO(String(s.date)), "LLL yy", { locale: it }),
+  value: Number(s.score) || 0,
+})) as Array<{ dateLabel: string; value: number }>;
       setSerpTrend(pts);
     } else {
       setSerpTrend([]);
