@@ -531,108 +531,97 @@ export default function App(){
   }, [normalized.center, aMonthISO, wxProvider]);
 
   /* ----- SERPAPI: linea + segmenti + quota ----- */
-  const fetchSerp = useCallback(async () => {
-    if (!aCenter) return;
+ const fetchSerp = useCallback(async () => {
+  if (!aCenter) return;
 
-    const needTrend   = askTrend;
-    const needRelated = askChannels || askProvenance || askLOS;
-    if (!needTrend && !needRelated) return;
+  const needTrend = askTrend === true;
+  const needRelated = !!(askChannels || askProvenance || askLOS);
+  if (!needTrend && !needRelated) return;
 
-    try {
-      const params = new URLSearchParams({
-        q: `${aQuery} hotel`,
-        lat: String(aCenter.lat),
-        lng: String(aCenter.lng),
-        date: "today 12-m",
-        cat: "203",
-        parts: [
-          needTrend ? "trend" : "",
-          needRelated ? "related" : ""
-        ].filter(Boolean).join(","),
-      });
-      // comunica al backend quali bucket "related" servono
-      params.set("ch", String(+askChannels));
-      params.set("prov", String(+askProvenance));
-      params.set("los", String(+askLOS));
+  try {
+    const parts: string[] = [];
+    if (needTrend) parts.push("trend");
+    if (needRelated) parts.push("related");
 
-      const r = await fetch(`/api/serp/demand?${params.toString()}`);
-      const j: SerpDemandPayload = await r.json();
+    const params = new URLSearchParams({
+      q: aQuery || "",
+      lat: String(aCenter.lat),
+      lng: String(aCenter.lng),
+      date: "today 12-m",
+      cat: "203",
+      parts: parts.join(","),
+      ch: askChannels ? "1" : "0",
+      prov: askProvenance ? "1" : "0",
+      los: askLOS ? "1" : "0",
+    });
 
-      if (!j?.ok) {
-  setNotices(prev => Array.from(new Set([...prev, (j as any)?.error || "Nessun dato SERP per la query/periodo."])));
-  setSerpTrend([]); setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
-  return;
-}
+    const res = await fetch(`/api/serp/demand?${params.toString()}`);
+    const j: any = await res.json();
 
-      // Quota SERP (parziale dalla stessa response)
-      let badge = {
-        used: j.usage?.this_month_usage,
-        total: j.usage?.searches_per_month,
-        left: j.usage?.plan_searches_left
-      } as any;
-const rel = j.related ?? { channels: [], provenance: [], los: [] };
-
-     if (needTrend && Array.isArray(j.series)) {
-  // Usa l’intera serie “today 12-m” (tipicamente settimanale)
-  const points = j.series.map(s => ({
-    dateLabel: format(parseISO(s.date), "LLL yy", { locale: it }),
-    value: Number(s.score) || 0,
-  }));
-  setSerpTrend(points);
-} else if (!needTrend) {
-  setSerpTrend([]);
-}
-const rel = j.related ?? { channels: [], provenance: [], los: [] };
-
-        if (askChannels) {
-          setSerpChannels([
-            { channel: "Booking",  value: rel.channels.find((x)=>x.label==="booking")?.value || 0 },
-            { channel: "Airbnb",   value: rel.channels.find((x)=>x.label==="airbnb")?.value || 0 },
-            { channel: "Diretto",  value: rel.channels.find((x)=>x.label==="diretto")?.value || 0 },
-            { channel: "Expedia",  value: rel.channels.find((x)=>x.label==="expedia")?.value || 0 },
-            { channel: "Altro",    value: rel.channels.find((x)=>x.label==="altro")?.value || 0 },
-          ]);
-        } else { setSerpChannels([]); }
-
-        if (askProvenance) {
-          setSerpOrigins([
-            { name: "Italia",   value: rel.provenance.find((x)=>x.label==="italia")?.value || 0 },
-            { name: "Germania", value: rel.provenance.find((x)=>x.label==="germania")?.value || 0 },
-            { name: "Francia",  value: rel.provenance.find((x)=>x.label==="francia")?.value || 0 },
-            { name: "USA",      value: rel.provenance.find((x)=>x.label==="usa")?.value || 0 },
-            { name: "UK",       value: rel.provenance.find((x)=>x.label==="uk")?.value || 0 },
-          ]);
-        } else { setSerpOrigins([]); }
-
-        if (askLOS) {
-          setSerpLOS([
-            { bucket: "1 notte",  value: rel.los.find((x)=>x.label==="1 notte")?.value || 0 },
-            { bucket: "2-3 notti",value: rel.los.find((x)=>x.label==="2-3 notti")?.value || 0 },
-            { bucket: "4-6 notti",value: rel.los.find((x)=>x.label==="4-6 notti")?.value || 0 },
-            { bucket: "7+ notti", value: rel.los.find((x)=>x.label==="7+ notti")?.value || 0 },
-          ]);
-        } else { setSerpLOS([]); }
-      }
-
-      if (j.note) setNotices(prev => Array.from(new Set([...prev, j.note!])));
-
-      // Merge badge con /api/serp/quota
-      try {
-        const q = await fetch("/api/serp/quota").then(r=>r.json());
-        if (q?.ok) {
-          badge.used  = badge.used  ?? q.this_month_usage;
-          badge.total = badge.total ?? q.searches_per_month ?? q.raw?.searches_per_month;
-          badge.left  = badge.left  ?? q.plan_searches_left ?? q.raw?.plan_searches_left;
-        }
-      } catch (e) {}
-      setSerpUsage(badge);
-
-    } catch (e) {
-      setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
+    if (!j || j.ok !== true) {
+      setNotices(prev => Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."])));
+      setSerpTrend([]); setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
+      return;
     }
-  }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
+
+    // --- Trend (ultimi 12 mesi) ---
+    if (needTrend && Array.isArray(j.series)) {
+      const pts: SerpPoint[] = j.series.map((s: any) => ({
+        dateLabel: format(parseISO(String(s.date)), "LLL yy", { locale: it }),
+        value: Number(s.score) || 0,
+      }));
+      setSerpTrend(pts);
+    } else {
+      setSerpTrend([]);
+    }
+
+    // --- Related (canali / provenienza / los) ---
+    if (needRelated) {
+      const rel = j.related ?? { channels: [], provenance: [], los: [] };
+
+      const ch: ChannelRow[] = (rel.channels || []).map((x: any) => ({
+        channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+        value: Number(x.value) || 0,
+      }));
+
+      const or: OriginRow[] = (rel.provenance || []).map((x: any) => ({
+        name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+        value: Number(x.value) || 0,
+      }));
+
+      const lo: LOSRow[] = (rel.los || []).map((x: any) => ({
+        bucket: String(x.label || ""),
+        value: Number(x.value) || 0,
+      }));
+
+      setSerpChannels(ch);
+      setSerpOrigins(or);
+      setSerpLOS(lo);
+    } else {
+      setSerpChannels([]); setSerpOrigins([]); setSerpLOS([]);
+    }
+
+    // --- Badge quota (best-effort, ignora errori) ---
+    try {
+      const qres = await fetch("/api/serp/quota");
+      const q = await qres.json();
+      if (q && q.ok) {
+        const badge = {
+          used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage,
+          total: (j.usage && j.usage.searches_per_month) ?? q.searches_per_month,
+          left:  (j.usage && j.usage.plan_searches_left) ?? q.plan_searches_left,
+        };
+        setSerpUsage(badge);
+      }
+    } catch (e) { /* ignore quota error */ }
+
+  } catch (e) {
+    setNotices(prev => Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."])));
+  }
+}, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
+
 // ===== Block 3/4 =====
   // CSV/GS (ridotto)
   useEffect(() => {
