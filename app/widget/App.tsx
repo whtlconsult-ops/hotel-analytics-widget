@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { http } from "../../lib/http";
+import { cityFromTopic, seasonalityItaly12, last12LabelsLLLyy, normalizeTo100, blend3 } from "../../lib/baseline";
 import { parseMainQuery } from "../../lib/params";
 import { it } from "date-fns/locale";
 import {
@@ -587,19 +588,73 @@ export default function App(){
         return;
       }
 
-      // --- Trend (ultimi 12 mesi) ---
-      if (needTrend && Array.isArray(j.series)) {
-        const pts = (j.series as any[]).map((s: any) => {
-          const dStr = typeof s.date === "string" ? s.date : String(s.date);
-          return {
-            dateLabel: format(parseISO(dStr), "LLL yy", { locale: it }),
-            value: Number(s.score) || 0,
-          } as { dateLabel: string; value: number };
-        });
-        setSerpTrend(pts);
-      } else {
-        setSerpTrend([]);
-      }
+      // --- Trend (ultimi 12 mesi): BLEND SERP + WIKIPEDIA + STAGIONALITÀ ---
+let finalTrend: Array<{ dateLabel: string; value: number }> = [];
+const monthLabels = last12LabelsLLLyy(); // ["ott 24", ..., "set 25"]
+
+// 1) Serie SERP normalizzata su 12 bucket (se disponibile)
+let serp12: number[] = new Array(12).fill(0);
+if (needTrend && Array.isArray(j.series)) {
+  // Raggruppa per mese (label LLL yy), media valori
+  const byMonth: Record<string, { sum: number; n: number }> = {};
+  (j.series as any[]).forEach((s: any) => {
+    try {
+      const dStr = typeof s.date === "string" ? s.date : String(s.date);
+      const lbl = format(parseISO(dStr), "LLL yy", { locale: it });
+      if (!byMonth[lbl]) byMonth[lbl] = { sum: 0, n: 0 };
+      byMonth[lbl].sum += Number(s.score) || 0;
+      byMonth[lbl].n  += 1;
+    } catch {}
+  });
+  serp12 = monthLabels.map(lbl => {
+    const cell = byMonth[lbl];
+    const v = cell ? (cell.sum / Math.max(1, cell.n)) : 0;
+    return Number.isFinite(v) ? v : 0;
+  });
+  serp12 = normalizeTo100(serp12);
+} else {
+  serp12 = new Array(12).fill(0);
+}
+
+// 2) Serie Wikipedia (IT+EN) normalizzata (se disponibile)
+const city = cityFromTopic(aQuery || "");
+let wiki12: number[] = new Array(12).fill(0);
+try {
+  const w = await http.json<any>(`/api/baseline/wiki?q=${encodeURIComponent(city)}&months=12`, { timeoutMs: 7000, retries: 1 });
+  if (w.ok && Array.isArray(w.data?.series)) {
+    const series = w.data.series as Array<{ month: string; views: number }>;
+    // Map su label LLL yy
+    const map: Record<string, number> = {};
+    series.forEach(row => {
+      const [y, m] = row.month.split("-");
+      const lbl = format(new Date(Number(y), Number(m)-1, 1), "LLL yy", { locale: it });
+      map[lbl] = (map[lbl] || 0) + (Number(row.views) || 0);
+    });
+    wiki12 = monthLabels.map(lbl => map[lbl] || 0);
+    wiki12 = normalizeTo100(wiki12);
+  }
+} catch { /* ignore */ }
+
+// 3) Stagionalità Italia
+const seas12 = normalizeTo100(seasonalityItaly12());
+
+// 4) Blend con pesi (tarabili in futuro)
+const wSerp = serp12.some(v => v > 0) ? 0.6 : 0.0;
+const wWiki = wiki12.some(v => v > 0) ? (wSerp > 0 ? 0.3 : 0.7) : 0.0;
+const wSea  = 1.0 - (wSerp + wWiki); // 0.1 se SERP+Wiki ci sono, 0.3 se solo Wiki, 1.0 se nessuno
+const mixed = blend3(serp12, wiki12, seas12, wSerp, wWiki, wSea);
+const mixedN = normalizeTo100(mixed);
+
+// 5) Adatta all’array per Recharts
+finalTrend = monthLabels.map((lbl, i) => ({ dateLabel: lbl, value: mixedN[i] || 0 }));
+const partsUsed: string[] = [];
+if (wSerp > 0) partsUsed.push("SERP");
+if (wWiki > 0) partsUsed.push("Wikipedia");
+if (wSea  > 0) partsUsed.push("Stagionalità");
+if (partsUsed.length > 0 && partsUsed.join("+") !== "SERP") {
+  setNotices(prev => Array.from(new Set([...prev, `Curva composta: ${partsUsed.join(" + ")}`])));
+}
+setSerpTrend(finalTrend);
 
       // --- Related (canali / provenienza / los) ---
       if (needRelated) {
