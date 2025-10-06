@@ -713,7 +713,7 @@ const monthDate = useMemo(() => {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Topbar */}
-     <div className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur">
+     <div className="sticky top-0 z-[1100] border-b bg-white backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">Widget Hospitality Analytics</h1>
@@ -725,7 +725,10 @@ const monthDate = useMemo(() => {
   <TrendingUp className="h-3.5 w-3.5" />
   <span
     className={
-      `inline-block h-2 w-2 rounded-full ${serpUsage?.left === 0 ? "bg-rose-500" : "bg-emerald-500"}`
+title={serpUsage?.left == null ? "Stato sconosciuto" : (serpUsage.left === 0 ? "Quota esaurita" : "Connesso")}
+      `inline-block h-2 w-2 rounded-full ${
+      serpUsage?.left == null ? "bg-slate-400" :
+      serpUsage.left === 0 ? "bg-rose-500" : "bg-emerald-500"
     }
   />
   <span>Connesso a SerpAPI</span>
@@ -928,7 +931,7 @@ const monthDate = useMemo(() => {
     href={graficaHref}
     className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-white hover:bg-slate-50"
   >
-    Apri pagina Grafica
+    Area Grafica
   </a>
 </div>
 
