@@ -682,7 +682,7 @@ useEffect(() => {
     }
   })();
   return () => { alive = false; };
-}, [icsRaw, aCenter, aRadius, http]);
+}, [icsRaw, aRadius, aCenter?.lat, aCenter?.lng]);
 
   /* ----- SERPAPI: linea + segmenti + quota ----- */
   const fetchSerp = useCallback(async () => {
