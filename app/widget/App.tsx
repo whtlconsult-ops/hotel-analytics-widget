@@ -408,6 +408,8 @@ const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
 
 // Eventi (ICS)
 const [icsUrl, setIcsUrl] = useState<string>("");
+type RawEv = { date: string; title: string; location?: string; lat?: number; lng?: number };
+const [icsRaw, setIcsRaw] = useState<RawEv[]>([]);
 const [eventsByDate, setEventsByDate] = useState<Record<string, { title: string }[]>>({});
 
   // Stato “applicato”
@@ -570,7 +572,7 @@ const [eventsByDate, setEventsByDate] = useState<Record<string, { title: string 
 
 /* ----- Eventi (ICS) ----- */
 useEffect(() => {
-  if (!icsUrl) { setEventsByDate({}); return; }
+  if (!icsUrl) { setIcsRaw([]); setEventsByDate({}); return; }
   const u = `/api/events/ics?url=${encodeURIComponent(icsUrl)}`;
   let alive = true;
   (async () => {
@@ -578,22 +580,109 @@ useEffect(() => {
       const r = await http.json<any>(u, { timeoutMs: 8000, retries: 1 });
       if (!alive) return;
       if (r.ok && Array.isArray(r.data?.events)) {
-        const map: Record<string, { title: string }[]> = {};
-        for (const ev of r.data.events as Array<{ date: string; title: string }>) {
-          if (!map[ev.date]) map[ev.date] = [];
-          map[ev.date].push({ title: ev.title });
-        }
-        setEventsByDate(map);
+        setIcsRaw(r.data.events as RawEv[]);
       } else {
+        setIcsRaw([]);
         setEventsByDate({});
         setNotices(prev => Array.from(new Set([...prev, "ICS non disponibile o vuoto."])));
       }
     } catch {
+      setIcsRaw([]);
       setEventsByDate({});
     }
   })();
   return () => { alive = false; };
 }, [icsUrl]);
+
+// Geo-filter: geocodifica LOCATION quando mancano le coordinate e filtra entro raggio
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      // Se non c'è centro selezionato, mostra TUTTI gli eventi del mese
+      const center = aCenter ? { lat: aCenter.lat, lng: aCenter.lng } : null;
+      const radiusKm = aRadius ?? 0;
+
+      // Cache locale per location->coords
+      const cache = new Map<string, { lat: number; lng: number }>();
+      const uniqLocs: string[] = [];
+
+      // Prepara array con coords (riempi da GEO o da geocoding LOCATION)
+      const withCoords: RawEv[] = [];
+      for (const ev of icsRaw) {
+        if (ev.lat != null && ev.lng != null) {
+          withCoords.push(ev);
+        } else if (ev.location && ev.location.trim()) {
+          const key = ev.location.trim();
+          if (!cache.has(key)) uniqLocs.push(key);
+          withCoords.push(ev);
+        } else {
+          // Niente coords e niente location: lo teniamo ma non filtrabile
+          withCoords.push(ev);
+        }
+      }
+
+      // Geocoding (best-effort) per al massimo 10 location uniche
+      for (const loc of uniqLocs.slice(0, 10)) {
+        try {
+          const url = `/api/external/geocode?q=${encodeURIComponent(loc)}`;
+          const gr = await http.json<any>(url, { timeoutMs: 7000, retries: 1 });
+          if (gr.ok) {
+            // accetta vari formati possibili
+            let lat: number | undefined;
+            let lng: number | undefined;
+            const j = gr.data;
+            if (Array.isArray(j?.results) && j.results[0]) {
+              lat = Number(j.results[0].lat ?? j.results[0].latitude);
+              lng = Number(j.results[0].lng ?? j.results[0].lon ?? j.results[0].longitude);
+            } else if (j?.lat != null && j?.lon != null) {
+              lat = Number(j.lat); lng = Number(j.lon);
+            }
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              cache.set(loc, { lat: lat!, lng: lng! });
+            }
+          }
+        } catch {}
+      }
+
+      // Filtra per raggio (se center presente); altrimenti non filtrare
+      function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+        const toRad = (x: number) => x * Math.PI / 180;
+        const R = 6371;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+      }
+
+      const map: Record<string, { title: string }[]> = {};
+      for (const ev of withCoords) {
+        // coords note?
+        let elat = ev.lat, elng = ev.lng;
+        if ((elat == null || elng == null) && ev.location && cache.has(ev.location.trim())) {
+          const c = cache.get(ev.location.trim())!;
+          elat = c.lat; elng = c.lng;
+        }
+
+        let include = true;
+        if (center && Number.isFinite(elat as number) && Number.isFinite(elng as number)) {
+          include = haversineKm(center.lat, center.lng, elat!, elng!) <= radiusKm;
+        } // se manca center/coords → include rimane true
+
+        if (include) {
+          if (!map[ev.date]) map[ev.date] = [];
+          map[ev.date].push({ title: ev.title });
+        }
+      }
+
+      if (alive) setEventsByDate(map);
+    } catch {
+      if (alive) setEventsByDate({});
+    }
+  })();
+  return () => { alive = false; };
+}, [icsRaw, aCenter, aRadius, http]);
 
   /* ----- SERPAPI: linea + segmenti + quota ----- */
   const fetchSerp = useCallback(async () => {
