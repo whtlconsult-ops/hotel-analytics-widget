@@ -8,7 +8,6 @@ import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp 
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { http } from "../../lib/http";
 import { cityFromTopic, seasonalityItaly12, last12LabelsLLLyy, normalizeTo100, blend3 } from "../../lib/baseline";
-import { parseMainQuery } from "../../lib/params";
 import { it } from "date-fns/locale";
 import {
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
@@ -172,7 +171,7 @@ function isWithinNextDays(d: Date, n = 7) {
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}; eventCount?: number; events?: { title: string }[]}[]})
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}; eventCount?: number; events?: { title: string }[]}[]}) {
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
@@ -842,7 +841,7 @@ useEffect(() => {
     events: eventsByDate[k],
   };
 });
-  }, [aMonthISO, aMode, holidays, weatherByDate]);
+  }, [aMonthISO, aMode, holidays, weatherByDate, eventsByDate]);
 
   const provenance = useMemo(() => (serpOrigins.length > 0 ? serpOrigins : []), [serpOrigins]);
   const los = useMemo(() => (serpLOS.length > 0 ? serpLOS : []), [serpLOS]);
