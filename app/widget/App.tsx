@@ -6,6 +6,8 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { http } from "../../lib/http";
+import { parseMainQuery } from "../../lib/params";
 import { it } from "date-fns/locale";
 import {
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
@@ -571,8 +573,8 @@ export default function App(){
         los: askLOS ? "1" : "0",
       });
 
-      const res = await fetch(`/api/serp/demand?${params.toString()}`);
-      const j = await res.json();
+      const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
+      const j = r1.ok ? r1.data : null;
 
       if (!j || j.ok !== true) {
         setNotices(prev =>
@@ -629,8 +631,8 @@ export default function App(){
 
       // --- Badge quota (best-effort, ignora errori) ---
       try {
-        const qres = await fetch("/api/serp/quota");
-        const q = await qres.json();
+        const r2 = await http.json<any>("/api/serp/quota", { timeoutMs: 6000, retries: 1 });
+        const q = r2.ok ? r2.data : null;
         if (q && q.ok) {
           const badge = {
             used:  (j.usage && j.usage.this_month_usage) ?? q.this_month_usage ?? undefined,
@@ -674,6 +676,40 @@ const monthDate = useMemo(() => {
   if (!aMonthISO) return new Date();
   try { return parseISO(aMonthISO); } catch (e) { return new Date(); }
 }, [aMonthISO]);
+
+// Preferenze: ripristino al mount se non c'è query string
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  if (window.location.search && window.location.search.length > 1) return;
+
+  try {
+    const raw = localStorage.getItem("widget:last");
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+
+    // Applica ai campi UI (non direttamente agli "applied")
+    if (saved.q) setQuery(saved.q);
+    if (typeof saved.r === "number") setRadius(saved.r);
+    if (saved.m) setMonthISO(saved.m);
+    if (Array.isArray(saved.t)) setTypes(saved.t);
+    if (saved.mode) setMode(saved.mode);
+    if (saved.wx) setWxProvider(saved.wx);
+    if (typeof saved.trend === "boolean") setAskTrend(saved.trend);
+    if (typeof saved.ch === "boolean") setAskChannels(saved.ch);
+    if (typeof saved.prov === "boolean") setAskProvenance(saved.prov);
+    if (typeof saved.los === "boolean") setAskLOS(saved.los);
+  } catch {}
+}, []);
+
+// Preferenze: salvataggio dell'ultima configurazione applicata
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  const payload = {
+    q: aQuery, r: aRadius, m: aMonthISO, t: aTypes, mode: aMode,
+    wx: wxProvider, trend: askTrend, ch: askChannels, prov: askProvenance, los: askLOS
+  };
+  try { localStorage.setItem("widget:last", JSON.stringify(payload)); } catch {}
+}, [aQuery, aRadius, aMonthISO, aTypes, aMode, wxProvider, askTrend, askChannels, askProvenance, askLOS]);
 
     // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
