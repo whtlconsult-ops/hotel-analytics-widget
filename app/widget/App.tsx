@@ -329,7 +329,7 @@ function TypesMultiSelect({
               Pulisci
             </button>
             <div className="space-x-2">
-              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([allTypes])}>
+              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([...allTypes])}>
                 Seleziona tutte
               </button>
               <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={() => setOpen(false)}>
