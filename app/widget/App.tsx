@@ -387,6 +387,13 @@ export default function App(){
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+// Pesi blend curva 12 mesi (default: SERP 60, Wiki 30, Stagionalità 10)
+const [wSerpUser, setWSerpUser] = useState<number>(60);
+const [wWikiUser, setWWikiUser] = useState<number>(30);
+const [wSeaUser, setWSeaUser]   = useState<number>(10);
+// Toggle pannello avanzato
+const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
+
   // Festività + Meteo
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
@@ -638,10 +645,20 @@ try {
 // 3) Stagionalità Italia
 const seas12 = normalizeTo100(seasonalityItaly12());
 
-// 4) Blend con pesi (tarabili in futuro)
-const wSerp = serp12.some(v => v > 0) ? 0.6 : 0.0;
-const wWiki = wiki12.some(v => v > 0) ? (wSerp > 0 ? 0.3 : 0.7) : 0.0;
-const wSea  = 1.0 - (wSerp + wWiki); // 0.1 se SERP+Wiki ci sono, 0.3 se solo Wiki, 1.0 se nessuno
+// 4) Blend con pesi utente (0–100) vincolati alla disponibilità dei segnali
+let wSerp = (wSerpUser / 100);
+let wWiki = (wWikiUser / 100);
+let wSea  = (wSeaUser  / 100);
+
+// Se un segnale non è disponibile, mette il suo peso a 0
+if (!serp12.some(v => v > 0)) wSerp = 0;
+if (!wiki12.some(v => v > 0)) wWiki = 0;
+
+// Rinormalizza per sommare a 1 (se tutti 0 → tutto alla stagionalità)
+let sum = wSerp + wWiki + wSea;
+if (sum <= 0) { wSerp = 0; wWiki = 0; wSea = 1; sum = 1; }
+wSerp /= sum; wWiki /= sum; wSea /= sum;
+
 const mixed = blend3(serp12, wiki12, seas12, wSerp, wWiki, wSea);
 const mixedN = normalizeTo100(mixed);
 
@@ -753,6 +770,9 @@ useEffect(() => {
     if (typeof saved.ch === "boolean") setAskChannels(saved.ch);
     if (typeof saved.prov === "boolean") setAskProvenance(saved.prov);
     if (typeof saved.los === "boolean") setAskLOS(saved.los);
+if (typeof saved.wSerpUser === "number") setWSerpUser(saved.wSerpUser);
+if (typeof saved.wWikiUser === "number") setWWikiUser(saved.wWikiUser);
+if (typeof saved.wSeaUser  === "number") setWSeaUser(saved.wSeaUser);
   } catch {}
 }, []);
 
@@ -760,9 +780,10 @@ useEffect(() => {
 useEffect(() => {
   if (typeof window === "undefined") return;
   const payload = {
-    q: aQuery, r: aRadius, m: aMonthISO, t: aTypes, mode: aMode,
-    wx: wxProvider, trend: askTrend, ch: askChannels, prov: askProvenance, los: askLOS
-  };
+  q: aQuery, r: aRadius, m: aMonthISO, t: aTypes, mode: aMode,
+  wx: wxProvider, trend: askTrend, ch: askChannels, prov: askProvenance, los: askLOS,
+  wSerpUser, wWikiUser, wSeaUser
+};
   try { localStorage.setItem("widget:last", JSON.stringify(payload)); } catch {}
 }, [aQuery, aRadius, aMonthISO, aTypes, aMode, wxProvider, askTrend, askChannels, askProvenance, askLOS]);
 
@@ -1000,6 +1021,50 @@ useEffect(() => {
                 </label>
               </div>
 
+{/* Avanzate: pesi blend curva 12 mesi */}
+<div className="mt-2">
+  <button
+    type="button"
+    className="text-xs underline text-slate-600"
+    onClick={() => setAdvancedOpen(v => !v)}
+  >
+    {advancedOpen ? "Nascondi" : "Mostra"} opzioni avanzate (pesi curva 12 mesi)
+  </button>
+
+  {advancedOpen && (
+    <div className="mt-2 space-y-2 border rounded-xl p-3 bg-slate-50">
+      <div className="text-[11px] text-slate-600">
+        I pesi si adattano automaticamente se un segnale non è disponibile (es. SERP a zero).
+      </div>
+      <div className="grid grid-cols-1 gap-2">
+        <label className="text-xs flex items-center gap-2">
+          <span className="w-32">SERP</span>
+          <input type="range" min={0} max={100} value={wSerpUser}
+            onChange={(e) => setWSerpUser(parseInt(e.currentTarget.value))}
+            className="flex-1" />
+          <span className="w-10 text-right">{wSerpUser}%</span>
+        </label>
+        <label className="text-xs flex items-center gap-2">
+          <span className="w-32">Wikipedia</span>
+          <input type="range" min={0} max={100} value={wWikiUser}
+            onChange={(e) => setWWikiUser(parseInt(e.currentTarget.value))}
+            className="flex-1" />
+          <span className="w-10 text-right">{wWikiUser}%</span>
+        </label>
+        <label className="text-xs flex items-center gap-2">
+          <span className="w-32">Stagionalità</span>
+          <input type="range" min={0} max={100} value={wSeaUser}
+            onChange={(e) => setWSeaUser(parseInt(e.currentTarget.value))}
+            className="flex-1" />
+          <span className="w-10 text-right">{wSeaUser}%</span>
+        </label>
+      </div>
+      <div className="text-[11px] text-slate-600">
+        Nota: i tre valori vengono normalizzati e sommati a 100% in base ai segnali realmente disponibili.
+      </div>
+    </div>
+  )}
+</div>
               <div>
                 <button
                   className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
