@@ -1,44 +1,59 @@
-// lib/params.ts
-import { z } from "zod";
+// lib/params.ts — versione senza zod
 
 // YYYY-MM or YYYY-MM-DD -> normalizza a YYYY-MM-01
 export function normalizeMonth(m?: string | null): string | undefined {
   if (!m) return undefined;
-  const s = String(m);
+  const s = String(m).trim();
   if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   return undefined;
 }
 
-const boolFrom = (v: string | null) => v === "1" || v === "true";
+function cleanStr(v?: string | null, maxLen = 120): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  if (!s) return undefined;
+  return s.slice(0, maxLen);
+}
 
-export const mainQuerySchema = z.object({
-  q: z.string().trim().max(120).optional(),
-  r: z.coerce.number().int().min(0).max(200).optional(),
-  m: z.string().optional(),        // la normalizziamo noi
-  t: z.string().optional(),        // "hotel,b&b"
-  mode: z.enum(["zone","competitor"]).optional(),
-  wx: z.enum(["open-meteo","openweather"]).optional(),
-  trend: z.string().optional(),
-  ch: z.string().optional(),
-  prov: z.string().optional(),
-  los: z.string().optional(),
-});
+function clampInt(v: any, min: number, max: number): number | undefined {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return undefined;
+  const i = Math.trunc(n);
+  if (i < min || i > max) return undefined;
+  return i;
+}
 
+function asBool(v?: string | null): boolean {
+  return v === "1" || v === "true";
+}
+
+function oneOf<T extends string>(v: any, allowed: T[]): T | undefined {
+  const s = typeof v === "string" ? v : String(v ?? "");
+  return allowed.includes(s as T) ? (s as T) : undefined;
+}
+
+/**
+ * Parsing “safe” dei parametri della main.
+ * Restituisce un oggetto già ripulito/normalizzato.
+ */
 export function parseMainQuery(sp: URLSearchParams) {
-  const raw = Object.fromEntries(sp.entries());
-  const safe = mainQuerySchema.safeParse(raw).success ? mainQuerySchema.parse(raw) : {};
-  const out = {
-    q: safe.q,
-    r: safe.r,
-    m: normalizeMonth(safe.m),
-    t: Array.isArray(safe.t?.split(",")) ? safe.t!.split(",").filter(Boolean) : undefined,
-    mode: safe.mode,
-    wx: safe.wx,
-    trend: boolFrom(safe.trend ?? null),
-    ch:    boolFrom(safe.ch ?? null),
-    prov:  boolFrom(safe.prov ?? null),
-    los:   boolFrom(safe.los ?? null),
-  };
-  return out;
+  const get = (k: string) => sp.get(k);
+
+  const q = cleanStr(get("q"));
+  const r = clampInt(get("r"), 0, 200);
+  const m = normalizeMonth(get("m"));
+
+  const tRaw = cleanStr(get("t"), 200);
+  const t = tRaw ? tRaw.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+
+  const mode = oneOf(get("mode"), ["zone", "competitor"] as const);
+  const wx   = oneOf(get("wx"), ["open-meteo", "openweather"] as const);
+
+  const trend = asBool(get("trend"));
+  const ch    = asBool(get("ch"));
+  const prov  = asBool(get("prov"));
+  const los   = asBool(get("los"));
+
+  return { q, r, m, t, mode, wx, trend, ch, prov, los };
 }
