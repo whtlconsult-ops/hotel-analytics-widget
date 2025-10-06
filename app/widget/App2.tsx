@@ -12,11 +12,6 @@ type LOSRow     = { bucket: string; value: number };
 
 const COLORS = ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#06b6d4","#f43f5e"];
 
-// --- Fallback dimostrativo "plausibile" per Related --- //
-type ChannelRow = { channel: string; value: number };
-type OriginRow  = { name: string; value: number };
-type LOSRow     = { bucket: string; value: number };
-
 function monthIndexFromParam(m?: string | null): number {
   // accetta "YYYY-MM" o "YYYY-MM-DD" → 0..11 (0=Gennaio)
   if (!m) return new Date().getMonth();
