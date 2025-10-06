@@ -172,7 +172,7 @@ function isWithinNextDays(d: Date, n = 7) {
 function CalendarHeatmap({
   monthDate,
   data
-}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}}[]}){
+}:{monthDate: Date; data: {date: Date; pressure:number; adr:number; holidayName?: string; wx?: {t?:number; p?:number; code?: number}; eventCount?: number; events?: { title: string }[]}[]})
   const start = startOfMonth(monthDate);
   const end = endOfMonth(monthDate);
   const days = eachDayOfInterval({start, end});
@@ -215,6 +215,15 @@ function CalendarHeatmap({
               {dayData?.holidayName ? (
                 <div className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-rose-500" title={dayData.holidayName}/>
               ) : null}
+
+{(dayData?.eventCount ?? 0) > 0 && (
+  <div
+    className="absolute top-1 left-1"
+    title={Array.isArray(dayData?.events) ? dayData.events.slice(0, 3).map(e => e.title).join(" · ") : "Evento"}
+  >
+    <span className="inline-block h-2 w-2 rounded-full bg-fuchsia-600" />
+  </div>
+)}
 
               {dayData?.wx?.t != null ? (
                 <div className="absolute bottom-1 right-1 text-[10px] text-neutral-700/80">{dayData.wx.t.toFixed(0)}°C</div>
@@ -398,6 +407,10 @@ const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [weatherByDate, setWeatherByDate] = useState<Record<string, { t?: number; p?: number; code?: number }>>({});
 
+// Eventi (ICS)
+const [icsUrl, setIcsUrl] = useState<string>("");
+const [eventsByDate, setEventsByDate] = useState<Record<string, { title: string }[]>>({});
+
   // Stato “applicato”
   const [aQuery, setAQuery] = useState(query);
   const [aRadius, setARadius] = useState(radius);
@@ -555,6 +568,33 @@ const [advancedOpen, setAdvancedOpen] = useState<boolean>(false);
       })
       .catch(() => setWeatherByDate({}));
   }, [normalized.center, aMonthISO, wxProvider]);
+
+/* ----- Eventi (ICS) ----- */
+useEffect(() => {
+  if (!icsUrl) { setEventsByDate({}); return; }
+  const u = `/api/events/ics?url=${encodeURIComponent(icsUrl)}`;
+  let alive = true;
+  (async () => {
+    try {
+      const r = await http.json<any>(u, { timeoutMs: 8000, retries: 1 });
+      if (!alive) return;
+      if (r.ok && Array.isArray(r.data?.events)) {
+        const map: Record<string, { title: string }[]> = {};
+        for (const ev of r.data.events as Array<{ date: string; title: string }>) {
+          if (!map[ev.date]) map[ev.date] = [];
+          map[ev.date].push({ title: ev.title });
+        }
+        setEventsByDate(map);
+      } else {
+        setEventsByDate({});
+        setNotices(prev => Array.from(new Set([...prev, "ICS non disponibile o vuoto."])));
+      }
+    } catch {
+      setEventsByDate({});
+    }
+  })();
+  return () => { alive = false; };
+}, [icsUrl]);
 
   /* ----- SERPAPI: linea + segmenti + quota ----- */
   const fetchSerp = useCallback(async () => {
@@ -790,13 +830,18 @@ useEffect(() => {
     // Calendario (pressione + adr dimostrativi)
   const calendarData = useMemo(() => {
     const days = daysOfMonthWindow(aMonthISO);
-    return days.map(d => ({
-      date: d,
-      pressure: pressureFor(d),
-      adr: adrFromCompetitors(d, aMode),
-      holidayName: holidays[format(d,"yyyy-MM-dd")],
-      wx: weatherByDate[format(d,"yyyy-MM-dd")] || undefined,
-    }));
+    return days.map(d => {
+  const k = format(d, "yyyy-MM-dd");
+  return {
+    date: d,
+    pressure: pressureFor(d),
+    adr: adrFromCompetitors(d, aMode),
+    holidayName: holidays[k],
+    wx: weatherByDate[k] || undefined,
+    eventCount: (eventsByDate[k]?.length || 0),
+    events: eventsByDate[k],
+  };
+});
   }, [aMonthISO, aMode, holidays, weatherByDate]);
 
   const provenance = useMemo(() => (serpOrigins.length > 0 ? serpOrigins : []), [serpOrigins]);
@@ -935,6 +980,23 @@ useEffect(() => {
             {loadError && <div className="text-xs text-rose-600">Errore sorgente: {loadError}</div>}
             {rawRows.length > 0 && <div className="text-xs text-emerald-700">Dati caricati: {rawRows.length} righe</div>}
           </section>
+
+{/* Eventi (ICS) */}
+<section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+  <div className="text-sm font-semibold">Eventi locali (ICS)</div>
+  <div className="flex items-center gap-2">
+    <label className="w-28 text-sm text-slate-700">ICS URL</label>
+    <input
+      className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm"
+      value={icsUrl}
+      onChange={(e) => setIcsUrl(e.target.value)}
+      placeholder="https://…/calendar.ics"
+    />
+  </div>
+  <div className="text-xs text-slate-600">
+    Se fornito, i giorni con evento mostrano un puntino viola (hover per il titolo).
+  </div>
+</section>
 
           {/* Località / Raggio / Mese / Tipologie / Meteo provider */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
