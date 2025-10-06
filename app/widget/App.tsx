@@ -711,44 +711,48 @@ const monthDate = useMemo(() => {
   }, [router, dataSource, csvUrl, gsId, gsGid, gsSheet]);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Topbar */}
-     <div className="sticky top-0 z-[1100] border-b bg-white backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">Widget Hospitality Analytics</h1>
-            {(serpUsage?.used != null || serpUsage?.left != null || serpUsage?.total != null) && (
-              <span
-  className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-white"
-  title="Stato SerpAPI"
->
-  <TrendingUp className="h-3.5 w-3.5" />
-  <span
-    className={
-title={serpUsage?.left == null ? "Stato sconosciuto" : (serpUsage.left === 0 ? "Quota esaurita" : "Connesso")}
-      `inline-block h-2 w-2 rounded-full ${
-      serpUsage?.left == null ? "bg-slate-400" :
-      serpUsage.left === 0 ? "bg-rose-500" : "bg-emerald-500"
-    }
-  />
-  <span>Connesso a SerpAPI</span>
-  <span className="opacity-60">·</span>
-  <span>SERP {serpUsage?.used ?? "?"}/{serpUsage?.total ?? "?"} (rimasti {serpUsage?.left ?? "?"})</span>
-</span>
-            )}
-          </div>
-          <button
-            className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            onClick={handleReset}
-            title="Reset"
-          >
-            <span className="inline-flex items-center gap-2"><RefreshCw className="w-4 h-4" /> Reset</span>
-          </button>
-        </div>
-      </div>
+  <div className="min-h-screen bg-slate-50">
+    {/* Topbar */}
+    <div className="sticky top-0 z-[1100] border-b bg-white backdrop-blur">
+      <div className="mx-auto max-w-7xl px-4 md:px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Widget Hospitality Analytics</h1>
 
-      {/* Body */}
-      <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+          {(serpUsage?.used != null || serpUsage?.left != null || serpUsage?.total != null) && (
+            <span
+              className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-white"
+              title="Stato SerpAPI"
+            >
+              <TrendingUp className="h-3.5 w-3.5" />
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  serpUsage?.left == null ? "bg-slate-400" :
+                  serpUsage.left === 0 ? "bg-rose-500" : "bg-emerald-500"
+                }`}
+                title={serpUsage?.left == null ? "Stato sconosciuto" : (serpUsage.left === 0 ? "Quota esaurita" : "Connesso")}
+              />
+              <span>Connesso a SerpAPI</span>
+              <span className="opacity-60">·</span>
+              <span>SERP {serpUsage?.used ?? "?"}/{serpUsage?.total ?? "?"} (rimasti {serpUsage?.left ?? "?"})</span>
+            </span>
+          )}
+        </div>
+
+        <button
+          className="px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+          onClick={handleReset}
+          title="Reset"
+        >
+          <span className="inline-flex items-center gap-2">
+            <RefreshCw className="w-4 h-4" /> Reset
+          </span>
+        </button>
+      </div>
+    </div>
+
+    {/* Body */}
+    <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+
         {/* SIDEBAR */}
         <aside className="space-y-6">
           {/* Sorgente dati opzionale */}
