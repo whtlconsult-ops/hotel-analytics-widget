@@ -451,7 +451,8 @@ export default function App(){
     if (!search) return;
     const q = search.get("q") ?? "Firenze";
     const r = parseNumParam(search.get("r"), radius);
-    const m = search.get("m") ? `${search.get("m")}-01` : monthISO;
+    const rawM = search.get("m");
+    const m = rawM ? (rawM.length === 7 ? `${rawM}-01` : rawM) : monthISO;
     const rawT = parseListParam(search.get("t"));
     const validT = rawT.filter(x => (STRUCTURE_TYPES as readonly string[]).includes(x));
     const t = validT.length ? validT : ["hotel"];
@@ -654,7 +655,7 @@ const graficaHref = useMemo(() => {
   const p = new URLSearchParams();
   if (aQuery) p.set("q", aQuery);
   if (typeof aRadius === "number") p.set("r", String(aRadius));
-  if (aMonthISO) p.set("m", aMonthISO);
+  if (aMonthISO) p.set("m", aMonthISO.slice(0, 7));
   if (Array.isArray(aTypes) && aTypes.length) p.set("t", aTypes.join(","));
   if (aMode) p.set("mode", aMode);
   if (wxProvider) p.set("wx", wxProvider);
