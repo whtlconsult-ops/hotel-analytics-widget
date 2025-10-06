@@ -420,6 +420,28 @@ const [eventsByDate, setEventsByDate] = useState<Record<string, { title: string 
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>({ lat: 43.7696, lng: 11.2558 });
 
+// Confronto array tipologie
+const arraysEqual = (a?: string[] | null, b?: string[] | null) => {
+  const aa = (a || []).slice().sort();
+  const bb = (b || []).slice().sort();
+  if (aa.length !== bb.length) return false;
+  for (let i = 0; i < aa.length; i++) if (aa[i] !== bb[i]) return false;
+  return true;
+};
+
+// Flag: lo stato UI coincide con lo stato applicato?
+const isApplied = useMemo(() => {
+  return (
+    query === aQuery &&
+    radius === aRadius &&
+    monthISO === aMonthISO &&
+    arraysEqual(types, aTypes) &&
+    mode === aMode
+    // volendo, puoi aggiungere anche il centro mappa:
+    // && ((aCenter && center) ? (aCenter.lat===center.lat && aCenter.lng===center.lng) : (!aCenter && !center))
+  );
+}, [query, aQuery, radius, aRadius, monthISO, aMonthISO, types, aTypes, mode, aMode]);
+
   // Contatore SerpAPI + polling
   const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
   useEffect(() => {
@@ -1217,24 +1239,17 @@ useEffect(() => {
 </div>
               <div>
                 <button
-                  className="w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border bg-slate-900 text-white border-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => {
-                    const next = {
-                      q: query, r: radius, m: monthISO, t: types, mode,
-                      dataSource, csvUrl, gsId, gsGid, gsSheet,
-                      askTrend, askChannels, askProvenance, askLOS, wxProvider
-                    };
-                    setAQuery(next.q); setARadius(next.r); setAMonthISO(next.m); setATypes(next.t); setAMode(next.mode);
-                    if (!aCenter) setACenter({ lat: 43.7696, lng: 11.2558 });
-                    replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"), next);
-                    const share = makeShareUrl((typeof window !== "undefined" ? location.pathname : "/"), next);
-                    setShareUrl(share);
-                    fetchSerp();
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Genera Analisi
-                </button>
+  className={
+    "w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border text-white " +
+    (isApplied
+      ? "bg-emerald-600 hover:bg-emerald-600 cursor-default"
+      : "bg-slate-900 hover:bg-slate-800")
+  }
+  title={isApplied ? "Filtri applicati" : "Applica i filtri"}
+  onClick={/* lascia il tuo handler invariato */}
+>
+  {isApplied ? "Analisi applicata" : "Genera Analisi"}
+</button>
 
 <div className="mt-2">
   <a
