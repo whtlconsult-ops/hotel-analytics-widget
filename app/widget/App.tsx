@@ -1238,7 +1238,7 @@ useEffect(() => {
   )}
 </div>
               <div>
-                <button
+               <button
   className={
     "w-full inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium border text-white " +
     (isApplied
@@ -1246,8 +1246,40 @@ useEffect(() => {
       : "bg-slate-900 hover:bg-slate-800")
   }
   title={isApplied ? "Filtri applicati" : "Applica i filtri"}
-  onClick={/* lascia il tuo handler invariato */}
+  onClick={() => {
+    if (isApplied) return; // già allineato, non rifacciamo nulla
+
+    const next = {
+      q: query, r: radius, m: monthISO, t: types, mode,
+      dataSource, csvUrl, gsId, gsGid, gsSheet,
+      askTrend, askChannels, askProvenance, askLOS, wxProvider
+    };
+
+    // porta lo stato “applicato” = UI attuale
+    setAQuery(next.q);
+    setARadius(next.r);
+    setAMonthISO(next.m);
+    setATypes(next.t);
+    setAMode(next.mode);
+    if (!aCenter) setACenter({ lat: 43.7696, lng: 11.2558 });
+
+    // URL e share
+    replaceUrlWithState(
+      router,
+      (typeof window !== "undefined" ? location.pathname : "/"),
+      next
+    );
+    const share = makeShareUrl(
+      (typeof window !== "undefined" ? location.pathname : "/"),
+      next
+    );
+    setShareUrl(share);
+
+    // trigger fetch SERP (se quota disponibile)
+    fetchSerp();
+  }}
 >
+  <RefreshCw className="h-4 w-4 mr-2" />
   {isApplied ? "Analisi applicata" : "Genera Analisi"}
 </button>
 
