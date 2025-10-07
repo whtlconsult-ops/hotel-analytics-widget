@@ -256,8 +256,8 @@ function TypesMultiSelect({
 }: {
   value: string[];
   onChange: (v: string[]) => void;
-  allTypes: readonly string[];            // <-- accetta readonly
-  labels?: Record<string, string>;        // <-- opzionale, per typeLabels
+  allTypes: readonly string[];            // accetta readonly (es. STRUCTURE_TYPES as const)
+  labels?: Record<string, string>;        // opzionale, per typeLabels
 }) {
   const [open, setOpen] = useState(false);
   const isChecked = (t: string) => value.includes(t);
@@ -274,7 +274,7 @@ function TypesMultiSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        {value.length > 0 ? value.map(t => labels?.[t] ?? t).join(", ") : "Tipologie…"}
+        {value.length > 0 ? value.map((t) => labels?.[t] ?? t).join(", ") : "Tipologie…"}
       </button>
 
       {/* Panel */}
@@ -310,7 +310,7 @@ function TypesMultiSelect({
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange(Array.from(allTypes))}   {/* <-- niente errore con readonly */}
+                onClick={() => onChange(Array.from(allTypes))}  // copia mutabile
               >
                 Seleziona tutte
               </button>
