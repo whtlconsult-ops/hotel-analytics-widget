@@ -44,7 +44,7 @@ const ORIGIN_COLORS = [
 // Barre a "stanghette" per il grafico Canali di vendita (raggio soft + spaziatura ridotta)
 const SegmentedBar: React.FC<any> = ({ x, y, width, height, fill }) => {
   // estetica
-  const segW = 5;   // larghezza stanghetta (px)  ← un filo più stretta
+  const segW = 7;   // larghezza stanghetta (px)  ← un filo più stretta
   const gap  = 2;   // spazio tra stanghette (px) ← più ravvicinate
   const r    = Math.min(3, height / 2); // angoli solo leggermente stondati
 
