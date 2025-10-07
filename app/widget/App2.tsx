@@ -117,6 +117,62 @@ function syntheticChannels(types: string[]|null|undefined, city:string, mIdx:num
   ];
 }
 
+/* === VISUAL ENHANCEMENTS (PAR2.1) === */
+const PALETTE = {
+  blue:   "#2563eb",
+  indigo: "#4f46e5",
+  teal:   "#0d9488",
+  amber:  "#f59e0b",
+  rose:   "#f43f5e",
+  slate:  "#64748b",
+};
+
+const CHANNEL_COLORS: Record<string,string> = {
+  "Booking.com": PALETTE.indigo,
+  "Diretto":     PALETTE.teal,
+  "Expedia":     PALETTE.blue,
+  "Airbnb":      PALETTE.rose,
+  "Altro":       PALETTE.slate,
+};
+
+const ORIGIN_COLORS = [
+  PALETTE.blue, PALETTE.indigo, PALETTE.teal, PALETTE.amber, PALETTE.rose, PALETTE.slate
+];
+
+const fmtPct  = (v:number) => `${Math.round(v)}%`;
+const fmtInt  = (v:number) => new Intl.NumberFormat("it-IT").format(Math.round(v));
+const sumBy   = <T,>(arr:T[], sel:(x:T)=>number)=> arr.reduce((a,x)=>a+(Number(sel(x))||0),0);
+
+function ChartCard({
+  title, subtitle, children, footer
+}: { title:string; subtitle?:string; children:React.ReactNode; footer?:React.ReactNode }) {
+  return (
+    <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {subtitle && <div className="text-xs text-slate-600 mt-0.5">{subtitle}</div>}
+      </div>
+      <div className="h-[260px] md:h-[300px]">
+        {children}
+      </div>
+      {footer && <div className="mt-2 text-[11px] text-slate-600">{footer}</div>}
+    </section>
+  );
+}
+
+const TooltipBox = ({ active, payload, label }: any) => {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0];
+  const name = p.name ?? p.payload?.name ?? p.payload?.channel ?? p.payload?.bucket ?? label;
+  const val  = p.value;
+  return (
+    <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-sm">
+      <div className="font-medium">{name}</div>
+      <div className="text-slate-600">{typeof val === "number" ? fmtPct(val) : String(val)}</div>
+    </div>
+  );
+};
+
 export default function App2(){
   const search = useSearchParams();
 
@@ -214,16 +270,34 @@ useEffect(() => {
             {origins.length === 0 || origins.every(x => (x.value || 0) === 0) ? (
               <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
             ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <PieChart>
-                  <Pie data={origins} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={110} paddingAngle={2} cornerRadius={6} labelLine={false}
-                    label={({ percent }) => `${Math.round((percent || 0) * 100)}%`}>
-                    {origins.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} stroke="#fff" strokeWidth={2}/>)}
-                  </Pie>
-                  <RTooltip />
-                  <Legend verticalAlign="bottom" iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
+             <ResponsiveContainer width="100%" height="100%">
+  <PieChart>
+    <RTooltip content={<TooltipBox />} />
+    <Legend />
+    <Pie
+      data={origins}
+      dataKey="value"
+      nameKey="name"
+      innerRadius="55%"
+      outerRadius="80%"
+      isAnimationActive={true}
+    >
+      {origins.map((o, i) => <Cell key={o.name} fill={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} />)}
+      <Label
+        position="center"
+        content={() => {
+          const tot = sumBy(origins, x=>x.value);
+          return (
+            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
+              <tspan className="fill-slate-900" fontSize="16" fontWeight="600">{fmtInt(tot)}</tspan>
+              <tspan x="50%" dy="1.2em" className="fill-slate-500" fontSize="11">totale</tspan>
+            </text>
+          );
+        }}
+      />
+    </Pie>
+  </PieChart>
+</ResponsiveContainer>
             )}
           </div>
         )}
@@ -235,15 +309,20 @@ useEffect(() => {
             {los.length === 0 || los.every(x => (x.value || 0) === 0) ? (
               <div className="h-48 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
             ) : (
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={los} margin={{ top: 16, right: 16, left: 8, bottom: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="bucket" />
-                  <YAxis />
-                  <RTooltip />
-                  <Bar dataKey="value" radius={[8,8,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%">
+  <BarChart
+    data={los}
+    margin={{ top: 12, right: 24, bottom: 8, left: 8 }}
+  >
+    <CartesianGrid vertical={false} strokeDasharray="3 3" />
+    <XAxis dataKey="bucket" />
+    <YAxis domain={[0, 100]} tickFormatter={fmtPct} />
+    <RTooltip content={<TooltipBox />} />
+    <Bar dataKey="value" fill={PALETTE.indigo} radius={[8,8,0,0]} isAnimationActive>
+      <LabelList dataKey="value" position="top" formatter={fmtPct} />
+    </Bar>
+  </BarChart>
+</ResponsiveContainer>
             )}
           </div>
         )}
@@ -255,15 +334,25 @@ useEffect(() => {
             {channels.length === 0 || channels.every(x => (x.value || 0) === 0) ? (
               <div className="h-56 flex items-center justify-center text-sm text-slate-500">Nessun segnale utile.</div>
             ) : (
-              <ResponsiveContainer width="100%" height={360}>
-                <BarChart data={channels} margin={{ top: 8, right: 16, left: 8, bottom: 24 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="channel" interval={0} height={40} />
-                  <YAxis />
-                  <RTooltip />
-                  <Bar dataKey="value" radius={[8,8,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%">
+  <BarChart
+    data={[...channels].sort((a,b)=> b.value - a.value)}
+    layout="vertical"
+    margin={{ top: 8, right: 24, bottom: 8, left: 24 }}
+  >
+    <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+    <XAxis type="number" domain={[0, 100]} tickFormatter={fmtPct} />
+    <YAxis type="category" dataKey="channel" width={110} />
+    <RTooltip content={<TooltipBox />} />
+    <Bar dataKey="value" radius={[8,8,8,8]}>
+      {channels.map((c, idx) => (
+        <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
+      ))}
+      <LabelList dataKey="value" position="right" formatter={fmtPct} />
+    </Bar>
+    <Legend />
+  </BarChart>
+</ResponsiveContainer>
             )}
           </div>
         )}
