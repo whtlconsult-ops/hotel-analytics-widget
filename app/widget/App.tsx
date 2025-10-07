@@ -1401,11 +1401,11 @@ useEffect(() => {
       domain={[0, 100]}
       tick={{ fontSize: 11, fill: "#475569" }}
     />
-    <Tooltip
-      contentStyle={{ borderRadius: 8, fontSize: 12 }}
-      labelStyle={{ fontSize: 12 }}
-      formatter={(v: any) => [`${Math.round(Number(v))}`, "Indice"]}
-    />
+   <RTooltip
+  contentStyle={{ borderRadius: 8, fontSize: 12 }}
+  labelStyle={{ fontSize: 12 }}
+  formatter={(v: any) => [`${Math.round(Number(v))}`, "Indice"]}
+/>
     <Line
       type="monotone"
       dataKey="value"
