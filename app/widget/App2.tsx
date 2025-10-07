@@ -335,16 +335,16 @@ export default function App2() {
     />
     <Legend
   content={({ payload }: any) => (
-    <ul className="flex flex-wrap gap-4 pl-0 m-0 list-none text-[10px]">
+    <ul
+      className="flex flex-nowrap gap-3 pl-0 m-0 list-none text-[10px] whitespace-nowrap overflow-x-auto"
+    >
       {payload?.map((entry: any, idx: number) => (
-        <li key={idx} className="flex items-center gap-2">
+        <li key={idx} className="flex items-center gap-2 shrink-0">
           <span
             className="inline-block w-3 h-3 rounded-sm"
             style={{ background: entry.color, border: "1px solid #e2e8f0" }}
           />
-          <span style={{ color: "#0f172a", fontWeight: 500 }}>
-            {entry.value}
-          </span>
+          <span style={{ color: "#0f172a", fontWeight: 500 }}>{entry.value}</span>
         </li>
       ))}
     </ul>
