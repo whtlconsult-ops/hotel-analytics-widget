@@ -252,10 +252,12 @@ function TypesMultiSelect({
   value,
   onChange,
   allTypes,
+  labels,
 }: {
   value: string[];
   onChange: (v: string[]) => void;
-  allTypes: string[];
+  allTypes: readonly string[];            // <-- accetta readonly
+  labels?: Record<string, string>;        // <-- opzionale, per typeLabels
 }) {
   const [open, setOpen] = useState(false);
   const isChecked = (t: string) => value.includes(t);
@@ -272,7 +274,7 @@ function TypesMultiSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        {value.length > 0 ? value.join(", ") : "Tipologie…"}
+        {value.length > 0 ? value.map(t => labels?.[t] ?? t).join(", ") : "Tipologie…"}
       </button>
 
       {/* Panel */}
@@ -290,7 +292,7 @@ function TypesMultiSelect({
                   checked={isChecked(t)}
                   onChange={() => toggle(t)}
                 />
-                <span className="capitalize">{t}</span>
+                <span className="capitalize">{labels?.[t] ?? t}</span>
               </label>
             ))}
           </div>
@@ -308,7 +310,7 @@ function TypesMultiSelect({
               <button
                 type="button"
                 className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange([...allTypes])}
+                onClick={() => onChange(Array.from(allTypes))}   {/* <-- niente errore con readonly */}
               >
                 Seleziona tutte
               </button>
