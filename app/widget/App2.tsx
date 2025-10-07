@@ -41,25 +41,33 @@ const ORIGIN_COLORS = [
   PALETTE.blue, PALETTE.indigo, PALETTE.teal, PALETTE.amber, PALETTE.rose, PALETTE.slate
 ];
 
-// Etichetta % sulle fette del donut (niente label per spicchi <6%)
+// === Label esterne per il donut (Provenienza) ===
 const RAD = Math.PI / 180;
-const pieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
-  const r = innerRadius + (outerRadius - innerRadius) * 0.62;
+// Distanza dal bordo esterno: metti 1 per stare a 1px come da richiesta
+const LABEL_OFFSET_PX = 8;
+
+const renderOuterLabel = ({
+  cx, cy, midAngle, outerRadius, percent,
+}: any) => {
+  const p = Math.round((percent || 0) * 100);
+  if (p < 4) return null; // evita etichette per spicchi micro, soglia regolabile
+
+  const r = (outerRadius || 0) + LABEL_OFFSET_PX;
   const x = cx + r * Math.cos(-midAngle * RAD);
   const y = cy + r * Math.sin(-midAngle * RAD);
-  const v = Math.round((percent || 0) * 100);
-  if (v < 6) return null;
+  const anchor = x > cx ? "start" : "end";
+
   return (
     <text
       x={x}
       y={y}
-      textAnchor="middle"
+      textAnchor={anchor}
       dominantBaseline="central"
-      fontSize={11}
+      fontSize={12}
       fontWeight={600}
       fill="#0f172a"
     >
-      {v}%
+      {p}%
     </text>
   );
 };
@@ -333,15 +341,15 @@ export default function App2() {
       innerRadius="58%"
       outerRadius="82%"
       paddingAngle={3}
-      labelLine={false}
-      label={pieLabel}
+      labelLine={{ stroke: "#cbd5e1", strokeWidth: 1 }}  // linea di collegamento
+      label={renderOuterLabel}                            // <-- etichette esterne
       isAnimationActive
     >
       {origins.map((o, i) => (
         <Cell
           key={o.name}
-          fill={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} // colori PIENI
-          stroke="#ffffff"                              // separatore pulito
+          fill={ORIGIN_COLORS[i % ORIGIN_COLORS.length]}   // colori PIENI (niente gradienti)
+          stroke="#ffffff"
           strokeWidth={2}
         />
       ))}
