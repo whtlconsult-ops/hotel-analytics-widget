@@ -63,7 +63,7 @@ const renderOuterLabel = ({
       y={y}
       textAnchor={anchor}
       dominantBaseline="central"
-      fontSize={12}
+      fontSize={10}
       fontWeight={600}
       fill="#0f172a"
     >
@@ -333,7 +333,7 @@ export default function App2() {
         );
       }}
     />
-    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
+    <Legend wrapperStyle={{ fontSize: 10, color: "#0f172a" }} />
     <Pie
       data={origins}
       dataKey="value"
@@ -341,7 +341,7 @@ export default function App2() {
       innerRadius="58%"
       outerRadius="82%"
       paddingAngle={3}
-      labelLine={{ stroke: "#cbd5e1", strokeWidth: 1 }}  // linea di collegamento
+      labelLine={false}
       label={renderOuterLabel}                            // <-- etichette esterne
       isAnimationActive
     >
