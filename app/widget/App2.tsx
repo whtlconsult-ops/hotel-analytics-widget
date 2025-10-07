@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as RTooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList
 } from "recharts";
 
 /* ──────────────────────────────────────────────────────────
@@ -40,6 +40,29 @@ const CHANNEL_COLORS: Record<string,string> = {
 const ORIGIN_COLORS = [
   PALETTE.blue, PALETTE.indigo, PALETTE.teal, PALETTE.amber, PALETTE.rose, PALETTE.slate
 ];
+
+// Etichetta % sulle fette del donut (niente label per spicchi <6%)
+const RAD = Math.PI / 180;
+const pieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+  const r = innerRadius + (outerRadius - innerRadius) * 0.62;
+  const x = cx + r * Math.cos(-midAngle * RAD);
+  const y = cy + r * Math.sin(-midAngle * RAD);
+  const v = Math.round((percent || 0) * 100);
+  if (v < 6) return null;
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={600}
+      fill="#0f172a"
+    >
+      {v}%
+    </text>
+  );
+};
 
 const fmtPct  = (v:number) => `${Math.round(v)}%`;
 const fmtInt  = (v:number) => new Intl.NumberFormat("it-IT").format(Math.round(v));
@@ -289,57 +312,42 @@ export default function App2() {
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">Nessun dato disponibile</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
-                    <defs>
-                      {origins.map((o, i) => (
-                        <radialGradient id={`gradOr${i}`} key={i} cx="50%" cy="40%" r="80%">
-                          <stop offset="0%"  stopColor="#ffffff" stopOpacity={0.0}/>
-                          <stop offset="70%" stopColor={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} stopOpacity={0.88}/>
-                          <stop offset="100%" stopColor={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} stopOpacity={1}/>
-                        </radialGradient>
-                      ))}
-                    </defs>
-                    <RTooltip
-                      content={({ active, payload }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        const p = payload[0];
-                        return (
-                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-[12px]">
-                            <div className="font-medium">{p?.payload?.name}</div>
-                            <div className="text-slate-600">{fmtPct(Number(p.value||0))}</div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
-                    <Pie
-                      data={origins}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius="58%"
-                      outerRadius="82%"
-                      paddingAngle={2}
-                      blendStroke
-                      isAnimationActive={true}
-                    >
-                      {origins.map((o, i) => (
-                        <Cell key={o.name} fill={`url(#gradOr${i})`} stroke={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} strokeOpacity={0.3}/>
-                      ))}
-                      <Label
-                        position="center"
-                        content={() => {
-                          const tot = sumBy(origins, x=>x.value);
-                          return (
-                            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
-                              <tspan fill="#0f172a" fontSize="16" fontWeight="600">{fmtInt(tot)}</tspan>
-                              <tspan x="50%" dy="1.2em" fill="#64748b" fontSize="11">totale</tspan>
-                            </text>
-                          );
-                        }}
-                      />
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
+  <PieChart margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+    <RTooltip
+      content={({ active, payload }) => {
+        if (!active || !payload || !payload.length) return null;
+        const p = payload[0];
+        return (
+          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-[12px]">
+            <div className="font-medium">{p?.payload?.name}</div>
+            <div className="text-slate-600">{`${Math.round(Number(p.value || 0))}%`}</div>
+          </div>
+        );
+      }}
+    />
+    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
+    <Pie
+      data={origins}
+      dataKey="value"
+      nameKey="name"
+      innerRadius="58%"
+      outerRadius="82%"
+      paddingAngle={3}
+      labelLine={false}
+      label={pieLabel}
+      isAnimationActive
+    >
+      {origins.map((o, i) => (
+        <Cell
+          key={o.name}
+          fill={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} // colori PIENI
+          stroke="#ffffff"                              // separatore pulito
+          strokeWidth={2}
+        />
+      ))}
+    </Pie>
+  </PieChart>
+</ResponsiveContainer>
               )}
             </div>
           </section>
