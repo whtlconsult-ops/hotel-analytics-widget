@@ -44,14 +44,14 @@ const ORIGIN_COLORS = [
 // Barre a "stanghette" per il grafico Canali di vendita
 const SegmentedBar: React.FC<any> = ({ x, y, width, height, fill }) => {
   // parametri estetici
-  const segW = 6;   // larghezza di una stanghetta (px)
+  const segW = 6;   // larghezza stanghetta (px)
   const gap  = 4;   // spazio tra stanghette (px)
   const r    = Math.min(6, height / 2); // raggio angoli arrotondati
 
   // garantisci almeno 1 stanghetta
   const maxN = Math.max(1, Math.ceil(width / (segW + gap)));
 
-  const rects: JSX.Element[] = [];
+  const rects: React.ReactElement[] = [];
   for (let i = 0; i < maxN; i++) {
     const xi = x + i * (segW + gap);
     const remaining = x + width - xi;
