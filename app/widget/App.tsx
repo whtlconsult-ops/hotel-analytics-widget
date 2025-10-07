@@ -782,7 +782,7 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
 
       // --- Trend (ultimi 12 mesi): BLEND SERP + WIKIPEDIA + STAGIONALITÀ ---
 let finalTrend: Array<{ dateLabel: string; value: number }> = [];
-const monthLabels = last12LabelsLLLyy(); // ["ott 24", ..., "set 25"]
+const monthLabels = labelsFromMonthISO(aMonthISO); // 12 etichette a partire dal mese selezionato
 
 // 1) Serie SERP normalizzata su 12 bucket (se disponibile)
 let serp12: number[] = new Array(12).fill(0);
