@@ -5,9 +5,9 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
-import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO, addMonths } from "date-fns";
 import { http } from "../../lib/http";
-import { cityFromTopic, seasonalityItaly12, last12LabelsLLLyy, normalizeTo100, blend3 } from "../../lib/baseline";
+import { cityFromTopic, seasonalityItaly12, normalizeTo100, blend3 } from "../../lib/baseline";
 import { it } from "date-fns/locale";
 
 // 12 etichette mensili a partire dal mese scelto in UI (aMonthISO)
