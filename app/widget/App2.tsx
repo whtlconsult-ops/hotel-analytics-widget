@@ -272,7 +272,6 @@ export default function App2() {
                       ))}
                       <LabelList dataKey="value" position="right" formatter={fmtPct} style={{ fontSize: 11, fill: "#334155" }} />
                     </Bar>
-                    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
