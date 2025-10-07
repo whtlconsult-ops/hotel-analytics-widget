@@ -26,6 +26,7 @@ const PALETTE = {
   amber:  "#f59e0b",
   rose:   "#f43f5e",
   slate:  "#64748b",
+  slateDark: "#475569",
 };
 
 const CHANNEL_COLORS: Record<string,string> = {
@@ -209,17 +210,17 @@ export default function App2() {
         <div className="flex items-center gap-3">
           <Link
             href={`/?q=${encodeURIComponent(q)}&r=${encodeURIComponent(search.get("r") || "20")}&m=${encodeURIComponent(m || "")}&t=${encodeURIComponent(search.get("t") || "hotel")}&mode=${encodeURIComponent(search.get("mode") || "zone")}&wx=${encodeURIComponent(search.get("wx") || "open-meteo")}&trend=${encodeURIComponent(search.get("trend") || "1")}&ch=${encodeURIComponent(search.get("ch") || "1")}&prov=${encodeURIComponent(search.get("prov") || "1")}&los=${encodeURIComponent(search.get("los") || "1")}`}
-            className="inline-flex items-center gap-2 text-sm rounded-lg border px-3 py-2 bg-white hover:bg-slate-50"
+            className="inline-flex items-center gap-2 text-[12px] rounded-lg border px-3 py-2 bg-white hover:bg-slate-50"
           >
             <ArrowLeft className="h-4 w-4" /> Torna all’analisi
           </Link>
-          <h1 className="text-lg md:text-xl font-semibold">Grafica — {q}</h1>
+          <h1 className="text-base md:text-lg font-semibold tracking-tight">Grafica — {q}</h1>
         </div>
       </div>
 
       <div className="mx-auto max-w-7xl px-4 md:px-6 pb-10">
         {notes.length>0 && (
-          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3 text-sm text-amber-900">
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3 text-[12px] text-amber-900">
             {notes.join(" · ")}
           </div>
         )}
@@ -228,8 +229,8 @@ export default function App2() {
           {/* Canali di vendita */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Canali di vendita</h3>
-              <div className="text-xs text-slate-600 mt-0.5">Ripartizione % canali</div>
+              <h3 className="text-[12px] font-semibold">Canali di vendita</h3>
+              <div className="text-[11px] text-slate-600 mt-0.5">Ripartizione % canali</div>
             </div>
             <div className="h-[260px] md:h-[300px]">
               {sortedChannels.length === 0 ? (
@@ -240,29 +241,38 @@ export default function App2() {
                     data={sortedChannels}
                     layout="vertical"
                     margin={{ top: 8, right: 24, bottom: 8, left: 24 }}
+                    barCategoryGap={12}
                   >
-                    <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-                    <XAxis type="number" domain={[0, 100]} tickFormatter={fmtPct} />
-                    <YAxis type="category" dataKey="channel" width={110} />
+                    <defs>
+                      {sortedChannels.map((c, i) => (
+                        <linearGradient id={`gradCh${i}`} key={i} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%"  stopColor={CHANNEL_COLORS[c.channel] || PALETTE.slate} stopOpacity={0.95}/>
+                          <stop offset="100%" stopColor={CHANNEL_COLORS[c.channel] || PALETTE.slateDark} stopOpacity={0.9}/>
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis type="number" domain={[0, 100]} tickFormatter={fmtPct} tick={{ fontSize: 11, fill: "#475569" }} />
+                    <YAxis type="category" dataKey="channel" width={110} tick={{ fontSize: 11, fill: "#475569" }} />
                     <RTooltip
                       content={({ active, payload }) => {
                         if (!active || !payload || !payload.length) return null;
                         const p = payload[0];
                         return (
-                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-sm">
+                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-[12px]">
                             <div className="font-medium">{p?.payload?.channel}</div>
                             <div className="text-slate-600">{fmtPct(Number(p.value||0))}</div>
                           </div>
                         );
                       }}
                     />
-                    <Bar dataKey="value" radius={[8,8,8,8]}>
+                    <Bar dataKey="value" radius={[10,10,10,10]}>
                       {sortedChannels.map((c, idx) => (
-                        <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
+                        <Cell key={idx} fill={`url(#gradCh${idx})`} />
                       ))}
-                      <LabelList dataKey="value" position="right" formatter={fmtPct} />
+                      <LabelList dataKey="value" position="right" formatter={fmtPct} style={{ fontSize: 11, fill: "#334155" }} />
                     </Bar>
-                    <Legend />
+                    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -272,45 +282,58 @@ export default function App2() {
           {/* Provenienza clienti */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Provenienza clienti</h3>
-              <div className="text-xs text-slate-600 mt-0.5">Composizione % per mercato</div>
+              <h3 className="text-[12px] font-semibold">Provenienza clienti</h3>
+              <div className="text-[11px] text-slate-600 mt-0.5">Composizione % per mercato</div>
             </div>
             <div className="h-[260px] md:h-[300px]">
               {origins.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-sm text-slate-500">Nessun dato disponibile</div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+                    <defs>
+                      {origins.map((o, i) => (
+                        <radialGradient id={`gradOr${i}`} key={i} cx="50%" cy="40%" r="80%">
+                          <stop offset="0%"  stopColor="#ffffff" stopOpacity={0.0}/>
+                          <stop offset="70%" stopColor={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} stopOpacity={0.88}/>
+                          <stop offset="100%" stopColor={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} stopOpacity={1}/>
+                        </radialGradient>
+                      ))}
+                    </defs>
                     <RTooltip
                       content={({ active, payload }) => {
                         if (!active || !payload || !payload.length) return null;
                         const p = payload[0];
                         return (
-                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-sm">
+                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-[12px]">
                             <div className="font-medium">{p?.payload?.name}</div>
                             <div className="text-slate-600">{fmtPct(Number(p.value||0))}</div>
                           </div>
                         );
                       }}
                     />
-                    <Legend />
+                    <Legend wrapperStyle={{ fontSize: 11, color: "#475569" }} />
                     <Pie
                       data={origins}
                       dataKey="value"
                       nameKey="name"
-                      innerRadius="55%"
-                      outerRadius="80%"
+                      innerRadius="58%"
+                      outerRadius="82%"
+                      paddingAngle={2}
+                      blendStroke
                       isAnimationActive={true}
                     >
-                      {origins.map((o, i) => <Cell key={o.name} fill={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} />)}
+                      {origins.map((o, i) => (
+                        <Cell key={o.name} fill={`url(#gradOr${i})`} stroke={ORIGIN_COLORS[i % ORIGIN_COLORS.length]} strokeOpacity={0.3}/>
+                      ))}
                       <Label
                         position="center"
                         content={() => {
                           const tot = sumBy(origins, x=>x.value);
                           return (
                             <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
-                              <tspan className="fill-slate-900" fontSize="16" fontWeight="600">{fmtInt(tot)}</tspan>
-                              <tspan x="50%" dy="1.2em" className="fill-slate-500" fontSize="11">totale</tspan>
+                              <tspan fill="#0f172a" fontSize="16" fontWeight="600">{fmtInt(tot)}</tspan>
+                              <tspan x="50%" dy="1.2em" fill="#64748b" fontSize="11">totale</tspan>
                             </text>
                           );
                         }}
@@ -325,8 +348,8 @@ export default function App2() {
           {/* LOS */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold">Lunghezza del soggiorno (LOS)</h3>
-              <div className="text-xs text-slate-600 mt-0.5">Distribuzione % soggiorni</div>
+              <h3 className="text-[12px] font-semibold">Lunghezza del soggiorno (LOS)</h3>
+              <div className="text-[11px] text-slate-600 mt-0.5">Distribuzione % soggiorni</div>
             </div>
             <div className="h-[260px] md:h-[300px]">
               {los.length === 0 ? (
@@ -336,24 +359,31 @@ export default function App2() {
                   <BarChart
                     data={los}
                     margin={{ top: 12, right: 24, bottom: 8, left: 8 }}
+                    barCategoryGap={18}
                   >
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                    <XAxis dataKey="bucket" />
-                    <YAxis domain={[0, 100]} tickFormatter={fmtPct} />
+                    <defs>
+                      <linearGradient id="gradLos" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"  stopColor={PALETTE.indigo} stopOpacity={0.95}/>
+                        <stop offset="100%" stopColor={PALETTE.blue}   stopOpacity={0.9}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: "#475569" }} />
+                    <YAxis domain={[0, 100]} tickFormatter={fmtPct} tick={{ fontSize: 11, fill: "#475569" }} />
                     <RTooltip
                       content={({ active, payload }) => {
                         if (!active || !payload || !payload.length) return null;
                         const p = payload[0];
                         return (
-                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-sm">
+                          <div className="rounded-lg border bg-white shadow px-2.5 py-1.5 text-[12px]">
                             <div className="font-medium">{p?.payload?.bucket}</div>
                             <div className="text-slate-600">{fmtPct(Number(p.value||0))}</div>
                           </div>
                         );
                       }}
                     />
-                    <Bar dataKey="value" fill={PALETTE.indigo} radius={[8,8,0,0]} isAnimationActive>
-                      <LabelList dataKey="value" position="top" formatter={fmtPct} />
+                    <Bar dataKey="value" fill="url(#gradLos)" radius={[10,10,0,0]} isAnimationActive>
+                      <LabelList dataKey="value" position="top" formatter={fmtPct} style={{ fontSize: 11, fill: "#334155" }} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
