@@ -734,16 +734,29 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
       const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
       const j = r1.ok ? r1.data : null;
 
-      if (!j || j.ok !== true) {
-        setNotices(prev =>
-          Array.from(new Set([...prev, (j && j.error) ? String(j.error) : "Nessun dato SERP per la query/periodo."]))
-        );
-        setSerpTrend([]);
-        setSerpChannels([]);
-        setSerpOrigins([]);
-        setSerpLOS([]);
-        return;
-      }
+     if (!j || j.ok !== true) {
+  // Avviso
+  setNotices(prev =>
+    Array.from(new Set([
+      ...prev,
+      (j && (j as any).error) ? String((j as any).error) : "Nessun dato SERP per la query/periodo: uso curva di stagionalità."
+    ]))
+  );
+
+  // Fallback: stagionalità Italia su 12 mesi (sempre visibile)
+  const labels = last12LabelsLLLyy();        // es. ["nov 24", ..., "ott 25"]
+  const seas   = normalizeTo100(seasonalityItaly12()); // array di 12 valori
+  setSerpTrend(labels.map((lbl, i) => ({ dateLabel: lbl, value: seas[i] || 0 })));
+
+  // Related non disponibili
+  setSerpChannels([]);
+  setSerpOrigins([]);
+  setSerpLOS([]);
+
+  // NON interrompere tutta la funzione se vuoi far proseguire ad altre routine;
+  // qui però va bene chiudere perché non abbiamo altri step necessari.
+  return;
+}
 
       // --- Trend (ultimi 12 mesi): BLEND SERP + WIKIPEDIA + STAGIONALITÀ ---
 let finalTrend: Array<{ dateLabel: string; value: number }> = [];
