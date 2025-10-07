@@ -9,6 +9,21 @@ import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO }
 import { http } from "../../lib/http";
 import { cityFromTopic, seasonalityItaly12, last12LabelsLLLyy, normalizeTo100, blend3 } from "../../lib/baseline";
 import { it } from "date-fns/locale";
+
+// 12 etichette mensili a partire dal mese scelto in UI (aMonthISO)
+function labelsFromMonthISO(monthISO?: string) {
+  const baseISO =
+    monthISO && /^\d{4}-\d{2}/.test(monthISO)
+      ? monthISO.slice(0, 7) + "-01"
+      : format(new Date(), "yyyy-MM-01");
+  const start = startOfMonth(parseISO(baseISO));
+  return Array.from({ length: 12 }, (_, i) =>
+    format(addMonths(start, i), "LLL yy", { locale: it })
+  );
+}
+// prende una su due (per tick ogni 2 mesi)
+const every2 = (arr: string[]) => arr.filter((_, i) => i % 2 === 0);
+
 import {
   XAxis, YAxis, CartesianGrid, LineChart, Line, Area, ResponsiveContainer, Tooltip as RTooltip
 } from "recharts";
@@ -471,6 +486,11 @@ const isApplied = useMemo(() => {
   const [serpOrigins, setSerpOrigins] = useState<Array<{ name: string; value: number }>>([]);
   const [serpLOS, setSerpLOS] = useState<Array<{ bucket: string; value: number }>>([]);
   const [serpTrend, setSerpTrend] = useState<Array<{ dateLabel: string; value: number }>>([]);
+// Tick ogni 2 mesi per l'asse X del grafico Andamento Domanda
+const trendTicks = useMemo(
+  () => every2(serpTrend.map(d => d.dateLabel)),
+  [serpTrend]
+);
 
   // Flag cambi
   const hasChanges = useMemo(() =>
@@ -746,7 +766,7 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
   );
 
   // Fallback: stagionalità Italia su 12 mesi (sempre visibile)
-  const labels = last12LabelsLLLyy();        // es. ["nov 24", ..., "ott 25"]
+  const labels = labelsFromMonthISO(aMonthISO);
   const seas   = normalizeTo100(seasonalityItaly12()); // array di 12 valori
   setSerpTrend(labels.map((lbl, i) => ({ dateLabel: lbl, value: seas[i] || 0 })));
 
@@ -1369,34 +1389,35 @@ useEffect(() => {
                 Nessun segnale (serie tutta a zero). Prova ad ampliare l’area o il periodo.
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={serpTrend}>
-                  <defs>
-                    <linearGradient id="gradLineStroke" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.15)} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.10)} />
-                    </linearGradient>
-                    <linearGradient id="gradLineFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={shade(THEME.chart.line.stroke, 0.25)} stopOpacity={0.22} />
-                      <stop offset="100%" stopColor={shade(THEME.chart.line.stroke, -0.20)} stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="dateLabel" tick={{ fontSize: 12 }} interval={3} />
-                  <YAxis />
-                  <RTooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="value" fill="url(#gradLineFill)" stroke="none" isAnimationActive />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    stroke="url(#gradLineStroke)"
-                    strokeWidth={THEME.chart.line.strokeWidth + 0.5}
-                    dot={{ r: THEME.chart.line.dotRadius + 1, stroke: "#fff", strokeWidth: 1 }}
-                    activeDot={{ r: THEME.chart.line.dotRadius + 2, stroke: "#fff", strokeWidth: 2 }}
-                    isAnimationActive
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={320}>
+  <LineChart data={serpTrend} margin={{ top: 8, right: 12, bottom: 8, left: 8 }}>
+    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+    <XAxis
+      dataKey="dateLabel"
+      ticks={trendTicks}
+      tick={{ fontSize: 11, fill: "#475569" }}
+    />
+    <YAxis
+      domain={[0, 100]}
+      tick={{ fontSize: 11, fill: "#475569" }}
+    />
+    <Tooltip
+      contentStyle={{ borderRadius: 8, fontSize: 12 }}
+      labelStyle={{ fontSize: 12 }}
+      formatter={(v: any) => [`${Math.round(Number(v))}`, "Indice"]}
+    />
+    <Line
+      type="monotone"
+      dataKey="value"
+      stroke="#21306b"
+      strokeWidth={3}
+      dot={false}
+      activeDot={{ r: 4 }}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </LineChart>
+</ResponsiveContainer>
             )}
           </div>
         </main>
