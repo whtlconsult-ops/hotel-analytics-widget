@@ -3,14 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as RTooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Label, LabelList
 } from "recharts";
 
 type ChannelRow = { channel: string; value: number };
 type OriginRow  = { name: string; value: number };
 type LOSRow     = { bucket: string; value: number };
-
-const COLORS = ["#ef4444","#f59e0b","#10b981","#3b82f6","#8b5cf6","#22c55e","#06b6d4","#f43f5e"];
 
 function monthIndexFromParam(m?: string | null): number {
   // accetta "YYYY-MM" o "YYYY-MM-DD" → 0..11 (0=Gennaio)
@@ -142,23 +140,6 @@ const ORIGIN_COLORS = [
 const fmtPct  = (v:number) => `${Math.round(v)}%`;
 const fmtInt  = (v:number) => new Intl.NumberFormat("it-IT").format(Math.round(v));
 const sumBy   = <T,>(arr:T[], sel:(x:T)=>number)=> arr.reduce((a,x)=>a+(Number(sel(x))||0),0);
-
-function ChartCard({
-  title, subtitle, children, footer
-}: { title:string; subtitle?:string; children:React.ReactNode; footer?:React.ReactNode }) {
-  return (
-    <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
-      <div className="mb-3">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {subtitle && <div className="text-xs text-slate-600 mt-0.5">{subtitle}</div>}
-      </div>
-      <div className="h-[260px] md:h-[300px]">
-        {children}
-      </div>
-      {footer && <div className="mt-2 text-[11px] text-slate-600">{footer}</div>}
-    </section>
-  );
-}
 
 const TooltipBox = ({ active, payload, label }: any) => {
   if (!active || !payload || !payload.length) return null;
@@ -345,11 +326,11 @@ useEffect(() => {
     <YAxis type="category" dataKey="channel" width={110} />
     <RTooltip content={<TooltipBox />} />
     <Bar dataKey="value" radius={[8,8,8,8]}>
-      {channels.map((c, idx) => (
-        <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
-      ))}
-      <LabelList dataKey="value" position="right" formatter={fmtPct} />
-    </Bar>
+  {[...channels].sort((a,b)=> b.value - a.value).map((c, idx) => (
+    <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
+  ))}
+  <LabelList dataKey="value" position="right" formatter={fmtPct} />
+</Bar>
     <Legend />
   </BarChart>
 </ResponsiveContainer>
