@@ -420,6 +420,9 @@ const [eventsByDate, setEventsByDate] = useState<Record<string, { title: string 
   const [aMode, setAMode] = useState<Mode>(mode);
   const [aCenter, setACenter] = useState<{ lat: number; lng: number } | null>({ lat: 43.7696, lng: 11.2558 });
 
+// Se l’utente ha cambiato località (mappa/ricerca) dopo l’ultima applicazione
+const [centerDirty, setCenterDirty] = useState(false);
+
 // Confronto array tipologie
 const arraysEqual = (a?: string[] | null, b?: string[] | null) => {
   const aa = (a || []).slice().sort();
@@ -436,11 +439,10 @@ const isApplied = useMemo(() => {
     radius === aRadius &&
     monthISO === aMonthISO &&
     arraysEqual(types, aTypes) &&
-    mode === aMode
-    // volendo, puoi aggiungere anche il centro mappa:
-    // && ((aCenter && center) ? (aCenter.lat===center.lat && aCenter.lng===center.lng) : (!aCenter && !center))
+    mode === aMode &&
+    !centerDirty // se il centro è stato toccato, il bottone torna nero
   );
-}, [query, aQuery, radius, aRadius, monthISO, aMonthISO, types, aTypes, mode, aMode]);
+}, [query, aQuery, radius, aRadius, monthISO, aMonthISO, types, aTypes, mode, aMode, centerDirty]);
 
   // Contatore SerpAPI + polling
   const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
@@ -536,7 +538,7 @@ const isApplied = useMemo(() => {
       const lng = Number(item?.lng ?? item?.longitude);
       const name = String(item?.name ?? item?.display_name ?? q);
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        setACenter({ lat, lng }); setAQuery(name);
+        setACenter({ lat, lng }); setAQuery(name); setCenterDirty(true);
         setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
         replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
           { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
@@ -549,7 +551,7 @@ const isApplied = useMemo(() => {
     let name = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     try { const r = await fetch(`/api/external/reverse-geocode?lat=${lat}&lng=${lng}`); const j = r.ok ? await r.json() : null; if (j) name = String(j?.name ?? j?.display_name ?? name); } catch (e) {}
     setQuery(name);
-    setACenter({ lat, lng }); setAQuery(name);
+   setACenter({ lat, lng }); setAQuery(name); setCenterDirty(true);
     setARadius(radius); setAMonthISO(monthISO); setATypes(types); setAMode(mode);
     replaceUrlWithState(router, (typeof window !== "undefined" ? location.pathname : "/"),
       { q: name, r: radius, m: monthISO, t: types, mode, dataSource, csvUrl, gsId, gsGid, gsSheet, askTrend, askChannels, askProvenance, askLOS, wxProvider });
@@ -1290,6 +1292,7 @@ useEffect(() => {
 
     // trigger fetch SERP (se quota disponibile)
     fetchSerp();
+    setCenterDirty(false); // <-- torna verde dopo l’applicazione 
   }}
 >
   <RefreshCw className="h-4 w-4 mr-2" />
