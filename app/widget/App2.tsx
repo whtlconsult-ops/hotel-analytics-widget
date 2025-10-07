@@ -41,17 +41,16 @@ const ORIGIN_COLORS = [
   PALETTE.blue, PALETTE.indigo, PALETTE.teal, PALETTE.amber, PALETTE.rose, PALETTE.slate
 ];
 
-// Barre a "stanghette" per il grafico Canali di vendita
+// Barre a "stanghette" per il grafico Canali di vendita (raggio soft + spaziatura ridotta)
 const SegmentedBar: React.FC<any> = ({ x, y, width, height, fill }) => {
-  // parametri estetici
-  const segW = 6;   // larghezza stanghetta (px)
-  const gap  = 4;   // spazio tra stanghette (px)
-  const r    = Math.min(6, height / 2); // raggio angoli arrotondati
+  // estetica
+  const segW = 5;   // larghezza stanghetta (px)  ← un filo più stretta
+  const gap  = 2;   // spazio tra stanghette (px) ← più ravvicinate
+  const r    = Math.min(3, height / 2); // angoli solo leggermente stondati
 
-  // garantisci almeno 1 stanghetta
   const maxN = Math.max(1, Math.ceil(width / (segW + gap)));
-
   const rects: React.ReactElement[] = [];
+
   for (let i = 0; i < maxN; i++) {
     const xi = x + i * (segW + gap);
     const remaining = x + width - xi;
@@ -64,7 +63,7 @@ const SegmentedBar: React.FC<any> = ({ x, y, width, height, fill }) => {
         y={y}
         width={w}
         height={height}
-        fill={fill}
+        fill={fill}     // eredita gradient/colore dal <Cell/>
         rx={r}
         ry={r}
       />
@@ -331,9 +330,14 @@ export default function App2() {
                     />
                     <Bar dataKey="value" shape={<SegmentedBar />}>
   {sortedChannels.map((c, idx) => (
-    <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
+    <Cell key={idx} fill={`url(#gradCh${idx})`} />
   ))}
-  <LabelList dataKey="value" position="right" formatter={(v:number)=>`${Math.round(v)}%`} style={{ fontSize: 11, fill: "#334155" }} />
+  <LabelList
+    dataKey="value"
+    position="right"
+    formatter={(v:number)=>`${Math.round(v)}%`}
+    style={{ fontSize: 11, fill: "#334155" }}
+  />
 </Bar>
                   </BarChart>
                 </ResponsiveContainer>
