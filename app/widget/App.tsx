@@ -255,70 +255,84 @@ function TypesMultiSelect({
   labels,
 }: {
   value: string[];
-  onChange: (v: string[]) => void;
-  allTypes: readonly string[];            // accetta readonly (es. STRUCTURE_TYPES as const)
-  labels?: Record<string, string>;        // opzionale, per typeLabels
+  onChange: (next: string[]) => void;
+  allTypes: readonly string[];
+  labels: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
-  const isChecked = (t: string) => value.includes(t);
-  const toggle = (t: string) =>
-    onChange(isChecked(t) ? value.filter((x) => x !== t) : [...value, t]);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onClickOutside = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const toggle = (t: string) => {
+    onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t]);
+  };
+
+  const summary =
+    value.length === 0 ? "Nessuna" :
+    value.length === allTypes.length ? "Tutte" :
+    `${value.length} selezionate`;
 
   return (
-    <div className="relative">
-      {/* Trigger */}
+    <div className="relative" ref={containerRef}>
+      <span className="block text-sm font-medium text-neutral-700 mb-1">Tipologie</span>
+
       <button
         type="button"
-        className="w-full h-9 rounded-xl border border-slate-300 px-2 text-sm text-left"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full h-10 rounded-xl border border-neutral-300 bg-white px-3 text-left flex items-center justify-between hover:border-neutral-400 transition"
       >
-        {value.length > 0 ? value.map((t) => labels?.[t] ?? t).join(", ") : "Tipologie…"}
+        <span className="truncate">
+          {summary}
+          {value.length > 0 && value.length < allTypes.length ? (
+            <span className="ml-2 text-xs text-neutral-500">
+              {value.slice().sort().map((t) => labels[t] || t).slice(0, 2).join(", ")}
+              {value.length > 2 ? "…" : ""}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown className={`h-4 w-4 transition ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {/* Panel */}
       {open && (
-        <div className="absolute z-40 mt-2 w-64 rounded-xl border bg-white shadow-lg">
-          <div className="max-h-64 overflow-auto p-2 space-y-1">
-            {allTypes.map((t) => (
-              <label
-                key={t}
-                className="flex items-center gap-2 text-sm px-2 py-1 cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={isChecked(t)}
-                  onChange={() => toggle(t)}
-                />
-                <span className="capitalize">{labels?.[t] ?? t}</span>
-              </label>
-            ))}
-          </div>
+        <div className="absolute z-50 mt-2 w-full rounded-2xl border bg-white shadow-lg p-2">
+          <ul className="space-y-1 max-h-64 overflow-auto pr-1">
+            {allTypes.map((t) => {
+              const active = value.includes(t);
+              return (
+                <li key={t}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(t)}
+                    className={`w-full flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-slate-50" : "hover:bg-neutral-50"}`}
+                    role="option"
+                    aria-selected={active}
+                  >
+                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${active ? "bg-slate-900 border-slate-900" : "bg-white border-neutral-300"}`}>
+                      {active ? <Check className="h-3.5 w-3.5 text-white" /> : null}
+                    </span>
+                    <span className="text-neutral-800">{labels[t] || t}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
 
-          {/* Footer azioni */}
-          <div className="mt-2 flex items-center justify-between border-t p-2 pt-2">
-            <button
-              type="button"
-              className="text-xs text-neutral-600 hover:text-neutral-900"
-              onClick={() => onChange([])}
-            >
+          <div className="mt-2 flex items-center justify-between border-t pt-2">
+            <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([])}>
               Pulisci
             </button>
             <div className="space-x-2">
-              <button
-                type="button"
-                className="text-xs text-neutral-600 hover:text-neutral-900"
-                onClick={() => onChange(Array.from(allTypes))}  // copia mutabile
-              >
+              <button type="button" className="text-xs text-neutral-600 hover:text-neutral-900" onClick={() => onChange([...allTypes])}>
                 Seleziona tutte
               </button>
-              <button
-                type="button"
-                className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800"
-                onClick={() => setOpen(false)}
-              >
+              <button type="button" className="text-xs rounded-md bg-slate-900 text-white px-2 py-1 hover:bg-slate-800" onClick={() => setOpen(false)}>
                 Applica
               </button>
             </div>
