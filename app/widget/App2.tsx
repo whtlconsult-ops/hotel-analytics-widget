@@ -41,6 +41,38 @@ const ORIGIN_COLORS = [
   PALETTE.blue, PALETTE.indigo, PALETTE.teal, PALETTE.amber, PALETTE.rose, PALETTE.slate
 ];
 
+// Barre a "stanghette" per il grafico Canali di vendita
+const SegmentedBar: React.FC<any> = ({ x, y, width, height, fill }) => {
+  // parametri estetici
+  const segW = 6;   // larghezza di una stanghetta (px)
+  const gap  = 4;   // spazio tra stanghette (px)
+  const r    = Math.min(6, height / 2); // raggio angoli arrotondati
+
+  // garantisci almeno 1 stanghetta
+  const maxN = Math.max(1, Math.ceil(width / (segW + gap)));
+
+  const rects: JSX.Element[] = [];
+  for (let i = 0; i < maxN; i++) {
+    const xi = x + i * (segW + gap);
+    const remaining = x + width - xi;
+    if (remaining <= 0) break;
+    const w = Math.min(segW, remaining);
+    rects.push(
+      <rect
+        key={i}
+        x={xi}
+        y={y}
+        width={w}
+        height={height}
+        fill={fill}
+        rx={r}
+        ry={r}
+      />
+    );
+  }
+  return <g>{rects}</g>;
+};
+
 // === Label esterne per il donut (Provenienza) ===
 const RAD = Math.PI / 180;
 // Distanza dal bordo esterno: metti 1 per stare a 1px come da richiesta
@@ -297,12 +329,12 @@ export default function App2() {
                         );
                       }}
                     />
-                    <Bar dataKey="value" radius={[10,10,10,10]}>
-                      {sortedChannels.map((c, idx) => (
-                        <Cell key={idx} fill={`url(#gradCh${idx})`} />
-                      ))}
-                      <LabelList dataKey="value" position="right" formatter={fmtPct} style={{ fontSize: 11, fill: "#334155" }} />
-                    </Bar>
+                    <Bar dataKey="value" shape={<SegmentedBar />}>
+  {sortedChannels.map((c, idx) => (
+    <Cell key={idx} fill={CHANNEL_COLORS[c.channel] || PALETTE.slate} />
+  ))}
+  <LabelList dataKey="value" position="right" formatter={(v:number)=>`${Math.round(v)}%`} style={{ fontSize: 11, fill: "#334155" }} />
+</Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
