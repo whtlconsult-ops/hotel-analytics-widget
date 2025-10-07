@@ -335,7 +335,7 @@ export default function App2() {
     />
     <Legend
   content={({ payload }: any) => (
-    <ul className="flex flex-wrap gap-4 pl-0 m-0 list-none text-[11px]">
+    <ul className="flex flex-wrap gap-4 pl-0 m-0 list-none text-[10px]">
       {payload?.map((entry: any, idx: number) => (
         <li key={idx} className="flex items-center gap-2">
           <span
