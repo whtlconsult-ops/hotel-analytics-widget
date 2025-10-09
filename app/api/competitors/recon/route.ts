@@ -38,6 +38,8 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const name = (searchParams.get("name") || "").trim();
     const loc  = (searchParams.get("loc")  || "").trim();
+const site = (searchParams.get("site") || "").trim();
+const origin = new URL(req.url).origin;
     if (!name) return NextResponse.json({ ok:false, error:"Missing name" }, { status:400 });
 
     const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
@@ -90,6 +92,39 @@ export async function GET(req: Request) {
       }
     }
     profile.channels = Array.from(new Set(channels));
+
+// --- Enrichment dal sito ufficiale (se fornito) ---
+if (site) {
+  try {
+    const inspR = await fetch(
+      `${origin}/api/competitors/inspect?url=${encodeURIComponent(site)}`,
+      { cache: "no-store" }
+    );
+    const insp = await inspR.json();
+
+    if (insp?.ok) {
+      // Nome "canonico" da schema.org se non era stato risolto da Maps
+      if (insp.signals?.hotelName && !profile.name) {
+        profile.name = insp.signals.hotelName;
+      }
+      // Amenities: unisci senza duplicati
+      if (Array.isArray(insp.signals?.amenities) && insp.signals.amenities.length) {
+        profile.amenities = Array.from(
+          new Set([...(profile.amenities || []), ...insp.signals.amenities])
+        );
+      }
+      // Booking engine → implica canale "Diretto"
+      if (insp.signals?.engine?.vendor) {
+        profile.channels = Array.from(
+          new Set([...(profile.channels || []), "Diretto"])
+        );
+        notes.push(`Booking engine rilevato (${insp.signals.engine.vendor}).`);
+      }
+    }
+  } catch {
+    notes.push("Inspect sito: non raggiungibile.");
+  }
+}
 
     // C) ADR stimato (12 mesi)
     const adrMonthly = estimateADR(loc || profile.address || "", profile.rating);

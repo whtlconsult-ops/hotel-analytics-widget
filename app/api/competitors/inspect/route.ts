@@ -9,9 +9,7 @@ export async function GET(req: Request) {
     const raw = searchParams.get("url")?.trim();
     if (!raw) return NextResponse.json({ ok: false, error: "Missing url" }, { status: 400 });
 
-    // normalizza URL
     const url = raw.match(/^https?:\/\//i) ? raw : `https://${raw}`;
-
     const r = await fetch(url, {
       headers: {
         "User-Agent": "HotelTradeAudit/1.0 (+https://hoteltrade.it)",
@@ -20,96 +18,66 @@ export async function GET(req: Request) {
       redirect: "follow",
       cache: "no-store",
     });
-    const finalUrl = r.url;
     const html = await r.text();
-    const signals = extractSignals(html, finalUrl);
+    const $ = cheerio.load(html);
 
-    return NextResponse.json({ ok: true, url: finalUrl, signals }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
-  }
-}
+    const lang = $("html").attr("lang") || undefined;
+    const hreflangs = $("link[rel='alternate'][hreflang]")
+      .map((_, el) => String($(el).attr("hreflang") || "").toLowerCase())
+      .get();
 
-function extractSignals(html: string, finalUrl: string) {
-  const $ = cheerio.load(html);
+    // booking engine detection
+    const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
+    function detectEngine(hay: string) {
+      const patterns: Array<[string, RegExp]> = [
+        ["synxis", /synxis|reservations\.travelclick|be\.synxis|book\.synxis/i],
+        ["d-edge", /d-edge|securesuite|secured-forms/i],
+        ["simplebooking", /simplebooking|book\.simplebooking/i],
+        ["verticalbooking", /verticalbooking|book\.verticalbooking/i],
+        ["bookassist", /bookassist|bookings\.bookassist/i],
+        ["blastness", /blastness|bb.*blastness/i],
+        ["ericsoft", /ericsoft|bookingengine\.ericsoft/i],
+        ["passepartout", /passepartout|welcomeasy|book\.welcomeasy/i],
+        ["omnibees", /omnibees|book\.omnibees/i],
+      ];
+      for (const [vendor, re] of patterns) if (re.test(hay)) return vendor;
+      return null;
+    }
+    const engineVendor = detectEngine(html + "\n" + links.join("\n"));
 
-  // meta base
-  const lang = $("html").attr("lang") || undefined;
-  const hreflangs = $("link[rel='alternate'][hreflang]")
-    .map((_, el) => String($(el).attr("hreflang") || "").toLowerCase())
-    .get();
-
-  const title = $("title").first().text().trim();
-  const metaDesc = $('meta[name="description"]').attr("content") || "";
-
-  // links
-  const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
-
-  // analytics / pixel
-  const ga4 = (html.match(/G-[A-Z0-9]{6,}/) || [])[0];
-  const gtm = (html.match(/GTM-[A-Z0-9]+/) || [])[0];
-  const fbPixel = (html.match(/fbq\(['"]init['"],\s*['"](\d+)['"]\)/) || [])[1];
-
-  // booking engine detection (html o href)
-  const engine = detectEngine(html, links);
-
-  // schema.org
-  const jsonldBlocks = $('script[type="application/ld+json"]').map((_, el) => $(el).contents().text()).get();
-  const schemaTypes = new Set<string>();
-  let hotelName: string | undefined;
-  const amenities = new Set<string>();
-
-  for (const block of jsonldBlocks) {
-    try {
-      const obj = JSON.parse(block);
-      const arr = Array.isArray(obj) ? obj : [obj];
-      for (const j of arr) {
-        const t = j?.["@type"];
-        if (t) schemaTypes.add(String(t));
-        if (!hotelName && (t === "Hotel" || t === "LodgingBusiness" || t === "Organization")) {
-          hotelName = j?.name || hotelName;
-          if (Array.isArray(j?.amenityFeature)) {
-            for (const a of j.amenityFeature) {
-              const name = a?.name || a?.amenityType;
-              if (name) amenities.add(String(name));
+    // schema.org
+    const jsonld = $('script[type="application/ld+json"]').map((_, el) => $(el).contents().text()).get();
+    let hotelName: string | undefined;
+    const amenities = new Set<string>();
+    for (const block of jsonld) {
+      try {
+        const obj = JSON.parse(block);
+        const arr = Array.isArray(obj) ? obj : [obj];
+        for (const j of arr) {
+          const t = j?.["@type"];
+          if (t === "Hotel" || t === "LodgingBusiness" || t === "Organization") {
+            if (!hotelName && j?.name) hotelName = String(j.name);
+            if (Array.isArray(j?.amenityFeature)) {
+              for (const a of j.amenityFeature) {
+                const label = a?.name || a?.amenityType;
+                if (label) amenities.add(String(label));
+              }
             }
           }
         }
+      } catch {}
+    }
+
+    return NextResponse.json({
+      ok: true,
+      signals: {
+        engine: engineVendor ? { engine: "booking-engine", vendor: engineVendor } : null,
+        hotelName,
+        amenities: Array.from(amenities),
+        languages: Array.from(new Set([lang, ...hreflangs].filter(Boolean))),
       }
-    } catch {}
+    }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
-
-  return {
-    lang,
-    hreflangs,
-    title,
-    metaDesc,
-    analytics: { ga4: !!ga4 ? ga4 : undefined, gtm: !!gtm ? gtm : undefined, fbPixel: !!fbPixel ? fbPixel : undefined },
-    engine, // { engine: 'booking-engine' | null, vendor: string|null, hints: string|null }
-    schemaTypes: Array.from(schemaTypes),
-    hotelName,
-    amenities: Array.from(amenities),
-    detectedLanguages: Array.from(new Set([lang, ...hreflangs].filter(Boolean))),
-    finalUrl,
-  };
-}
-
-function detectEngine(html: string, links: string[]) {
-  const patterns: Array<[vendor: string, re: RegExp]> = [
-    ["synxis", /synxis|reservations\.travelclick|be\.synxis|book\.synxis/i],
-    ["d-edge", /d-edge|securesuite|secured-forms/i],
-    ["simplebooking", /simplebooking|book\.simplebooking/i],
-    ["verticalbooking", /verticalbooking|book\.verticalbooking/i],
-    ["bookassist", /bookassist|bookings\.bookassist/i],
-    ["blastness", /blastness|bb.*blastness/i],
-    ["ericsoft", /ericsoft|bookingengine\.ericsoft/i],
-    ["passepartout", /passepartout|welcomeasy|book\.welcomeasy/i],
-    ["omnibees", /omnibees|book\.omnibees/i],
-    ["generic", /booking-?engine|bookingengine/i],
-  ];
-  const hay = (html || "") + "\n" + (links || []).join("\n");
-  for (const [vendor, re] of patterns) {
-    if (re.test(hay)) return { engine: "booking-engine", vendor, hints: vendor };
-  }
-  return { engine: null, vendor: null, hints: null };
 }

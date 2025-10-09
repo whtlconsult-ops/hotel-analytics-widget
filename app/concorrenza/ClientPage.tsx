@@ -41,8 +41,8 @@ const safeDecode = (v: string | null) => {
 const q0 = safeDecode(sp.get("q"));
 const loc0 = safeDecode(sp.get("loc"));
 
-  const [name, setName] = useState(q0);
-  const [loc, setLoc] = useState(loc0);
+  const [name, setName] = useState("");
+  const [loc, setLoc] = useState("");
   const [site, setSite] = useState("");
 
   const [loadingRecon, setLoadingRecon] = useState(false);
@@ -180,20 +180,25 @@ const loc0 = safeDecode(sp.get("loc"));
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Struttura</label>
-              <input className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
-                placeholder="Es. Hotel ABC"
-                value={name} onChange={e=>setName(e.target.value)} />
+              <input
+  className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
+  placeholder="Inserisci Nome Pubblico Struttura"
+  value={name}
+  onChange={(e) => setName(e.target.value)}
+/>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Località</label>
-              <input className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
-                placeholder="Es. Firenze"
-                value={loc} onChange={e=>setLoc(e.target.value)} />
+              <input
+  className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
+  placeholder="Inserisci Località"
+  value={loc}
+  onChange={(e) => setLoc(e.target.value)}
+/>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Sito ufficiale (opz.)</label>
               <input className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
-                placeholder="https://..."
+                placeholder="Inserisci https://..."
                 value={site} onChange={e=>setSite(e.target.value)} />
             </div>
           </div>

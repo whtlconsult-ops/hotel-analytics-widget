@@ -1330,10 +1330,10 @@ useEffect(() => {
 </div>
 
 <Link
-  href={`/concorrenza?q=${encodeURIComponent(aQuery || "")}&loc=${encodeURIComponent(aQuery || "")}`}
+  href="/concorrenza"
   className="inline-flex items-center gap-2 text-[12px] rounded-lg border px-3 py-2 bg-white hover:bg-slate-50"
 >
-  Concorrenza
+  Esame Concorrenza
 </Link>
 
                 {shareUrl && (
