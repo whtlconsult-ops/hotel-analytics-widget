@@ -40,18 +40,44 @@ export async function GET(req: Request) {
     const loc  = (searchParams.get("loc")  || "").trim();
 const site = (searchParams.get("site") || "").trim();
 const origin = new URL(req.url).origin;
-    if (!name) return NextResponse.json({ ok:false, error:"Missing name" }, { status:400 });
-
+    if (!name && !site) {
+  return NextResponse.json({ ok:false, error:"Missing name or site" }, { status:400 });
+}
     const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
     const notes: string[] = [];
     let profile: any = { name };
 
+// Enrichment da sito ufficiale se name mancante
+if (!name && site) {
+  try {
+    const inspR = await fetch(`${origin}/api/competitors/inspect?url=${encodeURIComponent(site)}`, { cache: "no-store" });
+    const insp = await inspR.json();
+    if (insp?.ok) {
+      if (insp.signals?.hotelName) profile.name = insp.signals.hotelName;
+      if (Array.isArray(insp.signals?.amenities) && insp.signals.amenities.length) {
+        profile.amenities = Array.from(new Set([...(profile.amenities || []), ...insp.signals.amenities]));
+      }
+      if (insp.signals?.engine?.vendor) {
+        profile.channels = Array.from(new Set([...(profile.channels || []), "Diretto"]));
+        notes.push(`Booking engine rilevato (${insp.signals.engine.vendor}).`);
+      }
+    }
+  } catch {}
+}
+
     // A) Google Maps lookup (se possibile)
     if (apiKey && loc) {
-      const p = new URLSearchParams({
-        engine: "google_maps", type: "search",
-        q: `${name} ${loc}`, hl: "it", api_key: apiKey,
-      });
+     const qStr = `${profile.name || name} ${loc}`.trim();
+if (qStr) {
+  const p = new URLSearchParams({
+    engine: "google_maps", type: "search",
+    q: qStr, hl: "it", api_key: apiKey,
+  });
+  const j = await serpFetch(`https://serpapi.com/search.json?${p.toString()}`);
+  // ... (il resto del blocco A) resta identico)
+} else {
+  notes.push("Maps: query insufficiente (manca nome/località).");
+}
       const j = await serpFetch(`https://serpapi.com/search.json?${p.toString()}`);
       const res = Array.isArray(j?.local_results) ? j.local_results : [];
       if (res.length > 0) {
@@ -79,10 +105,10 @@ const origin = new URL(req.url).origin;
     const channels: string[] = [];
     if (apiKey) {
       const probes = [
-        ["Booking.com", `site:booking.com "${name}" ${loc}`],
-        ["Expedia",     `site:expedia.* "${name}" ${loc}`],
-        ["Airbnb",      `site:airbnb.* "${name}" ${loc}`],
-        ["Diretto",     `site:. "${name}" ${loc} prenota|booking|reservations`],
+        ["Booking.com", `site:booking.com "${profile.name || name}" ${loc}`],
+        ["Expedia",     `site:expedia.* "${profile.name || name}" ${loc}`],
+        ["Airbnb",      `site:airbnb.* "${profile.name || name}" ${loc}`],
+        ["Diretto",     `site:. "${profile.name || name}" ${loc}`],
       ];
       for (const [label, q] of probes) {
         const p = new URLSearchParams({ engine:"google", q, hl:"it", num:"1", api_key: apiKey });

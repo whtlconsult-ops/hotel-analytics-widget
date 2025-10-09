@@ -54,6 +54,10 @@ const loc0 = safeDecode(sp.get("loc"));
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const [compareText, setCompareText] = useState<string>("");
 
+const canRecon = useMemo(
+  () => (name.trim().length > 0 || site.trim().length > 0),
+  [name, site]
+);
   const hasSelection = useMemo(
     () => Object.values(selected).some(Boolean),
     [selected]
@@ -78,24 +82,29 @@ const loc0 = safeDecode(sp.get("loc"));
   }
 
   async function doSuggest() {
-    setLoadingSuggest(true);
-    setCompareText("");
-    try {
-      const p = new URLSearchParams();
-      if (loc) p.set("loc", loc);
-      // tipologia opzionale: per ora deduciamo da nome se contiene B&B/agriturismo
-      if (/b&b|bnb|agritur|agri/i.test(name)) p.set("type", "bnb");
-      const r = await fetch(`/api/competitors/suggest?${p.toString()}`);
-      const j = await r.json();
-      const items: SuggestItem[] = Array.isArray(j?.items) ? j.items : [];
-      setSuggest(items.slice(0, 8));
-      setSelected({});
-    } catch {
+  setLoadingSuggest(true);
+  setCompareText("");
+  try {
+    const effectiveLoc = (loc || recon?.profile?.address || "").trim();
+    if (!effectiveLoc) {
       setSuggest([]);
-    } finally {
       setLoadingSuggest(false);
+      return;
     }
+    const p = new URLSearchParams();
+    p.set("loc", effectiveLoc);
+    if (/b&b|bnb|agritur|agri/i.test(name)) p.set("type", "bnb");
+    const r = await fetch(`/api/competitors/suggest?${p.toString()}`);
+    const j = await r.json();
+    const items: SuggestItem[] = Array.isArray(j?.items) ? j.items : [];
+    setSuggest(items.slice(0, 8));
+    setSelected({});
+  } catch {
+    setSuggest([]);
+  } finally {
+    setLoadingSuggest(false);
   }
+}
 
   async function doCompare() {
     setLoadingCompare(true);
@@ -176,57 +185,77 @@ const loc0 = safeDecode(sp.get("loc"));
 
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 space-y-6">
         {/* Form */}
-        <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Struttura</label>
-              <input
-  className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
-  placeholder="Inserisci Nome Pubblico Struttura"
-  value={name}
-  onChange={(e) => setName(e.target.value)}
-/>
-            </div>
-            <div>
-              <input
-  className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
-  placeholder="Inserisci Località"
-  value={loc}
-  onChange={(e) => setLoc(e.target.value)}
-/>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Sito ufficiale (opz.)</label>
-              <input className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
-                placeholder="Inserisci https://..."
-                value={site} onChange={e=>setSite(e.target.value)} />
-            </div>
-          </div>
+<section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
+  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+    <div className="md:col-span-1">
+      <label className="block text-sm font-medium text-slate-700 mb-1">Struttura</label>
+      <input
+        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
+        placeholder="inserisci nome pubblico struttura"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+    </div>
+    <div className="md:col-span-1">
+      <label className="block text-sm font-medium text-slate-700 mb-1">Località</label>
+      <input
+        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
+        placeholder="inserisci località"
+        value={loc}
+        onChange={(e) => setLoc(e.target.value)}
+      />
+    </div>
+    <div className="md:col-span-2">
+      <label className="block text-sm font-medium text-slate-700 mb-1">Sito ufficiale (opz.)</label>
+      <input
+        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
+        placeholder="https://..."
+        value={site}
+        onChange={(e) => setSite(e.target.value)}
+      />
+    </div>
+  </div>
 
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              onClick={doRecon}
-              className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${loadingRecon ? "bg-slate-400" : "bg-slate-900 hover:bg-slate-800"}`}
-              disabled={loadingRecon}
-            >
-              <Search className="h-4 w-4" /> Genera analisi
-            </button>
-            <button
-              onClick={doSuggest}
-              className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${loadingSuggest ? "bg-indigo-400" : "bg-indigo-600 hover:bg-indigo-500"}`}
-              disabled={loadingSuggest}
-            >
-              <Users className="h-4 w-4" /> Suggerisci competitor
-            </button>
-            <button
-              onClick={doCompare}
-              className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${!hasSelection || loadingCompare ? "bg-emerald-300" : "bg-emerald-600 hover:bg-emerald-500"}`}
-              disabled={!hasSelection || loadingCompare}
-            >
-              <TrendingUp className="h-4 w-4" /> Confronta selezionati
-            </button>
-          </div>
-        </section>
+  <div className="mt-4 flex flex-wrap gap-3">
+    <button
+      onClick={doRecon}
+      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${
+        !canRecon || loadingRecon ? "bg-slate-300 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800"
+      }`}
+      disabled={!canRecon || loadingRecon}
+      aria-disabled={!canRecon || loadingRecon}
+      title={!canRecon ? "Inserisci almeno Nome struttura o Sito ufficiale" : "Genera analisi"}
+    >
+      <Search className="h-4 w-4" /> Genera analisi
+    </button>
+
+    <button
+      onClick={doSuggest}
+      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${
+        loadingSuggest ? "bg-indigo-300 cursor-wait" : "bg-indigo-600 hover:bg-indigo-500"
+      }`}
+      disabled={loadingSuggest}
+    >
+      <Users className="h-4 w-4" /> Suggerisci competitor
+    </button>
+
+    <button
+      onClick={doCompare}
+      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${
+        !hasSelection || loadingCompare ? "bg-emerald-300 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-500"
+      }`}
+      disabled={!hasSelection || loadingCompare}
+    >
+      <TrendingUp className="h-4 w-4" /> Confronta selezionati
+    </button>
+  </div>
+
+  {!canRecon && (
+    <div className="mt-2 text-[12px] text-slate-500">
+      Suggerimento: puoi lanciare l’analisi anche solo con il <span className="font-medium">sito ufficiale</span>.
+    </div>
+  )}
+</section>
 
         {/* Profilo struttura */}
         <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
