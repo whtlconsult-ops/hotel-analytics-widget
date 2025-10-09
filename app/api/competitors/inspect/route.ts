@@ -2,7 +2,9 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 
-// Rileva il booking engine dalla homepage (HTML + href)
+/* -------------------- Helpers a livello file -------------------- */
+
+// Rileva il booking engine da HTML / href
 function detectEngine(hay: string) {
   const patterns: Array<[string, RegExp]> = [
     ["synxis", /synxis|reservations\.travelclick|be\.synxis|book\.synxis/i],
@@ -18,9 +20,7 @@ function detectEngine(hay: string) {
     ["generic", /booking-?engine|bookingengine/i],
   ];
   const h = hay || "";
-  for (const [vendor, re] of patterns) {
-    if (re.test(h)) return vendor;
-  }
+  for (const [vendor, re] of patterns) if (re.test(h)) return vendor;
   return null;
 }
 
@@ -39,125 +39,70 @@ function absolutize(href: string, base: string) {
   try { return new URL(href, base).toString(); } catch { return href; }
 }
 
-// GET /api/competitors/inspect?url=https://www.esempiohotel.it
+/* -------------------- Route -------------------- */
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const loc = (searchParams.get("loc") || "").trim();
-    if (!loc) return NextResponse.json({ ok: false, error: "Missing loc" }, { status: 400 });
+    const raw = searchParams.get("url")?.trim();
+    if (!raw) return NextResponse.json({ ok: false, error: "Missing url" }, { status: 400 });
 
-    const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
-    const items: any[] = [];
+    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "HotelTradeAudit/1.0 (+https://hoteltrade.it)",
+        "Accept-Language": "it,en;q=0.8",
+      },
+      redirect: "follow",
+      cache: "no-store",
+    });
+    const html = await r.text();
+    const $ = cheerio.load(html);
 
-    // 1) Prova SERPAPI Google Maps
-    if (apiKey) {
-      const p = new URLSearchParams({
-        engine: "google_maps", type: "search",
-        q: `lodging near ${loc}`, hl: "it", api_key: apiKey,
-      });
-      const j = await serpFetch(`https://serpapi.com/search.json?${p.toString()}`);
-      const res = Array.isArray(j?.local_results) ? j.local_results : [];
-      for (const r of res.slice(0, 10)) {
-        items.push({
-          name: r?.title || "",
-          address: r?.address,
-          rating: r?.rating ? Number(r.rating) : undefined,
-          category: r?.type || r?.place_type,
-          distanceKm: r?.distance_meters ? Number(r.distance_meters) / 1000 : undefined,
-        });
-      }
-    }
+    const lang = $("html").attr("lang") || undefined;
+    const hreflangs = $("link[rel='alternate'][hreflang]")
+      .map((_, el) => String($(el).attr("hreflang") || "").toLowerCase())
+      .get();
 
-    // 2) Fallback Nominatim (OSM) se SERP vuoto / non disponibile
-    if (items.length === 0) {
-      const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent("hotel " + loc)}&limit=10&addressdetails=1`;
-      const r = await fetch(url, { headers: { "User-Agent": "HotelTradeAudit/1.0" }, cache: "no-store" });
-      const j = await r.json();
-      if (Array.isArray(j)) {
-        for (const row of j) {
-          const nm = String(row?.display_name || "");
-          const name = nm.split(",")[0] || "Struttura ricettiva";
-          const addr = row?.address ? [
-            row.address.road, row.address.house_number,
-            row.address.postcode,
-            row.address.city || row.address.town || row.address.village,
-            row.address.state
-          ].filter(Boolean).join(", ") : nm;
-          items.push({
-            name,
-            address: addr,
-            rating: undefined,
-            category: row?.type || row?.class || "lodging",
-            distanceKm: undefined,
-          });
-        }
-      }
-    }
+    // 1) Rilevamento engine su homepage
+    const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
+    const baseUrl = r.url || url;
+    let engine = detectEngine((html || "") + "\n" + links.join("\n"));
 
-    // 3) Seed finale se ancora vuoto
-    if (items.length === 0) {
-      const demo = [
-        { name:"Hotel Centrale", address:`${loc}`, rating:8.6, category:"Hotel" },
-        { name:"Residenza Duomo", address:`${loc}`, rating:8.9, category:"B&B" },
-        { name:"Agriturismo Le Colline", address:`${loc}`, rating:9.1, category:"Agriturismo" },
-        { name:"Albergo Riviera", address:`${loc}`, rating:8.0, category:"Hotel" },
-      ];
-      return NextResponse.json({ ok: true, items: demo }, { status: 200 });
-    }
+    // 2) Se non trovato: “secondo salto” su bottone Prenota (stesso dominio)
+    if (!engine) {
+      const cand = $("a[href]").filter((_, el) => {
+        const txt = ($(el).text() || "").toLowerCase();
+        const href = String($(el).attr("href") || "").toLowerCase();
+        return /\bprenot|book|reserv/.test(txt) || /(booking|reserve|prenota)/.test(href);
+      }).first();
 
-    return NextResponse.json({ ok: true, items: items.slice(0, 8) }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
-  }
-}
+      const href = cand.attr("href");
+      if (href) {
+        const abs = absolutize(href, baseUrl);
+        let sameOrigin = false;
+        try { sameOrigin = new URL(abs).origin === new URL(baseUrl).origin; } catch {}
+        if (sameOrigin) {
+          try {
+            const childHtml = await fetchWithTimeout(abs, {
+              headers: {
+                "User-Agent": "HotelTradeAudit/1.0 (+https://hoteltrade.it)",
+                "Accept-Language": "it,en;q=0.8",
+              }
+            }, 7000);
 
-// booking engine detection
-const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
-const engineVendor = detectEngine((html || "") + "\n" + links.join("\n"));
-let engine = engineVendor;
-const baseUrl = r.url || url;
-
-if (!engine) {
-  // 1) Trova un link "Prenota / Book / Reserve"
-  const cand = $("a[href]").filter((_, el) => {
-    const txt = ($(el).text() || "").toLowerCase();
-    const href = String($(el).attr("href") || "").toLowerCase();
-    return /\bprenot|book|reserv/.test(txt) || /(booking|reserve|prenota)/.test(href);
-  }).first();
-
-  const href = cand.attr("href");
-  if (href) {
-    const abs = absolutize(href, baseUrl);
-    // 2) Se è stesso dominio, scarica UNA pagina e cerca segnali
-    let sameOrigin = false;
-    try { sameOrigin = new URL(abs).origin === new URL(baseUrl).origin; } catch {}
-    if (sameOrigin) {
-      try {
-        const childHtml = await fetchWithTimeout(abs, {
-          headers: {
-            "User-Agent": "HotelTradeAudit/1.0 (+https://hoteltrade.it)",
-            "Accept-Language": "it,en;q=0.8",
+            const childVendor = detectEngine(childHtml);
+            if (childVendor) engine = childVendor;
+            else if (/quovai/i.test(childHtml)) engine = "quovai"; // euristica debole
+          } catch {
+            // ignora timeout/errori
           }
-        }, 7000);
-
-        // 2a) Rileva engine da HTML della pagina di prenotazione
-        const childVendor = detectEngine(childHtml);
-        if (childVendor) {
-          engine = childVendor;
-        } else if (/quovai/i.test(childHtml)) {
-          // 2b) Heuristic debole: stringa "quovai" nel markup
-          engine = "quovai";
         }
-      } catch {
-        // ignora errori di fetch/timeout
       }
     }
-  }
-}
 
-    // schema.org
+    // 3) JSON-LD: nome e amenities
     const jsonld = $('script[type="application/ld+json"]').map((_, el) => $(el).contents().text()).get();
-    const footerText = ($("footer").text() || "").toString();
     let hotelName: string | undefined;
     const amenities = new Set<string>();
     for (const block of jsonld) {
@@ -179,17 +124,22 @@ if (!engine) {
       } catch {}
     }
 
+    // 4) Footer plain text (per fallback address nel recon)
+    const footerText = ($("footer").text() || "").toString();
+
+    // 5) Risposta
     return NextResponse.json({
-  ok: true,
-  signals: {
-    engine: engine ? { engine: "booking-engine", vendor: engine } : null,
-    hotelName,
-    amenities: Array.from(amenities),
-    languages: Array.from(new Set([lang, ...hreflangs].filter(Boolean))),
-  },
-  jsonld,
-  footerText,
-}, { status: 200 });
+      ok: true,
+      signals: {
+        engine: engine ? { engine: "booking-engine", vendor: engine } : null,
+        hotelName,
+        amenities: Array.from(amenities),
+        languages: Array.from(new Set([lang, ...hreflangs].filter(Boolean))),
+      },
+      jsonld,
+      footerText,
+    }, { status: 200 });
+
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
