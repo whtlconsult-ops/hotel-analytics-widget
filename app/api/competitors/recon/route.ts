@@ -66,40 +66,44 @@ if (!name && site) {
 }
 
     // A) Google Maps lookup (se possibile)
-    if (apiKey && loc) {
-     const qStr = `${profile.name || name} ${loc}`.trim();
-if (qStr) {
-  const p = new URLSearchParams({
-    engine: "google_maps", type: "search",
-    q: qStr, hl: "it", api_key: apiKey,
+const qStr = `${profile.name || name} ${loc}`.trim();
+
+if (apiKey && qStr) {
+  const params = new URLSearchParams({
+    engine: "google_maps",
+    type: "search",
+    q: qStr,
+    hl: "it",
+    api_key: apiKey,
   });
-  const j = await serpFetch(`https://serpapi.com/search.json?${p.toString()}`);
-  // ... (il resto del blocco A) resta identico)
+
+  const j = await serpFetch(`https://serpapi.com/search.json?${params.toString()}`);
+  const res = Array.isArray(j?.local_results) ? j.local_results : [];
+  if (res.length > 0) {
+    const best = res[0];
+    profile.name = best?.title || profile.name;
+    profile.address = best?.address;
+    profile.category = best?.type || best?.place_type;
+    profile.rating = Number(best?.rating) || undefined;
+    profile.reviews = Number(best?.reviews) || Number(best?.user_ratings_total) || undefined;
+    if (best?.gps_coordinates?.latitude && best?.gps_coordinates?.longitude) {
+      profile.coords = {
+        lat: Number(best.gps_coordinates.latitude),
+        lng: Number(best.gps_coordinates.longitude),
+      };
+    }
+    // amenities hints
+    const snippets = [best?.description, best?.snippet].filter(Boolean).join(" · ").toLowerCase();
+    const amz = ["spa", "piscina", "parcheggio", "pet", "colazione", "ristorante", "palestra", "navetta", "vista", "centro"];
+    profile.amenities = Array.from(new Set([...(profile.amenities || []), ...amz.filter(a => snippets.includes(a))]));
+  } else {
+    notes.push("Maps: nessun risultato preciso.");
+  }
+} else if (!apiKey) {
+  notes.push("SerpAPI non disponibile: profilo ridotto.");
 } else {
   notes.push("Maps: query insufficiente (manca nome/località).");
 }
-      const j = await serpFetch(`https://serpapi.com/search.json?${p.toString()}`);
-      const res = Array.isArray(j?.local_results) ? j.local_results : [];
-      if (res.length > 0) {
-        const best = res[0];
-        profile.name = best?.title || profile.name;
-        profile.address = best?.address;
-        profile.category = best?.type || best?.place_type;
-        profile.rating = Number(best?.rating) || undefined;
-        profile.reviews = Number(best?.reviews) || Number(best?.user_ratings_total) || undefined;
-        if (best?.gps_coordinates?.latitude && best?.gps_coordinates?.longitude) {
-          profile.coords = { lat: Number(best.gps_coordinates.latitude), lng: Number(best.gps_coordinates.longitude) };
-        }
-        // amenities hints
-        const snippets = [best?.description, best?.snippet].filter(Boolean).join(" · ").toLowerCase();
-        const amz = ["spa","piscina","parcheggio","pet","colazione","ristorante","palestra","navetta","vista","centro"];
-        profile.amenities = amz.filter(a => snippets.includes(a));
-      } else {
-        notes.push("Maps: nessun risultato preciso.");
-      }
-    } else {
-      notes.push("SerpAPI non disponibile: profilo ridotto.");
-    }
 
     // B) Canali via search mirate (best-effort, poco costose)
     const channels: string[] = [];
