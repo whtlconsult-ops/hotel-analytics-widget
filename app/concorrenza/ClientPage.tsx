@@ -186,7 +186,7 @@ const canRecon = useMemo(
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 space-y-6">
         {/* Form */}
 <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center md:items-end">
     <div className="md:col-span-1">
       <label className="block text-sm font-medium text-slate-700 mb-1">Struttura</label>
       <input

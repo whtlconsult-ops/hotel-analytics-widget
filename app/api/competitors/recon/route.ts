@@ -150,6 +150,35 @@ if (site) {
         );
         notes.push(`Booking engine rilevato (${insp.signals.engine.vendor}).`);
       }
+// ++ Address from JSON-LD
+if (!profile.address && Array.isArray(insp.jsonld)) {
+  for (const raw of insp.jsonld) {
+    try {
+      const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const arr = Array.isArray(obj) ? obj : [obj];
+      for (const j of arr) {
+        const t = j?.["@type"];
+        if (t === "Hotel" || t === "LodgingBusiness" || t === "Organization") {
+          const a = j?.address;
+          if (a && (a.streetAddress || a.addressLocality)) {
+            const parts = [a.streetAddress, a.postalCode, a.addressLocality, a.addressRegion, a.addressCountry]
+              .filter(Boolean).join(", ");
+            if (parts) { profile.address = parts; break; }
+          }
+        }
+      }
+      if (profile.address) break;
+    } catch {}
+  }
+}
+// ++ Address from footer fallback
+if (!profile.address && typeof insp.footerText === "string") {
+  const t = insp.footerText.replace(/\s+/g, " ").trim();
+  const m =
+    t.match(/\b\d{4,5}\b\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+(?:,\s*[A-Z]{2})?(?:,\s*Italia)?/i) ||
+    t.match(/[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+,\s*[A-Z]{2}(?:,\s*Italia)?/i);
+  if (m && m[0]) profile.address = m[0].trim();
+}
     }
   } catch {
     notes.push("Inspect sito: non raggiungibile.");
