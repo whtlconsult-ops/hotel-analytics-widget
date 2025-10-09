@@ -1328,6 +1328,13 @@ useEffect(() => {
   </a>
 </div>
 
+<Link
+  href={`/concorrenza?q=${encodeURIComponent(aQuery || "")}&loc=${encodeURIComponent(aQuery || "")}`}
+  className="inline-flex items-center gap-2 text-[12px] rounded-lg border px-3 py-2 bg-white hover:bg-slate-50"
+>
+  Concorrenza
+</Link>
+
                 {shareUrl && (
                   <div className="mt-2">
                     <label className="block text-xs text-slate-600 mb-1">Link condivisibile</label>
