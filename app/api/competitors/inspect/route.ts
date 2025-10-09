@@ -2,6 +2,43 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 
+// Rileva il booking engine dalla homepage (HTML + href)
+function detectEngine(hay: string) {
+  const patterns: Array<[string, RegExp]> = [
+    ["synxis", /synxis|reservations\.travelclick|be\.synxis|book\.synxis/i],
+    ["d-edge", /d-edge|securesuite|secured-forms/i],
+    ["quovai", /(be\.)?quovai\.com/i],
+    ["simplebooking", /simplebooking|book\.simplebooking/i],
+    ["verticalbooking", /verticalbooking|book\.verticalbooking/i],
+    ["bookassist", /bookassist|bookings\.bookassist/i],
+    ["blastness", /blastness|bb.*blastness/i],
+    ["ericsoft", /ericsoft|bookingengine\.ericsoft/i],
+    ["passepartout", /passepartout|welcomeasy|book\.welcomeasy/i],
+    ["omnibees", /omnibees|book\.omnibees/i],
+    ["generic", /booking-?engine|bookingengine/i],
+  ];
+  const h = hay || "";
+  for (const [vendor, re] of patterns) {
+    if (re.test(h)) return vendor;
+  }
+  return null;
+}
+
+async function fetchWithTimeout(url: string, opts: any = {}, timeoutMs = 7000): Promise<string> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { ...opts, signal: ac.signal, redirect: "follow", cache: "no-store" });
+    return await r.text();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function absolutize(href: string, base: string) {
+  try { return new URL(href, base).toString(); } catch { return href; }
+}
+
 // GET /api/competitors/inspect?url=https://www.esempiohotel.it
 export async function GET(req: Request) {
   try {
@@ -26,24 +63,49 @@ export async function GET(req: Request) {
       .map((_, el) => String($(el).attr("hreflang") || "").toLowerCase())
       .get();
 
-    // booking engine detection
-    const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
-    function detectEngine(hay: string) {
-      const patterns: Array<[string, RegExp]> = [
-        ["synxis", /synxis|reservations\.travelclick|be\.synxis|book\.synxis/i],
-        ["d-edge", /d-edge|securesuite|secured-forms/i],
-        ["simplebooking", /simplebooking|book\.simplebooking/i],
-        ["verticalbooking", /verticalbooking|book\.verticalbooking/i],
-        ["bookassist", /bookassist|bookings\.bookassist/i],
-        ["blastness", /blastness|bb.*blastness/i],
-        ["ericsoft", /ericsoft|bookingengine\.ericsoft/i],
-        ["passepartout", /passepartout|welcomeasy|book\.welcomeasy/i],
-        ["omnibees", /omnibees|book\.omnibees/i],
-      ];
-      for (const [vendor, re] of patterns) if (re.test(hay)) return vendor;
-      return null;
+// booking engine detection
+const links = $("a[href]").map((_, el) => String($(el).attr("href") || "")).get();
+const engineVendor = detectEngine((html || "") + "\n" + links.join("\n"));
+let engine = engineVendor;
+const baseUrl = r.url || url;
+
+if (!engine) {
+  // 1) Trova un link "Prenota / Book / Reserve"
+  const cand = $("a[href]").filter((_, el) => {
+    const txt = ($(el).text() || "").toLowerCase();
+    const href = String($(el).attr("href") || "").toLowerCase();
+    return /\bprenot|book|reserv/.test(txt) || /(booking|reserve|prenota)/.test(href);
+  }).first();
+
+  const href = cand.attr("href");
+  if (href) {
+    const abs = absolutize(href, baseUrl);
+    // 2) Se è stesso dominio, scarica UNA pagina e cerca segnali
+    let sameOrigin = false;
+    try { sameOrigin = new URL(abs).origin === new URL(baseUrl).origin; } catch {}
+    if (sameOrigin) {
+      try {
+        const childHtml = await fetchWithTimeout(abs, {
+          headers: {
+            "User-Agent": "HotelTradeAudit/1.0 (+https://hoteltrade.it)",
+            "Accept-Language": "it,en;q=0.8",
+          }
+        }, 7000);
+
+        // 2a) Rileva engine da HTML della pagina di prenotazione
+        const childVendor = detectEngine(childHtml);
+        if (childVendor) {
+          engine = childVendor;
+        } else if (/quovai/i.test(childHtml)) {
+          // 2b) Heuristic debole: stringa "quovai" nel markup
+          engine = "quovai";
+        }
+      } catch {
+        // ignora errori di fetch/timeout
+      }
     }
-    const engineVendor = detectEngine(html + "\n" + links.join("\n"));
+  }
+}
 
     // schema.org
     const jsonld = $('script[type="application/ld+json"]').map((_, el) => $(el).contents().text()).get();
@@ -71,7 +133,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       signals: {
-        engine: engineVendor ? { engine: "booking-engine", vendor: engineVendor } : null,
+        engine: engine ? { engine: "booking-engine", vendor: engine } : null,
         hotelName,
         amenities: Array.from(amenities),
         languages: Array.from(new Set([lang, ...hreflangs].filter(Boolean))),
