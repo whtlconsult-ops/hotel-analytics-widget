@@ -1,6 +1,6 @@
 export const runtime = "nodejs";
 import { NextResponse } from "next/server";
-import { seasonalityItaly12, normalizeTo100 } from "../../../lib/baseline";
+import { seasonalityItaly12, normalizeTo100 } from "../../../../lib/baseline";
 
 // Helpers
 const serpFetch = (u: string) =>
