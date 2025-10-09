@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -35,8 +37,11 @@ type SuggestItem = {
 
 export default function PageConcorrenza() {
   const sp = useSearchParams();
-  const q0 = decodeURIComponent(sp.get("q") || "");
-  const loc0 = decodeURIComponent(sp.get("loc") || "");
+const safeDecode = (v: string | null) => {
+  try { return v ? decodeURIComponent(v) : ""; } catch { return v || ""; }
+};
+const q0 = safeDecode(sp.get("q"));
+const loc0 = safeDecode(sp.get("loc"));
 
   const [name, setName] = useState(q0);
   const [loc, setLoc] = useState(loc0);
