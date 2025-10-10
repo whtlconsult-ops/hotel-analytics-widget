@@ -136,7 +136,6 @@ export async function GET(req: Request) {
 
     // 3) JSON-LD: nome e amenities
     const jsonld = $('script[type="application/ld+json"]').map((_, el) => $(el).contents().text()).get();
-    const footerText = String($("footer").text() || "");
     let hotelName: string | undefined;
     const amenities = new Set<string>();
     for (const block of jsonld) {
