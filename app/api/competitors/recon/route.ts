@@ -46,6 +46,47 @@ const origin = new URL(req.url).origin;
     const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
     const notes: string[] = [];
     let profile: any = { name };
+// 0) Se manca il sito, prova a dedurlo da Nominatim (OSM) e poi usa /inspect
+if (!site && (name || loc)) {
+  try {
+    const q = [name, loc].filter(Boolean).join(" ");
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&limit=1&addressdetails=1&extratags=1`;
+    const r = await fetch(url, { headers: { "User-Agent": "HotelTradeAudit/1.0" }, cache: "no-store" });
+    const j = await r.json();
+    if (Array.isArray(j) && j[0]?.extratags) {
+      const ex = j[0].extratags;
+      const guess =
+        ex.website || ex["contact:website"] || ex.url || ex["contact:url"] ||
+        j[0].website || j[0]["contact:website"];
+      if (guess) {
+        // prova inspect
+        const inspR = await fetch(`${origin}/api/competitors/inspect?url=${encodeURIComponent(String(guess))}`, { cache: "no-store" });
+        const insp = await inspR.json();
+        if (insp?.ok) {
+          if (insp.signals?.hotelName && !profile.name) profile.name = String(insp.signals.hotelName);
+          if (Array.isArray(insp.signals?.amenities) && insp.signals.amenities.length) {
+            profile.amenities = Array.from(new Set([...(profile.amenities || []), ...insp.signals.amenities]));
+          }
+          if (insp.signals?.engine?.vendor) {
+            profile.channels = Array.from(new Set([...(profile.channels || []), "Diretto"]));
+            notes.push(`Booking engine rilevato (${insp.signals.engine.vendor}).`);
+          }
+          if (!profile.address) {
+            // usa microAddress > JSON-LD > footer
+            if (insp.microAddress) profile.address = insp.microAddress;
+            else {
+              // (se hai già la logica JSON-LD/footer nel blocco site) puoi replicarla qui
+            }
+          }
+        } else {
+          notes.push("Nominatim sito: trovato ma non ispezionabile.");
+        }
+      }
+    }
+  } catch {
+    notes.push("Nominatim: nessun sito riconosciuto.");
+  }
+}
 
 // Enrichment da sito ufficiale se name mancante
 if (!name && site) {
