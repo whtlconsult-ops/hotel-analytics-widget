@@ -61,24 +61,29 @@ async function getHtmlOrThrow(inputUrl: string) {
   };
 
   let lastError: any = null;
-  for (const candidate of candidates) {
-    for (const H of [HEADERS_A, HEADERS_B]) {
-      try {
-        const res = await fetch(candidate, {
-          headers: H,
-          redirect: "follow",
-          cache: "no-store",
-        });
-        const text = await res.text();
-        if (res.status >= 200 && res.status < 400 && (text || "").length > 200) {
-          return { html: text, baseUrl: res.url || candidate };
-        }
-        lastError = `HTTP ${res.status}`;
-      } catch (e: any) {
-        lastError = e?.message || String(e);
+  const candList = Array.from(candidates);
+const headersList = [HEADERS_A, HEADERS_B];
+
+for (let i = 0; i < candList.length; i++) {
+  const candidate = candList[i];
+  for (let j = 0; j < headersList.length; j++) {
+    const H = headersList[j];
+    try {
+      const res = await fetch(candidate, {
+        headers: H,
+        redirect: "follow",
+        cache: "no-store",
+      });
+      const text = await res.text();
+      if (res.status >= 200 && res.status < 400 && (text || "").length > 200) {
+        return { html: text, baseUrl: res.url || candidate };
       }
+      lastError = `HTTP ${res.status}`;
+    } catch (e: any) {
+      lastError = e?.message || String(e);
     }
   }
+}
   throw new Error(lastError || "Fetch blocked");
 }
 
