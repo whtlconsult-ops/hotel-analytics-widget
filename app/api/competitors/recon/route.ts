@@ -126,23 +126,33 @@ if (apiKey && qStr) {
 // --- Enrichment dal sito ufficiale (se fornito) ---
 if (site) {
   try {
-    const inspR = await fetch(`${origin}/api/competitors/inspect?url=${encodeURIComponent(site)}`, { cache: "no-store" });
+    const inspR = await fetch(
+      `${origin}/api/competitors/inspect?url=${encodeURIComponent(site)}`,
+      { cache: "no-store" }
+    );
     const insp = await inspR.json();
 
     if (insp?.ok) {
       // Nome canonico da schema.org
       if (insp.signals?.hotelName && !profile.name) {
-        profile.name = insp.signals.hotelName;
+        profile.name = String(insp.signals.hotelName);
       }
+
       // Amenities → unione senza duplicati
       if (Array.isArray(insp.signals?.amenities) && insp.signals.amenities.length) {
-        profile.amenities = Array.from(new Set([...(profile.amenities || []), ...insp.signals.amenities]));
+        profile.amenities = Array.from(
+          new Set([...(profile.amenities || []), ...insp.signals.amenities])
+        );
       }
+
       // Booking engine ⇒ aggiungi “Diretto”
       if (insp.signals?.engine?.vendor) {
-        profile.channels = Array.from(new Set([...(profile.channels || []), "Diretto"]));
+        profile.channels = Array.from(
+          new Set([...(profile.channels || []), "Diretto"])
+        );
         notes.push(`Booking engine rilevato (${insp.signals.engine.vendor}).`);
       }
+
       // **Address** da JSON-LD
       if (!profile.address && Array.isArray(insp.jsonld)) {
         for (const raw of insp.jsonld) {
@@ -154,8 +164,15 @@ if (site) {
               if (t === "Hotel" || t === "LodgingBusiness" || t === "Organization") {
                 const a = j?.address;
                 if (a && (a.streetAddress || a.addressLocality)) {
-                  const parts = [a.streetAddress, a.postalCode, a.addressLocality, a.addressRegion, a.addressCountry]
-                    .filter(Boolean).join(", ");
+                  const parts = [
+                    a.streetAddress,
+                    a.postalCode,
+                    a.addressLocality,
+                    a.addressRegion,
+                    a.addressCountry,
+                  ]
+                    .filter(Boolean)
+                    .join(", ");
                   if (parts) { profile.address = parts; break; }
                 }
               }
@@ -164,37 +181,24 @@ if (site) {
           } catch {}
         }
       }
+
       // **Address** fallback dal footer
-      if (!profile.address && typeof insp.footerText === "string") {
+      if (!profile.address && typeof insp.footerText === "string" && insp.footerText.trim().length) {
         const t = insp.footerText.replace(/\s+/g, " ").trim();
         const m =
           t.match(/\b\d{4,5}\b\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+(?:,\s*[A-Z]{2})?(?:,\s*Italia)?/i) ||
           t.match(/[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+,\s*[A-Z]{2}(?:,\s*Italia)?/i);
         if (m && m[0]) profile.address = m[0].trim();
       }
-
     } else {
-      notes.push(`Inspect sito: ${typeof insp?.error === "string" ? insp.error : "non raggiungibile"}.`);
+      notes.push(
+        `Inspect sito: ${typeof insp?.error === "string" ? insp.error : "non raggiungibile"}.`
+      );
     }
-
   } catch (e: any) {
     notes.push(`Inspect sito: ${String(e?.message || e)}`);
   }
 }
-// ++ Address from footer fallback
-if (!profile.address && typeof insp.footerText === "string") {
-  const t = insp.footerText.replace(/\s+/g, " ").trim();
-  const m =
-    t.match(/\b\d{4,5}\b\s+[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+(?:,\s*[A-Z]{2})?(?:,\s*Italia)?/i) ||
-    t.match(/[A-Za-zÀ-ÖØ-öø-ÿ'’\s]+,\s*[A-Z]{2}(?:,\s*Italia)?/i);
-  if (m && m[0]) profile.address = m[0].trim();
-}
-    }
-  } catch {
-    notes.push("Inspect sito: non raggiungibile.");
-  }
-}
-
     // C) ADR stimato (12 mesi)
     const adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
 
