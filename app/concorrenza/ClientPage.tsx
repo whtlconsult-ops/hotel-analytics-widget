@@ -5,6 +5,26 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Search, TrendingUp, Users } from "lucide-react";
 
+// --- recent list (localStorage) ---
+function useRecentList(key: string, max = 3) {
+  const [items, setItems] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) setItems(JSON.parse(raw));
+    } catch {}
+  }, [key]);
+  const push = React.useCallback((v: string) => {
+    if (!v) return;
+    setItems(prev => {
+      const next = [v, ...prev.filter(x => x !== v)].slice(0, max);
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [key, max]);
+  return { items, push };
+}
+
 type ReconProfile = {
   name: string;
   address?: string;
@@ -41,9 +61,35 @@ const safeDecode = (v: string | null) => {
 const q0 = safeDecode(sp.get("q"));
 const loc0 = safeDecode(sp.get("loc"));
 
-  const [name, setName] = useState("");
-  const [loc, setLoc] = useState("");
-  const [site, setSite] = useState("");
+  const [name, setName] = useState(q0 || "");
+  const [site, setSite] = React.useState<string>("");
+const [beUrl, setBeUrl] = React.useState<string>("");              // NEW: booking/prenota URL (opz.)
+const [loc, setLoc] = React.useState<string>(loc0 || "");
+
+// Recenti (max 3)
+const recentName = useRecentList("recent_name", 3);
+const recentLoc  = useRecentList("recent_loc", 3);
+const recentSite = useRecentList("recent_site", 3);
+const recentBe   = useRecentList("recent_be", 3);
+
+// Suggerimenti località via geocode
+const [locSuggest, setLocSuggest] = React.useState<string[]>([]);
+React.useEffect(() => {
+  const q = loc.trim();
+  if (q.length < 3) { setLocSuggest([]); return; }
+  const ac = new AbortController();
+  (async () => {
+    try {
+      const r = await fetch(`/api/external/geocode?q=${encodeURIComponent(q)}`, { signal: ac.signal, cache: "no-store" });
+      const j = await r.json();
+      const opts: string[] = Array.isArray(j?.results)
+        ? j.results.map((it: any) => it.formatted || it.label || it.name).filter(Boolean)
+        : (Array.isArray(j) ? j.map((it: any) => it.display_name || it.name).filter(Boolean) : []);
+      setLocSuggest(Array.from(new Set(opts)).slice(0, 8));
+    } catch {}
+  })();
+  return () => ac.abort();
+}, [loc]);
 
   const [loadingRecon, setLoadingRecon] = useState(false);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
@@ -55,8 +101,13 @@ const loc0 = safeDecode(sp.get("loc"));
   const [compareText, setCompareText] = useState<string>("");
 
 const canRecon = useMemo(
-  () => (name.trim().length > 0 || site.trim().length > 0),
-  [name, site]
+  () => (
+    name.trim().length > 0 ||
+    site.trim().length > 0 ||
+    beUrl.trim().length > 0 ||
+    loc.trim().length > 0
+  ),
+  [name, site, beUrl, loc]
 );
   const hasSelection = useMemo(
     () => Object.values(selected).some(Boolean),
@@ -71,6 +122,7 @@ const canRecon = useMemo(
       if (name) p.set("name", name);
       if (loc) p.set("loc", loc);
       if (site) p.set("site", site);
+      if (beUrl) p.set("be", beUrl);
       const r = await fetch(`/api/competitors/recon?${p.toString()}`);
       const j = (await r.json()) as ReconResponse;
       setRecon(j);
@@ -186,48 +238,88 @@ const canRecon = useMemo(
       <div className="mx-auto max-w-7xl px-4 md:px-6 py-6 space-y-6">
         {/* Form */}
 <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center md:items-end">
-    <div className="md:col-span-1">
-      <label className="block text-sm font-medium text-slate-700 mb-1">Struttura</label>
-      <input
-        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
-        placeholder="inserisci nome pubblico struttura"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-    </div>
-    <div className="md:col-span-1">
-      <label className="block text-sm font-medium text-slate-700 mb-1">Località</label>
-      <input
-        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
-        placeholder="inserisci località"
-        value={loc}
-        onChange={(e) => setLoc(e.target.value)}
-      />
-    </div>
-    <div className="md:col-span-2">
-      <label className="block text-sm font-medium text-slate-700 mb-1">Sito ufficiale (opz.)</label>
-      <input
-        className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm placeholder-slate-400"
-        placeholder="https://..."
-        value={site}
-        onChange={(e) => setSite(e.target.value)}
-      />
-    </div>
+ <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center md:items-end">
+  {/* Struttura */}
+  <div className="relative">
+    <label className="block text-sm font-medium text-slate-700">Struttura</label>
+    <input
+      className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
+      value={name}
+      onChange={(e) => setName(e.target.value)}
+      placeholder="inserisci nome pubblico struttura"
+      list="recent-names"
+    />
+    <datalist id="recent-names">
+      {recentName.items.map((v) => <option key={v} value={v} />)}
+    </datalist>
   </div>
 
-  <div className="mt-4 flex flex-wrap gap-3">
+  {/* Sito ufficiale */}
+  <div className="relative">
+    <label className="block text-sm font-medium text-slate-700">Sito ufficiale (opz.)</label>
+    <input
+      className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
+      value={site}
+      onChange={(e) => setSite(e.target.value)}
+      placeholder="https://…"
+      list="recent-sites"
+    />
+    <datalist id="recent-sites">
+      {recentSite.items.map((v) => <option key={v} value={v} />)}
+    </datalist>
+  </div>
+
+  {/* Booking/ Prenota URL */}
+  <div className="relative">
+    <label className="block text-sm font-medium text-slate-700">URL Booking / Prenota (opz.)</label>
+    <input
+      className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
+      value={beUrl}
+      onChange={(e) => setBeUrl(e.target.value)}
+      placeholder="https://be…"
+      list="recent-be"
+    />
+    <datalist id="recent-be">
+      {recentBe.items.map((v) => <option key={v} value={v} />)}
+    </datalist>
+  </div>
+
+  {/* Località con autosuggest */}
+  <div className="relative">
+    <label className="block text-sm font-medium text-slate-700">Località</label>
+    <input
+      className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
+      value={loc}
+      onChange={(e) => setLoc(e.target.value)}
+      placeholder="inserisci località"
+      list="loc-suggest"
+    />
+    <datalist id="loc-suggest">
+      {[...new Set([...locSuggest, ...recentLoc.items])].slice(0,8).map((v) => (
+        <option key={v} value={v} />
+      ))}
+    </datalist>
+  </div>
+
+  {/* CTA */}
+  <div className="pt-6">
     <button
-      onClick={doRecon}
-      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white ${
-        !canRecon || loadingRecon ? "bg-slate-300 cursor-not-allowed" : "bg-slate-900 hover:bg-slate-800"
-      }`}
-      disabled={!canRecon || loadingRecon}
-      aria-disabled={!canRecon || loadingRecon}
-      title={!canRecon ? "Inserisci almeno Nome struttura o Sito ufficiale" : "Genera analisi"}
+      type="button"
+      className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800"
+      onClick={() => {
+  // salva recenti
+  recentName.push(name.trim());
+  recentLoc.push(loc.trim());
+  if (site.trim()) recentSite.push(site.trim());
+  if (beUrl.trim()) recentBe.push(beUrl.trim());
+  // avvia analisi
+  doRecon();
+}}
     >
-      <Search className="h-4 w-4" /> Genera analisi
+      Genera analisi
     </button>
+  </div>
+</div>
 
     <button
       onClick={doSuggest}

@@ -39,6 +39,8 @@ export async function GET(req: Request) {
     const name = (searchParams.get("name") || "").trim();
     const loc  = (searchParams.get("loc")  || "").trim();
 const site = (searchParams.get("site") || "").trim();
+const be   = (searchParams.get("be")   || "").trim(); // NEW
+const siteEffective = be || site;                     // NEW
 const origin = new URL(req.url).origin;
     if (!name && !site) {
   return NextResponse.json({ ok:false, error:"Missing name or site" }, { status:400 });
@@ -165,12 +167,9 @@ if (apiKey && qStr) {
     profile.channels = Array.from(new Set(channels));
 
 // --- Enrichment dal sito ufficiale (se fornito) ---
-if (site) {
+if (siteEffective) {
   try {
-    const inspR = await fetch(
-      `${origin}/api/competitors/inspect?url=${encodeURIComponent(site)}`,
-      { cache: "no-store" }
-    );
+    const inspR = await fetch(`${origin}/api/competitors/inspect?url=${encodeURIComponent(siteEffective)}`, { cache: "no-store" });
     const insp = await inspR.json();
 
     if (insp?.ok) {
