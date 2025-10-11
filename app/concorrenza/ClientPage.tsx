@@ -114,11 +114,10 @@ const canRecon = useMemo(
     [selected]
   );
 
-  // --- Recon: chiama backend e aggiorna stato (chiusure garantite) ---
+  // --- Recon: chiama backend e aggiorna stato ---
 async function doRecon() {
   try {
-    setLoading(true);
-    setError(null);
+    setLoadingRecon(true);
 
     const p = new URLSearchParams();
     if (name && name.trim()) p.set("name", name.trim());
@@ -130,19 +129,16 @@ async function doRecon() {
     const j = await r.json();
 
     if (!j?.ok) {
-      setError(j?.error || "Analisi non disponibile.");
-      setRecon(null);
+      setRecon({ ok: false, error: j?.error || "Analisi non disponibile." });
     } else {
-      setRecon(j);
+      setRecon(j as ReconResponse);
     }
   } catch (e: any) {
-    setError(String(e?.message || e));
-    setRecon(null);
+    setRecon({ ok: false, error: String(e?.message || e) });
   } finally {
-    setLoading(false);
+    setLoadingRecon(false);
   }
 }
-
   async function doSuggest() {
   setLoadingSuggest(true);
   setCompareText("");
@@ -230,7 +226,6 @@ async function doRecon() {
       setLoadingCompare(false);
     }
   }
-}  
   return (
     <div className="min-h-screen bg-slate-50">
       {/* topbar */}
@@ -315,7 +310,8 @@ async function doRecon() {
   <div className="pt-6">
    <button
   type="button"
-  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800"
+  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800 disabled:opacity-50"
+  disabled={!canRecon || loadingRecon}
   onClick={() => {
     // salva recenti
     recentName.push(name.trim());
@@ -326,7 +322,7 @@ async function doRecon() {
     doRecon();
   }}
 >
-  Genera analisi
+  {loadingRecon ? "Analisi in corso…" : "Genera analisi"}
 </button>
   </div>
 </div>
