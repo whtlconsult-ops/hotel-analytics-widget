@@ -313,10 +313,9 @@ async function doRecon() {
 
   {/* CTA */}
   <div className="pt-6">
-    <button
+   <button
   type="button"
-  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800 disabled:opacity-50"
-  disabled={!canRecon || loading}
+  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800"
   onClick={() => {
     // salva recenti
     recentName.push(name.trim());
@@ -327,7 +326,7 @@ async function doRecon() {
     doRecon();
   }}
 >
-  {loading ? "Analisi in corso…" : "Genera analisi"}
+  Genera analisi
 </button>
   </div>
 </div>
