@@ -31,6 +31,50 @@ function useRecentList(key: string, max = 3) {
   return { items, push };
 }
 
+/* ------- very light formatter: puoi sostituire con il tuo layout ------- */
+function formatRecon(j: any) {
+  const lines: string[] = [];
+  const prof = j?.profile || {};
+  if (prof?.name || prof?.rating) {
+    lines.push(
+      `STRUTTURA: ${prof.name || "n.d."} — Rating ${
+        prof.rating != null ? String(prof.rating) : "n.d."
+      }`
+    );
+  }
+  if (Array.isArray(prof.channels) && prof.channels.length) {
+    lines.push(`CANALI: ${prof.channels.join(", ")}`);
+  }
+  if (Array.isArray(j?.adrMonthly) && j.adrMonthly.length === 12) {
+    const mesi = [
+      "Gen",
+      "Feb",
+      "Mar",
+      "Apr",
+      "Mag",
+      "Giu",
+      "Lug",
+      "Ago",
+      "Set",
+      "Ott",
+      "Nov",
+      "Dic",
+    ];
+    lines.push("ADR STIMATO (€/notte):");
+    lines.push("  " + mesi.join("  "));
+    lines.push(
+      "  " +
+        j.adrMonthly
+          .map((v: number) => String(v).padStart(3, " "))
+          .join(" ")
+    );
+  }
+  if (Array.isArray(j?.notes) && j.notes.length) {
+    lines.push("NOTE: " + j.notes.join(" · "));
+  }
+  return lines.join("\n");
+}
+
 /* --------------- Component --------------- */
 
 export default function ClientPage() {
@@ -52,7 +96,7 @@ export default function ClientPage() {
   const recentSite = useRecentList("recent_site", 3);
   const recentBe = useRecentList("recent_be", 3);
 
-  // autosuggest località
+  // autosuggest località (debounce 300ms) + dedup compatibile ES5
   const [locSuggest, setLocSuggest] = useState<string[]>([]);
   useEffect(() => {
     const q = (loc || "").trim();
@@ -61,35 +105,44 @@ export default function ClientPage() {
       return;
     }
     const ac = new AbortController();
-    (async () => {
+    const t = setTimeout(async () => {
       try {
         const r = await fetch(
           `/api/external/geocode?q=${encodeURIComponent(q)}`,
           { signal: ac.signal, cache: "no-store" }
         );
         const j = await r.json();
-        const opts: string[] = Array.isArray(j?.results)
+        const arr: string[] = Array.isArray(j?.results)
           ? j.results
               .map((it: any) => it.formatted || it.label || it.name)
               .filter(Boolean)
           : Array.isArray(j)
           ? j.map((it: any) => it.display_name || it.name).filter(Boolean)
           : [];
-        setLocSuggest(Array.from(new Set(opts)).slice(0, 8));
+        const uniq: string[] = [];
+        for (let i = 0; i < arr.length; i++) {
+          const v = arr[i];
+          if (v && uniq.indexOf(v) === -1) uniq.push(v);
+        }
+        setLocSuggest(uniq.slice(0, 8));
       } catch {}
-    })();
-    return () => ac.abort();
+    }, 300);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
   }, [loc]);
-// Opzioni località deduplicate (niente Set per compatibilità ES5)
-const locOptions = useMemo(() => {
-  const arr = [...locSuggest, ...recentLoc.items];
-  const uniq: string[] = [];
-  for (let i = 0; i < arr.length; i++) {
-    const v = arr[i];
-    if (v && uniq.indexOf(v) === -1) uniq.push(v);
-  }
-  return uniq.slice(0, 8);
-}, [locSuggest, recentLoc.items]);
+
+  // Opzioni datalist località (deduplicate con recenti)
+  const locOptions = useMemo(() => {
+    const arr = [...locSuggest, ...recentLoc.items];
+    const uniq: string[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (v && uniq.indexOf(v) === -1) uniq.push(v);
+    }
+    return uniq.slice(0, 8);
+  }, [locSuggest, recentLoc.items]);
 
   // abilita CTA se ho almeno un campo
   const canRecon = useMemo(() => {
@@ -105,7 +158,7 @@ const locOptions = useMemo(() => {
   const [loadingRecon, setLoadingRecon] = useState(false);
   const [recon, setRecon] = useState<any>(null); // { ok: boolean, ... }
 
-  // chiamata backend
+  // chiamata backend recon
   async function doRecon() {
     try {
       setLoadingRecon(true);
@@ -129,6 +182,51 @@ const locOptions = useMemo(() => {
     } finally {
       setLoadingRecon(false);
     }
+  }
+
+  // suggest competitors
+  type CompItem = {
+    title: string;
+    address?: string;
+    rating?: number;
+    reviews?: number;
+    coords?: { lat: number; lng: number };
+    phone?: string;
+    url?: string;
+  };
+  const [suggest, setSuggest] = useState<CompItem[]>([]);
+  const [loadingSuggest, setLoadingSuggest] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState<Record<number, boolean>>({});
+
+  async function doSuggest() {
+    try {
+      setLoadingSuggest(true);
+      setSuggest([]);
+      setSelectedIdx({});
+      const p = new URLSearchParams();
+      if (name && name.trim()) p.set("name", name.trim());
+      if (loc && loc.trim()) p.set("loc", loc.trim());
+      const r = await fetch(`/api/competitors/suggest?${p.toString()}`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+      if (Array.isArray(j?.items)) setSuggest(j.items);
+    } catch {}
+    finally {
+      setLoadingSuggest(false);
+    }
+  }
+
+  async function analyzeSelected() {
+    const picks: CompItem[] = [];
+    for (let i = 0; i < suggest.length; i++) {
+      if (selectedIdx[i]) picks.push(suggest[i]);
+    }
+    if (picks.length === 0) return;
+    const first = picks[0];
+    setName(first.title || name);
+    if (first.address) setLoc(first.address);
+    await doRecon();
   }
 
   return (
@@ -223,10 +321,10 @@ const locOptions = useMemo(() => {
                 list="loc-suggest"
               />
               <datalist id="loc-suggest">
-  {locOptions.map((v) => (
-    <option key={v} value={v} />
-  ))}
-</datalist>
+                {locOptions.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
             </div>
 
             {/* CTA */}
@@ -261,9 +359,7 @@ const locOptions = useMemo(() => {
           <div className="text-sm font-semibold">Risultato</div>
 
           {loadingRecon && (
-            <div className="text-sm text-slate-600">
-              Elaborazione in corso…
-            </div>
+            <div className="text-sm text-slate-600">Elaborazione in corso…</div>
           )}
 
           {!loadingRecon && recon && !recon.ok && (
@@ -274,43 +370,91 @@ const locOptions = useMemo(() => {
 
           {!loadingRecon && recon && recon.ok && (
             <div className="text-sm text-slate-700 whitespace-pre-wrap">
-              {/* Render minimale: se vuoi mantieni il tuo layout già presente */}
               {formatRecon(recon)}
+            </div>
+          )}
+        </section>
+
+        {/* SUGGERISCI COMPETITOR */}
+        <section className="bg-white rounded-2xl border shadow-sm p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">Suggerisci competitor</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 hover:bg-slate-50 disabled:opacity-50"
+                onClick={doSuggest}
+                disabled={loadingSuggest || (!name && !loc)}
+                title="Inserisci almeno Struttura o Località"
+              >
+                {loadingSuggest ? "Ricerca…" : "Suggerisci competitor"}
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800 disabled:opacity-50"
+                onClick={analyzeSelected}
+                disabled={
+                  loadingRecon ||
+                  Object.keys(selectedIdx).filter((k) => selectedIdx[Number(k)])
+                    .length === 0
+                }
+                title="Analizza il primo competitor selezionato"
+              >
+                {loadingRecon ? "Analisi…" : "Analizza selezionati"}
+              </button>
+            </div>
+          </div>
+
+          {suggest.length === 0 && !loadingSuggest && (
+            <p className="text-xs text-slate-500">
+              Nessun suggerimento ancora. Inserisci almeno Struttura o Località
+              e premi “Suggerisci competitor”.
+            </p>
+          )}
+
+          {suggest.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {suggest.map((c, i) => (
+                <label
+                  key={`${c.title}-${i}`}
+                  className="flex items-start gap-3 rounded-xl border p-3 hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={!!selectedIdx[i]}
+                    onChange={(e) =>
+                      setSelectedIdx((prev) => ({
+                        ...prev,
+                        [i]: e.target.checked,
+                      }))
+                    }
+                  />
+                  <div className="text-sm">
+                    <div className="font-medium">{c.title}</div>
+                    {c.rating != null && (
+                      <div className="text-xs text-slate-600">
+                        Rating {c.rating}{" "}
+                        {c.reviews ? `(${c.reviews})` : ""}
+                      </div>
+                    )}
+                    {c.address && (
+                      <div className="text-xs text-slate-600">{c.address}</div>
+                    )}
+                    {c.url && (
+                      <div className="text-xs text-blue-600 underline">
+                        <a href={c.url} target="_blank" rel="noreferrer">
+                          Sito
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              ))}
             </div>
           )}
         </section>
       </div>
     </div>
   );
-}
-
-/* ------- very light formatter: puoi sostituire con il tuo layout ------- */
-
-function formatRecon(j: any) {
-  const lines: string[] = [];
-  const prof = j?.profile || {};
-  if (prof?.name || prof?.rating) {
-    lines.push(
-      `STRUTTURA: ${prof.name || "n.d."} — Rating ${
-        prof.rating != null ? String(prof.rating) : "n.d."
-      }`
-    );
-  }
-  if (Array.isArray(prof.channels) && prof.channels.length) {
-    lines.push(`CANALI: ${prof.channels.join(", ")}`);
-  }
-  if (Array.isArray(j?.adrMonthly) && j.adrMonthly.length === 12) {
-    const mesi = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
-    lines.push("ADR STIMATO (€/notte):");
-    lines.push(
-      "  " + mesi.join("  ")
-    );
-    lines.push(
-      "  " + j.adrMonthly.map((v: number) => String(v).padStart(3, " ")).join(" ")
-    );
-  }
-  if (Array.isArray(j?.notes) && j.notes.length) {
-    lines.push("NOTE: " + j.notes.join(" · "));
-  }
-  return lines.join("\n");
 }
