@@ -114,24 +114,34 @@ const canRecon = useMemo(
     [selected]
   );
 
-  async function doRecon() {
-    setLoadingRecon(true);
-    setCompareText("");
-    try {
-      const p = new URLSearchParams();
-      if (name) p.set("name", name);
-      if (loc) p.set("loc", loc);
-      if (site) p.set("site", site);
-      if (beUrl) p.set("be", beUrl);
-      const r = await fetch(`/api/competitors/recon?${p.toString()}`);
-      const j = (await r.json()) as ReconResponse;
+  // --- Recon: chiama backend e aggiorna stato (chiusure garantite) ---
+async function doRecon() {
+  try {
+    setLoading(true);
+    setError(null);
+
+    const p = new URLSearchParams();
+    if (name && name.trim()) p.set("name", name.trim());
+    if (loc && loc.trim())  p.set("loc",  loc.trim());
+    if (site && site.trim()) p.set("site", site.trim());
+    if (beUrl && beUrl.trim()) p.set("be", beUrl.trim()); // passa booking URL
+
+    const r = await fetch(`/api/competitors/recon?${p.toString()}`, { cache: "no-store" });
+    const j = await r.json();
+
+    if (!j?.ok) {
+      setError(j?.error || "Analisi non disponibile.");
+      setRecon(null);
+    } else {
       setRecon(j);
-    } catch (e: any) {
-      setRecon({ ok: false, error: String(e?.message || e) });
-    } finally {
-      setLoadingRecon(false);
     }
+  } catch (e: any) {
+    setError(String(e?.message || e));
+    setRecon(null);
+  } finally {
+    setLoading(false);
   }
+}
 
   async function doSuggest() {
   setLoadingSuggest(true);
@@ -304,20 +314,21 @@ const canRecon = useMemo(
   {/* CTA */}
   <div className="pt-6">
     <button
-      type="button"
-      className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800"
-      onClick={() => {
-  // salva recenti
-  recentName.push(name.trim());
-  recentLoc.push(loc.trim());
-  if (site.trim()) recentSite.push(site.trim());
-  if (beUrl.trim()) recentBe.push(beUrl.trim());
-  // avvia analisi
-  doRecon();
-}}
-    >
-      Genera analisi
-    </button>
+  type="button"
+  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-3 py-2 hover:bg-slate-800 disabled:opacity-50"
+  disabled={!canRecon || loading}
+  onClick={() => {
+    // salva recenti
+    recentName.push(name.trim());
+    recentLoc.push(loc.trim());
+    if (site.trim()) recentSite.push(site.trim());
+    if (beUrl.trim()) recentBe.push(beUrl.trim());
+    // avvia analisi
+    doRecon();
+  }}
+>
+  {loading ? "Analisi in corso…" : "Genera analisi"}
+</button>
   </div>
 </div>
 
