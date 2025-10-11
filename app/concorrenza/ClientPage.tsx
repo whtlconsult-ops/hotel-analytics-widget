@@ -80,6 +80,16 @@ export default function ClientPage() {
     })();
     return () => ac.abort();
   }, [loc]);
+// Opzioni località deduplicate (niente Set per compatibilità ES5)
+const locOptions = useMemo(() => {
+  const arr = [...locSuggest, ...recentLoc.items];
+  const uniq: string[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v && uniq.indexOf(v) === -1) uniq.push(v);
+  }
+  return uniq.slice(0, 8);
+}, [locSuggest, recentLoc.items]);
 
   // abilita CTA se ho almeno un campo
   const canRecon = useMemo(() => {
@@ -213,12 +223,10 @@ export default function ClientPage() {
                 list="loc-suggest"
               />
               <datalist id="loc-suggest">
-                {[...new Set([...locSuggest, ...recentLoc.items])]
-                  .slice(0, 8)
-                  .map((v) => (
-                    <option key={v} value={v} />
-                  ))}
-              </datalist>
+  {locOptions.map((v) => (
+    <option key={v} value={v} />
+  ))}
+</datalist>
             </div>
 
             {/* CTA */}
