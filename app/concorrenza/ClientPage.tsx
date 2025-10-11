@@ -230,7 +230,7 @@ async function doRecon() {
       setLoadingCompare(false);
     }
   }
-
+}  
   return (
     <div className="min-h-screen bg-slate-50">
       {/* topbar */}
