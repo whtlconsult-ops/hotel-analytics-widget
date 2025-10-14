@@ -239,6 +239,28 @@ if (siteEffective) {
     notes.push(`Inspect sito: ${String(e?.message || e)}`);
   }
 }
+let adrMonthly: number[] | null = null;
+
+// 1) Se ho coords → tenta Amadeus "area ADR"
+try {
+  const origin = new URL(req.url).origin;
+  if (profile?.coords?.lat && profile?.coords?.lng) {
+    const ym = new Date().getFullYear(); // anno corrente (puoi passarlo da UI)
+    const u = `${origin}/api/rates/monthly?lat=${encodeURIComponent(String(profile.coords.lat))}&lng=${encodeURIComponent(String(profile.coords.lng))}&year=${ym}${name ? `&q=${encodeURIComponent(name)}` : ""}`;
+    const rr = await fetch(u, { cache:"no-store" });
+    const jj = await rr.json();
+    if (jj?.ok && Array.isArray(jj.monthly) && jj.monthly.length === 12) {
+      adrMonthly = jj.monthly;
+      (notes as string[]).push("ADR da Amadeus (mediana 2 campioni/mese).");
+    }
+  }
+} catch {}
+
+// 2) Fallback su curva stagionale
+if (!adrMonthly) {
+  adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
+  (notes as string[]).push("ADR stimato da stagionalità (fallback).");
+}
     // C) ADR stimato (12 mesi)
     const adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
 
