@@ -261,9 +261,6 @@ if (!adrMonthly) {
   adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
   (notes as string[]).push("ADR stimato da stagionalità (fallback).");
 }
-    // C) ADR stimato (12 mesi)
-    const adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
-
     return NextResponse.json({ ok:true, profile, adrMonthly, notes: notes.length?notes:undefined }, { status:200 });
   } catch (e: any) {
     return NextResponse.json({ ok:false, error:String(e?.message || e) }, { status:500 });
