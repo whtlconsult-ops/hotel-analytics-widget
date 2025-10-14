@@ -222,10 +222,22 @@ export default function App2() {
     let cancelled = false;
     (async () => {
       try {
-        const params = new URLSearchParams({
-          q, parts: "related", date: "today 12-m", cat: "203",
-          ch: ch ? "1" : "0", prov: prov ? "1" : "0", los: losF ? "1" : "0",
-        });
+       // Pulisci il topic: prendi la prima parte prima della virgola e togli parole inutili
+const raw = (q || "").trim();
+const city = raw.split(",")[0]
+  .replace(/\b(italia|italy|provincia|capitale|regione)\b/gi, "")
+  .trim();
+const topic = city ? `hotel ${city}` : (raw || "hotel");
+
+// Query SERP: related garantiti + FAST
+const params = new URLSearchParams();
+params.set("q", topic);
+params.set("parts", "related");
+params.set("date", "today 12-m");
+params.set("cat", "203");
+params.set("ch", "1");
+params.set("prov", "1");
+params.set("los", "1");
 params.set("fast", "1");
         let rel: any = null;
         try {

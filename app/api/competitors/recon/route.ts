@@ -147,6 +147,29 @@ if (apiKey && qStr) {
 } else {
   notes.push("Maps: query insufficiente (manca nome/località).");
 }
+// Fallback: se non ho coords da Maps, prova Geoapify (serve GEOAPIFY_KEY)
+try {
+  if ((!profile.coords || !profile.coords.lat || !profile.coords.lng) && (loc || name)) {
+    const geoKey = process.env.GEOAPIFY_KEY;
+    if (geoKey) {
+      const q = [name, loc].filter(Boolean).join(" ").trim();
+      const u = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(q)}&type=amenity&filter=category.accommodation&limit=1&apiKey=${encodeURIComponent(geoKey)}`;
+      const r = await fetch(u, { cache: "force-cache", next: { revalidate: 21600 } });
+      const j = await r.json();
+      if (Array.isArray(j?.features) && j.features[0]?.properties) {
+        const p = j.features[0].properties;
+        const lat = Number(p.lat), lng = Number(p.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          profile.coords = { lat, lng };
+          profile.address = profile.address || p.formatted || p.address_line1 || profile.address;
+          notes.push("Coordinate ottenute da Geoapify (fallback).");
+        }
+      }
+    } else {
+      notes.push("Geoapify non configurato (GEOAPIFY_KEY mancante).");
+    }
+  }
+} catch {}
 
     // B) Canali via search mirate (best-effort, poco costose)
     const channels: string[] = [];

@@ -742,17 +742,21 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
       if (needTrend) parts.push("trend");
       if (needRelated) parts.push("related");
 
-      const params = new URLSearchParams({
-        q: aQuery || "",
-        lat: String(aCenter.lat),
-        lng: String(aCenter.lng),
-        date: "today 12-m",
-        cat: "203",
-        parts: parts.join(","),
-        ch: askChannels ? "1" : "0",
-        prov: askProvenance ? "1" : "0",
-        los: askLOS ? "1" : "0",
-      });
+      // Topic pulito → "hotel <città>"
+const raw = (aQuery || "").trim();
+const city = raw.split(",")[0]
+  .replace(/\b(italia|italy|provincia|capitale|regione)\b/gi, "")
+  .trim();
+const topic = city ? `hotel ${city}` : (raw || "hotel");
+
+const params = new URLSearchParams({
+  q: topic,
+  lat: String(aCenter.lat),
+  lng: String(aCenter.lng),
+  date: "today 12-m",
+  cat: "203",
+  parts: "trend", // Solo TREND per arrivare subito
+});
 params.set("fast", "1");
 
       const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
