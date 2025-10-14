@@ -226,6 +226,7 @@ export default function App2() {
           q, parts: "related", date: "today 12-m", cat: "203",
           ch: ch ? "1" : "0", prov: prov ? "1" : "0", los: losF ? "1" : "0",
         });
+params.set("fast", "1");
         let rel: any = null;
         try {
           const r = await fetch(`/api/serp/demand?${params.toString()}`);
@@ -286,7 +287,12 @@ export default function App2() {
             {notes.join(" · ")}
           </div>
         )}
-
+{channels.length === 0 && origins.length === 0 && los.length === 0 && (
+  <div className="mb-4 text-sm text-slate-600 bg-slate-50 border rounded-2xl px-3 py-2">
+    Nessun dato disponibile al momento. Prova a cambiare località/mese,
+    oppure disattiva la modalità FAST per un’analisi più approfondita.
+  </div>
+)}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Canali di vendita */}
           <section className="bg-white rounded-2xl border shadow-sm p-4 md:p-5">

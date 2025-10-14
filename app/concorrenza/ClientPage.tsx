@@ -176,6 +176,34 @@ export default function ClientPage() {
         setRecon({ ok: false, error: j?.error || "Analisi non disponibile." });
       } else {
         setRecon(j);
+
+// se ho coordinate dal profilo, popola subito i competitor via Geoapify
+try {
+  const coords = j?.profile?.coords;
+  if (coords?.lat && coords?.lng) {
+    const radiusKm = 5; // o leggilo da UI
+    const u = `/api/geo/nearby?lat=${encodeURIComponent(String(coords.lat))}&lng=${encodeURIComponent(String(coords.lng))}&radiusKm=${radiusKm}`;
+    const rr = await fetch(u, { cache: "no-store" });
+    const jj = await rr.json();
+    if (Array.isArray(jj?.items)) setSuggest(jj.items);
+  }
+} catch {}
+// se non ho coords ma ho loc → prova nearby partendo dalla geocodifica della loc
+if ((!j?.profile?.coords) && (loc && loc.trim())) {
+  try {
+    const g = await fetch(`/api/geo/search?q=${encodeURIComponent(loc)}`, { cache: "no-store" });
+    const gj = await g.json();
+    const first = Array.isArray(gj?.items) ? gj.items[0] : null;
+    if (first?.lat && first?.lng) {
+      const radiusKm = 5;
+      const u = `/api/geo/nearby?lat=${encodeURIComponent(String(first.lat))}&lng=${encodeURIComponent(String(first.lng))}&radiusKm=${radiusKm}`;
+      const rr = await fetch(u, { cache: "no-store" });
+      const jj = await rr.json();
+      if (Array.isArray(jj?.items)) setSuggest(jj.items);
+    }
+  } catch {}
+}
+
       }
     } catch (e: any) {
       setRecon({ ok: false, error: String(e?.message || e) });

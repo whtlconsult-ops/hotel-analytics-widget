@@ -122,9 +122,18 @@ function extractGeoMapCountries(j: any): Array<{ code?: string; name: string; va
 }
 
 /** ----- SerpAPI wrappers (con caching lato Vercel) ----- */
-const serpFetch = (u: string) =>
-  fetch(u, { cache: "force-cache", next: { revalidate: 21600 } }) // 6h
-    .then(r => r.json()).catch(()=> ({}));
+const serpFetch = async (u: string, timeoutMs = 8000) => {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(u, { cache: "force-cache", next: { revalidate: 21600 }, signal: ctrl.signal });
+    return await r.json();
+  } catch {
+    return {};
+  } finally {
+    clearTimeout(id);
+  }
+};
 
 async function fetchTrends(apiKey: string, q: string, geo: string, date: string, cat: string) {
   const p = new URLSearchParams({ engine:"google_trends", data_type:"TIMESERIES", q, geo, date, cat, api_key: apiKey, hl:"it" });
@@ -174,6 +183,7 @@ function countryBucket(nameOrCode: string) {
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
+    const fast = url.searchParams.get("fast") === "1";
     const apiKey = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
     if (!apiKey) return NextResponse.json({ ok: false, error: "SERPAPI_KEY mancante" }, { status: 500 });
 
@@ -218,8 +228,8 @@ export async function GET(req: Request) {
     let related: { channels: any[]; provenance: any[]; los: any[] } | undefined;
 
     if (parts.includes("related")) {
-      const minNeeded = 30; // alza soglia per avere barre visibili
-      const maxCalls  = 8;  // tetto per non bruciare quota
+      const minNeeded = fast ? 10 : 30;   // FAST → soglia più bassa
+      const maxCalls  = fast ? 2  : 8;    // FAST → poche chiamate
       let calls = 0;
 
       const gatherQ = async (q: string, geo: string, timeframe: string): Promise<string[]> => {

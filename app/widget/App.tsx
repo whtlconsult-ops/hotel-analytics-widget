@@ -753,6 +753,7 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
         prov: askProvenance ? "1" : "0",
         los: askLOS ? "1" : "0",
       });
+params.set("fast", "1");
 
       const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
       const j = r1.ok ? r1.data : null;
