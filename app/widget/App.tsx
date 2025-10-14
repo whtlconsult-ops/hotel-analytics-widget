@@ -815,10 +815,13 @@ if (needTrend && Array.isArray(j.series)) {
 }
 
 // 2) Serie Wikipedia (IT+EN) normalizzata (se disponibile)
-const city = cityFromTopic(aQuery || "");
+const wikiCity = cityFromTopic(aQuery || "");
 let wiki12: number[] = new Array(12).fill(0);
 try {
-  const w = await http.json<any>(`/api/baseline/wiki?q=${encodeURIComponent(city)}&months=12`, { timeoutMs: 7000, retries: 1 });
+ const w = await http.json<any>(
+  `/api/baseline/wiki?q=${encodeURIComponent(wikiCity)}&months=12`,
+  { timeoutMs: 7000, retries: 1 }
+);
   if (w.ok && Array.isArray(w.data?.series)) {
     const series = w.data.series as Array<{ month: string; views: number }>;
     // Map su label LLL yy
