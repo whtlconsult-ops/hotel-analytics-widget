@@ -204,6 +204,8 @@ function syntheticChannels(types: string[]|null|undefined, city:string, mIdx:num
 ─────────────────────────────────────────────────────────── */
 export default function App2() {
   const search = useSearchParams();
+const lat = search.get("lat");
+const lng = search.get("lng");
   const q     = decodeURIComponent(search.get("q") || "Firenze");
   const ch    = search.get("ch") === "1";
   const prov  = search.get("prov") === "1";
@@ -239,37 +241,63 @@ params.set("ch", "1");
 params.set("prov", "1");
 params.set("los", "1");
 params.set("fast", "1");
+if (lat) params.set("lat", lat);
+if (lng) params.set("lng", lng);
         let rel: any = null;
-        try {
-          const r = await fetch(`/api/serp/demand?${params.toString()}`);
-          const j = await r.json();
-          if (j?.ok && j.related) rel = j.related;
-        } catch { /* ignore */ }
+try {
+  const r = await fetch(`/api/serp/demand?${params.toString()}`);
+  const j = await r.json();
+  if (j?.ok && j.related) rel = j.related;
+} catch { /* ignore */ }
 
-        const emptyOrZero = (arr:any[]) => !Array.isArray(arr) || arr.length===0 || arr.every(x => (x?.value||0)===0);
+const emptyOrZero = (arr:any[]) => !Array.isArray(arr) || arr.length===0 || arr.every(x => (x?.value||0)===0);
 
-        if (!rel || (
-          (!ch   || emptyOrZero(rel.channels))   &&
-          (!prov || emptyOrZero(rel.provenance)) &&
-          (!losF || emptyOrZero(rel.los))
-        )) {
-          // Fallback dimostrativo
-          if (ch && !cancelled)   setChannels(syntheticChannels(types, q, mIdx));
-          if (prov && !cancelled) setOrigins(syntheticOrigins(q, mIdx));
-          if (losF && !cancelled) setLOS(syntheticLOS(q, mIdx));
-          if (!cancelled) setNotes(p => Array.from(new Set([...p, "Dati dimostrativi (SERP non disponibile)."])));
-          return;
-        }
+// 1) Se FAST ha dato vuoto → riprova FULL (senza fast)
+let got = rel;
+const isAllEmpty = (rr:any) =>
+  !rr ||
+  ((!ch   || emptyOrZero(rr.channels)) &&
+   (!prov || emptyOrZero(rr.provenance)) &&
+   (!losF || emptyOrZero(rr.los)));
 
-        if (ch && Array.isArray(rel.channels) && !cancelled) {
-          setChannels(rel.channels.map((x:any)=>({ channel: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()), value: Number(x.value)||0 })));
-        }
-        if (prov && Array.isArray(rel.provenance) && !cancelled) {
-          setOrigins(rel.provenance.map((x:any)=>({ name: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()), value: Number(x.value)||0 })));
-        }
-        if (losF && Array.isArray(rel.los) && !cancelled) {
-          setLOS(rel.los.map((x:any)=>({ bucket: String(x.label||""), value: Number(x.value)||0 })));
-        }
+if (isAllEmpty(got)) {
+  const p2 = new URLSearchParams(params); // clona
+  p2.delete("fast");
+  try {
+    const r2 = await fetch(`/api/serp/demand?${p2.toString()}`);
+    const j2 = await r2.json();
+    if (j2?.ok && j2.related) {
+      got = j2.related;
+      if (!cancelled) setNotes(prev => Array.from(new Set([...prev, "Modalità approfondita attivata (no FAST)."])));
+    }
+  } catch { /* ignore */ }
+}
+
+// 2) Se ancora vuoto → fallback sintetico
+if (isAllEmpty(got)) {
+  if (ch && !cancelled)   setChannels(syntheticChannels(types, q, mIdx));
+  if (prov && !cancelled) setOrigins(syntheticOrigins(q, mIdx));
+  if (losF && !cancelled) setLOS(syntheticLOS(q, mIdx));
+  if (!cancelled) setNotes(p => Array.from(new Set([...p, "Dati dimostrativi (SERP non disponibile)."])));
+  return;
+}
+
+// 3) Altrimenti, applica i dati SERP
+if (ch && Array.isArray(got.channels) && !cancelled) {
+  setChannels(got.channels.map((x:any)=>({
+    channel: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()),
+    value: Number(x.value)||0
+  })));
+}
+if (prov && Array.isArray(got.provenance) && !cancelled) {
+  setOrigins(got.provenance.map((x:any)=>({
+    name: String(x.label||"").replace(/^\w/, m=>m.toUpperCase()),
+    value: Number(x.value)||0
+  })));
+}
+if (losF && Array.isArray(got.los) && !cancelled) {
+  setLOS(got.los.map((x:any)=>({ bucket: String(x.label||""), value: Number(x.value)||0 })));
+}
       } catch (e:any) {
         if (!cancelled) setNotes(p => Array.from(new Set([...p, String(e?.message || e)])));
       }

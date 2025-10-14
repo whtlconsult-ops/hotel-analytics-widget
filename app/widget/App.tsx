@@ -935,6 +935,10 @@ const graficaHref = useMemo(() => {
   p.set("los",  (askLOS        || noneSelected) ? "1" : "0");
 
   const qs = p.toString();
+if (aCenter?.lat && aCenter?.lng) {
+  p.set("lat", String(aCenter.lat));
+  p.set("lng", String(aCenter.lng));
+}
   return "/grafica" + (qs ? `?${qs}` : "");
 }, [aQuery, aRadius, aMonthISO, aTypes, aMode, wxProvider, askTrend, askChannels, askProvenance, askLOS]);
 
