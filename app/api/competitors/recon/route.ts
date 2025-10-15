@@ -263,29 +263,12 @@ if (siteEffective) {
     notes.push(`Inspect sito: ${String(e?.message || e)}`);
   }
 }
-let adrMonthly: number[] | null = null;
-
-// 1) Se ho coords → tenta Amadeus "area ADR"
-try {
-  const origin = new URL(req.url).origin;
-  if (profile?.coords?.lat && profile?.coords?.lng) {
-    const ym = new Date().getFullYear(); // anno corrente (puoi passarlo da UI)
-    const u = `${origin}/api/rates/monthly?lat=${encodeURIComponent(String(profile.coords.lat))}&lng=${encodeURIComponent(String(profile.coords.lng))}&year=${ym}${name ? `&q=${encodeURIComponent(name)}` : ""}`;
-    const rr = await fetch(u, { cache:"no-store" });
-    const jj = await rr.json();
-    if (jj?.ok && Array.isArray(jj.monthly) && jj.monthly.length === 12) {
-      adrMonthly = jj.monthly;
-      (notes as string[]).push("ADR da Amadeus (mediana 2 campioni/mese).");
-    }
-  }
-} catch {}
-
-// C) ADR reale (se ho coords) altrimenti stima
-let adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
+// --- ADR: reale via Amadeus se coords presenti, altrimenti stima ---
+let adrMonthly: number[] = estimateADR(loc || profile.address || "", profile.rating);
 
 try {
   if (profile?.coords?.lat != null && profile?.coords?.lng != null) {
-    // chiamo l'API interna sullo stesso host
+    // chiama l'API interna sullo stesso host
     const base = new URL(req.url);
     const origin = `${base.protocol}//${base.host}`;
     const year = Number(base.searchParams.get("year")) || new Date().getFullYear();
@@ -299,8 +282,8 @@ try {
     const rr = await fetch(u.toString(), { cache: "no-store" });
     const jj = await rr.json();
 
-    if (jj?.ok && Array.isArray(jj.monthly)) {
-      adrMonthly = (jj.monthly as any[]).map(v => (Number.isFinite(Number(v)) ? Number(v) : 0));
+    if (jj?.ok && Array.isArray(jj.monthly) && jj.monthly.length === 12) {
+      adrMonthly = jj.monthly.map((v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0));
       notes.push("ADR reale da Amadeus (mediana, 2 campioni/mese).");
     } else {
       notes.push("ADR Amadeus non disponibile → usata stima.");
