@@ -284,7 +284,7 @@ try {
 let adrMonthly = estimateADR(loc || profile.address || "", profile.rating);
 
 try {
-  if (profile?.coords?.lat && profile?.coords?.lng) {
+  if (profile?.coords?.lat != null && profile?.coords?.lng != null) {
     // chiamo l'API interna sullo stesso host
     const base = new URL(req.url);
     const origin = `${base.protocol}//${base.host}`;
@@ -294,13 +294,13 @@ try {
     u.searchParams.set("lat", String(profile.coords.lat));
     u.searchParams.set("lng", String(profile.coords.lng));
     u.searchParams.set("year", String(year));
-    if (profile?.name) u.searchParams.set("q", profile.name); // filtro opzionale per nome
+    if (profile?.name) u.searchParams.set("q", profile.name); // filtro opzionale
 
     const rr = await fetch(u.toString(), { cache: "no-store" });
     const jj = await rr.json();
 
     if (jj?.ok && Array.isArray(jj.monthly)) {
-      adrMonthly = jj.monthly.map((x: any) => (Number.isFinite(Number(x)) ? Number(x) : 0));
+      adrMonthly = (jj.monthly as any[]).map(v => (Number.isFinite(Number(v)) ? Number(v) : 0));
       notes.push("ADR reale da Amadeus (mediana, 2 campioni/mese).");
     } else {
       notes.push("ADR Amadeus non disponibile → usata stima.");
@@ -308,11 +308,13 @@ try {
   } else {
     notes.push("ADR: mancano coordinate → usata stima.");
   }
-} catch {
+} catch (_e) {
   notes.push("ADR Amadeus errore → usata stima.");
 }
 
+// === risposta ===
 return NextResponse.json(
   { ok: true, profile, adrMonthly, notes: notes.length ? notes : undefined },
   { status: 200 }
 );
+} // <-- chiude export async function GET
