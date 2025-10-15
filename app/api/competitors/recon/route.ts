@@ -185,7 +185,6 @@ export async function GET(req: Request) {
         u.searchParams.set("lat", String(profile.coords.lat));
         u.searchParams.set("lng", String(profile.coords.lng));
         u.searchParams.set("year", String(year));
-        if (profile?.name) u.searchParams.set("q", profile.name);
 
         const rr = await fetch(u.toString(), { cache: "no-store" });
         const jj = await rr.json();
