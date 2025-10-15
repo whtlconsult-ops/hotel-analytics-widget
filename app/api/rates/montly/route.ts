@@ -17,7 +17,7 @@ async function fetchDayPrice(token:string, lat:number, lng:number, checkIn:strin
   const url = new URL("https://test.api.amadeus.com/v3/shopping/hotel-offers");
   url.searchParams.set("latitude", String(lat));
   url.searchParams.set("longitude", String(lng));
-  url.searchParams.set("radius", "5");           // km
+  url.searchParams.set("radius", "5");
   url.searchParams.set("radiusUnit", "KM");
   url.searchParams.set("adults", "2");
   url.searchParams.set("checkInDate", checkIn);
@@ -29,9 +29,10 @@ async function fetchDayPrice(token:string, lat:number, lng:number, checkIn:strin
 
   const r = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store"
+    cache: "no-store",
   });
   if (!r.ok) return null;
+
   const j = await r.json();
   const data = Array.isArray(j?.data) ? j.data : [];
   const prices:number[] = [];
@@ -40,7 +41,7 @@ async function fetchDayPrice(token:string, lat:number, lng:number, checkIn:strin
     if (hotelName){
       const n = String(h?.name || "").toLowerCase();
       const needle = hotelName.toLowerCase();
-      if (n && n.indexOf(needle) === -1) continue; // filtra per nome (se passato)
+      if (n && !n.includes(needle)) continue;
     }
     const offers = Array.isArray(data[i]?.offers) ? data[i].offers : [];
     for (let k=0;k<offers.length;k++){
@@ -52,7 +53,7 @@ async function fetchDayPrice(token:string, lat:number, lng:number, checkIn:strin
       }
     }
   }
-  return prices.length ? Math.min.apply(null, prices) : null;
+  return prices.length ? Math.min(...prices) : null;
 }
 
 export async function GET(req: Request){
@@ -62,7 +63,7 @@ export async function GET(req: Request){
     const nights = Math.max(1, Number(searchParams.get("nights") || "1"));
     const lat = Number(searchParams.get("lat"));
     const lng = Number(searchParams.get("lng"));
-    const q   = (searchParams.get("q") || "").trim();  // facoltativo, per filtrare il nome hotel
+    const q   = (searchParams.get("q") || "").trim();  // facoltativo: filtro per nome hotel
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng))
       return NextResponse.json({ ok:false, error:"lat/lng richiesti" }, { status:400 });

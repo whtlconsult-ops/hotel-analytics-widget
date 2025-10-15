@@ -13,13 +13,13 @@ export async function getAmadeusToken(): Promise<string> {
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: id,
-    client_secret: sec
+    client_secret: sec,
   });
 
   const r = await fetch(u, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString()
+    body: body.toString(),
   });
   if (!r.ok) throw new Error(`Amadeus OAuth ${r.status}`);
   const j = await r.json();
