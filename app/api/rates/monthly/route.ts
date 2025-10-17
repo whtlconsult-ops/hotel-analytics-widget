@@ -1,134 +1,145 @@
+// /app/api/rates/monthly/route.ts
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 import { NextResponse } from "next/server";
 import { getAmadeusToken } from "../../../../lib/amadeus";
 
-function parseNum(x:any){ const n=Number(x); return Number.isFinite(n)?n:undefined; }
-function median(nums:number[]) {
-  const a = nums.slice().sort((x,y)=>x-y);
-  if (a.length===0) return undefined;
-  const m = Math.floor(a.length/2);
-  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
-}
-function ymd(y:number,m:number,d:number){ return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+// utils
+const parseNum = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+const median = (arr: number[]) => {
+  if (!arr.length) return 0;
+  const a = [...arr].sort((x, y) => x - y);
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+};
 
-async function fetchDayPrice(
-  token: string,
-  lat: number,
-  lng: number,
-  checkIn: string,
-  nights: number,
-  hotelName?: string
-) {
-  const url = new URL("https://test.api.amadeus.com/v3/shopping/hotel-offers");
-  url.searchParams.set("latitude", String(lat));
-  url.searchParams.set("longitude", String(lng));
-  url.searchParams.set("radius", "5");              // 1° tentativo: 5 km
-  url.searchParams.set("radiusUnit", "KM");
-  url.searchParams.set("adults", "2");
-  url.searchParams.set("checkInDate", checkIn);
+// una notte sola: calcolo per-night anche da total
+async function fetchOffersDay(params: {
+  token: string;
+  checkIn: string; // YYYY-MM-DD
+  nights: number;  // 1
+  adults?: number;
+  roomQty?: number;
+  currency?: string;
+  hotelId?: string; // se presente -> hotelIds=...
+  lat?: number; lng?: number; radiusKm?: number;
+}) {
+  const {
+    token, checkIn, nights,
+    adults = 2, roomQty = 1, currency = "EUR",
+    hotelId, lat, lng, radiusKm = 10,
+  } = params;
 
-  // LOS reale → check-out
-  const inD = new Date(checkIn + "T00:00:00Z");
-  const outD = new Date(inD.getTime() + Math.max(1, nights) * 86400000);
-  const checkOut = `${outD.getUTCFullYear()}-${String(outD.getUTCMonth()+1).padStart(2,"0")}-${String(outD.getUTCDate()).padStart(2,"0")}`;
-  url.searchParams.set("checkOutDate", checkOut);
+  const u = new URL("https://test.api.amadeus.com/v3/shopping/hotel-offers");
+  u.searchParams.set("adults", String(adults));
+  u.searchParams.set("roomQuantity", String(roomQty));
+  u.searchParams.set("checkInDate", checkIn);
+  u.searchParams.set("paymentPolicy", "NONE");
+  u.searchParams.set("includeClosed", "false");
+  u.searchParams.set("bestRateOnly", "true");
+  u.searchParams.set("currency", currency);
 
-  url.searchParams.set("roomQuantity", "1");
-  url.searchParams.set("paymentPolicy", "NONE");
-  url.searchParams.set("includeClosed", "false");
-  url.searchParams.set("bestRateOnly", "true");
-  url.searchParams.set("currency", "EUR");
+  if (hotelId) {
+    u.searchParams.set("hotelIds", hotelId);
+  } else if (lat != null && lng != null) {
+    u.searchParams.set("latitude", String(lat));
+    u.searchParams.set("longitude", String(lng));
+    u.searchParams.set("radius", String(radiusKm));
+    u.searchParams.set("radiusUnit", "KM");
+  } else {
+    // niente criteri
+    return [] as number[];
+  }
 
-  // helper che estrae prezzi da una response
-  const extractPrices = async (u: URL) => {
-    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-    if (!r.ok) return [] as number[];
-    const j = await r.json();
-    const data = Array.isArray(j?.data) ? j.data : [];
-    const prices: number[] = [];
-    for (const item of data) {
-      const h = item?.hotel;
-      if (hotelName) {
-        const n = String(h?.name || "").toLowerCase();
-        const needle = hotelName.toLowerCase();
-        // match SOFT: almeno una parola del nome deve comparire
-        const okSoft = needle.split(/\s+/).some(w => w && n.includes(w));
-        if (n && !okSoft) continue;
-      }
-      const offers = Array.isArray(item?.offers) ? item.offers : [];
-      for (const ofr of offers) {
-        const p = ofr?.price;
-        const tot =
-          parseNum(p?.total) ??
-          parseNum(p?.variations?.average?.total) ??
-          parseNum(p?.variations?.changes?.[0]?.total);
-        if (tot != null) {
-          const perNight = Math.round(tot / Math.max(1, nights));
-          prices.push(perNight);
-        }
-      }
+  const r = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!r.ok) return [] as number[];
+  const j = await r.json();
+  const data = Array.isArray(j?.data) ? j.data : [];
+  const out: number[] = [];
+
+  for (const item of data) {
+    const offers = Array.isArray(item?.offers) ? item.offers : [];
+    for (const ofr of offers) {
+      // prendo il prezzo migliore disponibile
+      const p = ofr?.price;
+      const tot =
+        parseNum(p?.total) ??
+        parseNum(p?.base) ??
+        parseNum(p?.variations?.average?.base) ??
+        parseNum(p?.variations?.average?.total) ??
+        parseNum(p?.variations?.changes?.[0]?.base) ??
+        parseNum(p?.variations?.changes?.[0]?.total);
+      if (tot != null) out.push(Math.round(tot / Math.max(1, nights)));
     }
-    return prices;
-  };
-
-  // 1° tentativo: raggio 5 km
-  let prices = await extractPrices(url);
-  if (prices.length) return Math.min(...prices);
-
-  // 2° tentativo: raggio 10 km
-  url.searchParams.set("radius", "10");
-  prices = await extractPrices(url);
-  if (prices.length) return Math.min(...prices);
-
-  // 3° tentativo: raggio 15 km
-  url.searchParams.set("radius", "15");
-  prices = await extractPrices(url);
-  if (prices.length) return Math.min(...prices);
-
-  // 4° tentativo: shift +1 giorno (alcuni giorni non hanno offerte)
-  const inD2 = new Date(inD.getTime() + 86400000);
-  const checkIn2 = `${inD2.getUTCFullYear()}-${String(inD2.getUTCMonth()+1).padStart(2,"0")}-${String(inD2.getUTCDate()).padStart(2,"0")}`;
-  url.searchParams.set("checkInDate", checkIn2);
-  const outD2 = new Date(inD2.getTime() + Math.max(1, nights) * 86400000);
-  const checkOut2 = `${outD2.getUTCFullYear()}-${String(outD2.getUTCMonth()+1).padStart(2,"0")}-${String(outD2.getUTCDate()).padStart(2,"0")}`;
-  url.searchParams.set("checkOutDate", checkOut2);
-
-  prices = await extractPrices(url);
-  return prices.length ? Math.min(...prices) : null;
+  }
+  return out;
 }
 
-export async function GET(req: Request){
-  try{
-    const { searchParams } = new URL(req.url);
-    const y = Number(searchParams.get("year") || new Date().getFullYear());
-    const nights = Math.max(1, Number(searchParams.get("nights") || "1"));
-    const lat = Number(searchParams.get("lat"));
-    const lng = Number(searchParams.get("lng"));
-    const q   = (searchParams.get("q") || "").trim();  // facoltativo: filtro nome hotel
+function ymd(y: number, m: number, d: number) {
+  // m: 1..12
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const yyyy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng))
-      return NextResponse.json({ ok:false, error:"lat/lng richiesti" }, { status:400 });
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const year = Number(searchParams.get("year") || new Date().getFullYear());
+    const hotelId = searchParams.get("hotelId") || undefined;
+
+    const lat = parseNum(searchParams.get("lat"));
+    const lng = parseNum(searchParams.get("lng"));
+    const radius = parseNum(searchParams.get("radius")) ?? 10;
+
+    if (!hotelId && (lat == null || lng == null)) {
+      return NextResponse.json(
+        { ok: false, error: "Richiede hotelId oppure lat/lng" },
+        { status: 400 }
+      );
+    }
 
     const token = await getAmadeusToken();
 
+    // Due campioni/mese: intorno al 12 e 26 (sandbox risponde meglio su date vicine)
+    const pickDays = (y: number, m: number) => {
+      return [12, 26].map(d => ymd(y, m, d));
+    };
+
     const monthly: number[] = [];
+
     for (let m = 1; m <= 12; m++) {
-  // 4 campioni/mese → più chance di avere tariffe
-  const samples = [7, 14, 21, 28];
-  const prices: number[] = [];
-  for (const day of samples) {
-    const d = ymd(y, m, day);
-    // niente filtro nome hotel per default → aggregazione area più robusta
-    const price = await fetchDayPrice(token, lat, lng, d, nights, /*hotelName*/ undefined);
-    if (price != null) prices.push(price);
-  }
-  const med = median(prices);
-  monthly.push(med != null ? Math.round(med) : 0);
-}
-    return NextResponse.json({ ok:true, currency:"EUR", monthly }, { status:200 });
-  }catch(e:any){
-    return NextResponse.json({ ok:false, error:String(e?.message || e) }, { status:500 });
+      const days = pickDays(year, m);
+      const prices: number[] = [];
+
+      for (const checkIn of days) {
+        const got = await fetchOffersDay({
+          token,
+          checkIn,
+          nights: 1,
+          hotelId,
+          lat: hotelId ? undefined : lat,
+          lng: hotelId ? undefined : lng,
+          radiusKm: radius,
+        });
+        prices.push(...got);
+      }
+      monthly.push(median(prices));
+    }
+
+    return NextResponse.json({ ok: true, monthly }, { status: 200 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
