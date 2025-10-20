@@ -1,85 +1,83 @@
 // app/api/rates/monthly/route.ts
 export const runtime = "nodejs";
-
 import { NextResponse } from "next/server";
 
-/** ==============================
- *  CONFIG
- *  ============================== */
-const AMA_TOKEN_URL = "https://test.api.amadeus.com/v1/security/oauth2/token";
-const AMA_OFFERS_URL = "https://test.api.amadeus.com/v3/shopping/hotel-offers";
+/* ===========================
+   Config & helpers di base
+   =========================== */
 
-// Env vars: imposta su Vercel
 const AMA_KEY = process.env.AMADEUS_KEY || process.env.AMADEUS_CLIENT_ID;
 const AMA_SECRET = process.env.AMADEUS_SECRET || process.env.AMADEUS_CLIENT_SECRET;
 
-// Cache token in memoria (processo)
-let tokenCache: { access_token: string; expires_at: number } | null = null;
+type PriceSample = { prices: number[]; status: number; rawCount: number; usedHotelIds: string[] };
 
-/** ==============================
- *  UTILS
- *  ============================== */
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-function parseNum(v: any): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function median(nums: number[]): number {
-  if (!nums.length) return 0;
-  const arr = nums.slice().sort((a, b) => a - b);
-  const i = Math.floor(arr.length / 2);
-  return arr.length % 2 ? arr[i] : Math.round((arr[i - 1] + arr[i]) / 2);
-}
+let tokenCache: { token: string; expiresAt: number } | null = null;
 
 async function getAmadeusToken(): Promise<string> {
   if (!AMA_KEY || !AMA_SECRET) {
-    throw new Error("AMadeus credentials missing (AMADUES_KEY/SECRET).");
+    throw new Error("AMADUES_KEY/SECRET mancanti nelle env (Vercel).");
   }
-
-  const now = Date.now();
-  if (tokenCache && tokenCache.expires_at > now + 15_000) {
-    return tokenCache.access_token;
+  const now = Math.floor(Date.now() / 1000);
+  if (tokenCache && tokenCache.expiresAt > now + 60) {
+    return tokenCache.token;
   }
-
-  const body = new URLSearchParams();
-  body.set("grant_type", "client_credentials");
-  body.set("client_id", AMA_KEY);
-  body.set("client_secret", AMA_SECRET);
-
-  const r = await fetch(AMA_TOKEN_URL, {
+  const r = await fetch("https://test.api.amadeus.com/v1/security/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: AMA_KEY,
+      client_secret: AMA_SECRET,
+    }),
     cache: "no-store",
   });
-
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
-    throw new Error(`Amadeus token error: ${r.status} ${txt}`);
+    throw new Error(`OAuth Amadeus fallito: ${r.status} ${txt}`);
   }
-
   const j = await r.json();
-  const ttl = Number(j.expires_in) || 1800; // 30 min
-  tokenCache = {
-    access_token: String(j.access_token),
-    expires_at: Date.now() + (ttl * 1000),
-  };
-
-  return tokenCache.access_token;
+  const access = String(j?.access_token || "");
+  const expiresIn = Number(j?.expires_in || 0);
+  if (!access) throw new Error("OAuth Amadeus: access_token mancante.");
+  tokenCache = { token: access, expiresAt: Math.floor(Date.now() / 1000) + Math.max(60, expiresIn - 60) };
+  return access;
 }
-/**
- * Ricava fino a N hotelId vicini a lat/lng usando Hotel List v1
- * Opzionale: filtra per nome con `q` (case-insensitive).
- */
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function ymdDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 12 mesi rolling a partire da start=YYYY-MM (se passato) o dal mese corrente */
+function build12Months(start?: string): Date[] {
+  const base = start ? new Date(`${start}-01T00:00:00`) : new Date();
+  base.setDate(1);
+  const out: Date[] = [];
+  for (let i = 0; i < 12; i++) out.push(new Date(base.getFullYear(), base.getMonth() + i, 1));
+  return out;
+}
+
+function median(nums: number[]): number {
+  if (!Array.isArray(nums) || nums.length === 0) return 0;
+  const a = nums.slice().sort((x, y) => x - y);
+  const mid = Math.floor(a.length / 2);
+  const val = a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  return Math.round(val);
+}
+
+/* =========================================
+   Hotel-List: by geocode & by city fallback
+   ========================================= */
+
+/** Ricava fino a N hotelId vicini a lat/lng (hotelSource=ALL), con eventuale filtro nome q */
 async function listHotelIdsByGeocode(
   token: string,
   {
-    lat, lng, radiusKm = 35, limit = 40, q
+    lat, lng, radiusKm = 35, limit = 40, q,
   }: { lat: number; lng: number; radiusKm?: number; limit?: number; q?: string }
 ): Promise<string[]> {
   const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-geocode";
@@ -89,56 +87,96 @@ async function listHotelIdsByGeocode(
   u.searchParams.set("radius", String(Math.max(1, Math.min(50, radiusKm))));
   u.searchParams.set("radiusUnit", "KM");
   u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
-  u.searchParams.set("hotelSource", "ALL"); // <- prendi anche indipendenti
+  u.searchParams.set("hotelSource", "ALL");
 
-  const r = await fetch(u.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
     console.error("Amadeus HotelList by-geocode error", r.status, txt);
     return [];
   }
-
   const j = await r.json().catch(() => ({}));
   let rows: any[] = Array.isArray(j?.data) ? j.data : [];
   if (q) {
     const needle = q.toLowerCase();
-    rows = rows.filter(d => String(d?.name || "").toLowerCase().includes(needle));
+    rows = rows.filter((d) => String(d?.name || "").toLowerCase().includes(needle));
   }
-  return Array.from(new Set(rows.map(d => String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
+  return Array.from(new Set(rows.map((d) => String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
 }
-// --- sostituisce fetchDayPrice ---
-// Accetta una lista di hotelIds. Se manca, la ricava da lat/lng via Hotel List.
+
+/** Cerca cityCode (IATA) da keyword città */
+async function findCityCode(token: string, keyword: string): Promise<string | null> {
+  const u = new URL("https://test.api.amadeus.com/v1/reference-data/locations/cities");
+  u.searchParams.set("keyword", keyword);
+  u.searchParams.set("max", "3");
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    console.error("Cities lookup error", r.status, t);
+    return null;
+  }
+  const j = await r.json().catch(() => ({}));
+  const rows = Array.isArray(j?.data) ? j.data : [];
+  const code = rows.find((x: any) => x?.iataCode)?.iataCode;
+  return code ? String(code) : null;
+}
+
+/** Lista hotelId per cityCode (fallback quando geocode non rende) */
+async function listHotelIdsByCity(token: string, cityCode: string, limit = 60): Promise<string[]> {
+  const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city";
+  const u = new URL(base);
+  u.searchParams.set("cityCode", cityCode);
+  u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    console.error("Amadeus HotelList by-city error", r.status, txt);
+    return [];
+  }
+  const j = await r.json().catch(() => ({}));
+  const rows = Array.isArray(j?.data) ? j.data : [];
+  return Array.from(new Set(rows.map((d: any) => String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
+}
+
+/* =========================================
+   Hotel Offers (v3) su lista di hotelIds
+   ========================================= */
+
 async function fetchDayPrice(
   token: string,
   {
-    checkIn, nights,
+    checkIn,
+    nights,
     hotelIds,
-    lat, lng, radiusKm = 25, nameFilter,
+    lat,
+    lng,
+    radiusKm = 35,
+    nameFilter,
   }: {
-    checkIn: string; nights: number;
+    checkIn: string;
+    nights: number;
     hotelIds?: string[];
-    lat?: number; lng?: number; radiusKm?: number;
+    lat?: number;
+    lng?: number;
+    radiusKm?: number;
     nameFilter?: string;
   }
-): Promise<{ prices: number[]; status: number; rawCount: number; usedHotelIds: string[] }> {
-
+): Promise<PriceSample> {
   let ids: string[] = Array.isArray(hotelIds) ? hotelIds.filter(Boolean) : [];
 
+  // se non passati, prova a ricavarli da geocode
   if (ids.length === 0 && lat != null && lng != null) {
-    ids = await listHotelIdsByGeocode(token, {
-      lat, lng, radiusKm, limit: 20, q: nameFilter
-    });
+    try {
+      ids = await listHotelIdsByGeocode(token, { lat, lng, radiusKm, limit: 40, q: nameFilter });
+    } catch (e) {
+      console.error("listHotelIdsByGeocode error", e);
+    }
   }
 
   if (ids.length === 0) {
     return { prices: [], status: 204, rawCount: 0, usedHotelIds: [] };
   }
 
-  // Hotel Offers v3 richiede hotelIds=... (comma-separated)
   const url = new URL("https://test.api.amadeus.com/v3/shopping/hotel-offers");
   url.searchParams.set("hotelIds", ids.join(","));
   url.searchParams.set("adults", "2");
@@ -173,7 +211,7 @@ async function fetchDayPrice(
         (p?.variations?.average?.total != null ? Number(p.variations.average.total) : NaN) ||
         (p?.variations?.changes?.[0]?.total != null ? Number(p.variations.changes[0].total) : NaN);
       if (Number.isFinite(tot)) {
-        prices.push(Math.round(tot / Math.max(1, nights)));
+        prices.push(Math.round(tot / Math.max(1, nights || 1)));
       }
     }
   }
@@ -181,219 +219,104 @@ async function fetchDayPrice(
   return { prices, status: 200, rawCount: data.length, usedHotelIds: ids };
 }
 
-// Ricava cityCode (IATA) da keyword città
-async function findCityCode(token: string, keyword: string): Promise<string | null> {
-  const u = new URL("https://test.api.amadeus.com/v1/reference-data/locations/cities");
-  u.searchParams.set("keyword", keyword);
-  u.searchParams.set("max", "3");
+/* ===========================
+   ROUTE GET
+   =========================== */
 
-  const r = await fetch(u.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store"
-  });
-
-  if (!r.ok) {
-    const t = await r.text().catch(()=> "");
-    console.error("Cities lookup error", r.status, t);
-    return null;
-  }
-  const j = await r.json().catch(()=> ({}));
-  const rows = Array.isArray(j?.data) ? j.data : [];
-  const code = rows.find((x:any)=> x?.iataCode)?.iataCode;
-  return code ? String(code) : null;
-}
-
-// Lista hotelIds per cityCode (fallback quando by-geocode non rende)
-async function listHotelIdsByCity(token: string, cityCode: string, limit = 60): Promise<string[]> {
-  const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city";
-  const u = new URL(base);
-  u.searchParams.set("cityCode", cityCode);
-  u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
-
-  const r = await fetch(u.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    console.error("Amadeus HotelList by-city error", r.status, txt);
-    return [];
-  }
-
-  const j = await r.json().catch(() => ({}));
-  const rows = Array.isArray(j?.data) ? j.data : [];
-  return Array.from(new Set(rows.map((d:any)=> String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
-}
-
-/** ==============================
- *  ROUTE HANDLER
- *  ============================== */
-// --- helpers per mesi futuri ---
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
-function ymdDate(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/**
- * Ritorna 12 Date corrispondenti al giorno 1 di ciascun mese,
- * a partire da "start" (YYYY-MM) oppure dal mese corrente.
- * Sempre future/rolling.
- */
-function build12Months(start?: string): Date[] {
-  const base = start ? new Date(`${start}-01T00:00:00`) : new Date();
-  base.setDate(1); // normalizza
-  const out: Date[] = [];
-  for (let i = 0; i < 12; i++) {
-    out.push(new Date(base.getFullYear(), base.getMonth() + i, 1));
-  }
-  return out;
-}
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const lat = parseNum(searchParams.get("lat"));
-    const lng = parseNum(searchParams.get("lng"));
-    const hotelId = searchParams.get("hotelId") || undefined;
+    // parametri
+    const lat = searchParams.get("lat") != null ? Number(searchParams.get("lat")) : undefined;
+    const lng = searchParams.get("lng") != null ? Number(searchParams.get("lng")) : undefined;
+    const hotelId = (searchParams.get("hotelId") || "").trim() || undefined;
+    const nameFilter = (searchParams.get("q") || "").trim() || undefined;   // es. "marriott"
+    const cityKeyword = (searchParams.get("city") || "").trim() || undefined; // es. "London"
+    const start = searchParams.get("start") || undefined; // YYYY-MM
+    const debug = searchParams.get("debug") === "1" || searchParams.get("debug") === "true";
 
-    const year = Number(searchParams.get("year")) || new Date().getFullYear();
-    const debug = searchParams.get("debug") === "1";
-
-    if (!hotelId && !(Number.isFinite(lat as number) && Number.isFinite(lng as number))) {
-      return NextResponse.json(
-        { ok: false, error: "Provide either hotelId OR lat & lng." },
-        { status: 400 }
-      );
-    }
-
+    // token
     const token = await getAmadeusToken();
 
+    // hotelIds da usare per tutti i mesi
+    let hotelIdsForAllMonths: string[] = [];
+    if (hotelId) {
+      hotelIdsForAllMonths = [hotelId];
+    } else {
+      try {
+        // 1) prova geocode (se lat/lng validi)
+        if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
+          hotelIdsForAllMonths = await listHotelIdsByGeocode(token, {
+            lat: lat!, lng: lng!, radiusKm: 35, limit: 40, q: nameFilter,
+          });
+        }
+        // 2) fallback by-city
+        if (!hotelIdsForAllMonths.length && cityKeyword) {
+          const code = await findCityCode(token, cityKeyword);
+          if (code) {
+            hotelIdsForAllMonths = await listHotelIdsByCity(token, code, 60);
+          }
+        }
+      } catch (e) {
+        console.error("Prefetch hotelIds error", e);
+      }
+    }
+
+    const months = build12Months(start);
     const monthly: number[] = new Array(12).fill(0);
     const debugRows: any[] = [];
 
-// opzionale: filtro nome (es. q=marriott)
-const nameFilter = (searchParams.get("q") || "").trim() || undefined;
-// opzionale: nome città esplicito (es. city=London)
-const cityKeyword = (searchParams.get("city") || "").trim() || undefined;
+    for (let i = 0; i < months.length; i++) {
+      const m0 = months[i];
+      const d1 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 12));
+      const d2 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 22));
 
-let hotelIdsForAllMonths: string[] = [];
-if (hotelId) {
-  hotelIdsForAllMonths = [hotelId];
-} else {
-  try {
-    const token2 = await getAmadeusToken();
-    // 1) tenta by-geocode
-    if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
-      hotelIdsForAllMonths = await listHotelIdsByGeocode(token2, {
-        lat: lat!, lng: lng!, radiusKm: 35, limit: 40, q: nameFilter
+      const a = await fetchDayPrice(token, {
+        checkIn: d1,
+        nights: 1,
+        hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
+        lat: hotelIdsForAllMonths.length ? undefined : lat,
+        lng: hotelIdsForAllMonths.length ? undefined : lng,
+        radiusKm: 35,
+        nameFilter,
       });
-    }
 
-    // 2) fallback by-city (se geocode vuoto)
-    if (!hotelIdsForAllMonths.length && (cityKeyword || Number.isFinite(lat as number))) {
-      let code: string | null = null;
-      if (cityKeyword) {
-        code = await findCityCode(token2, cityKeyword);
-      } else {
-        // se non hai passato city=, prova con keyword generica comune (es. "London", "Rome")
-        // Integrazione minima: puoi derivarla lato client e passarla qui.
-        code = await findCityCode(token2, "London"); // <- cambia se vuoi testare rapido
+      const b = await fetchDayPrice(token, {
+        checkIn: d2,
+        nights: 1,
+        hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
+        lat: hotelIdsForAllMonths.length ? undefined : lat,
+        lng: hotelIdsForAllMonths.length ? undefined : lng,
+        radiusKm: 35,
+        nameFilter,
+      });
+
+      const merged = [...a.prices, ...b.prices];
+      monthly[i] = median(merged);
+
+      if (debug) {
+        debugRows.push({
+          monthIndex: i + 1,
+          monthLabel: `${String(m0.getMonth() + 1).padStart(2, "0")}/${m0.getFullYear()}`,
+          sampleDays: [d1, d2],
+          httpStatus: [a.status, b.status],
+          bucketsFound: [a.rawCount, b.rawCount],
+          usedHotelIds: (a.usedHotelIds?.length ? a.usedHotelIds : b.usedHotelIds) || [],
+          priceSamples: merged.length,
+          value: monthly[i],
+        });
       }
-      if (code) {
-        hotelIdsForAllMonths = await listHotelIdsByCity(token2, code, 60);
-      }
+
+      // throttle per mitigare 429 in sandbox
+      await sleep(250);
     }
-  } catch (e) {
-    console.error("Prefetch hotelIds error", e);
-  }
-}
-    // mesi rolling (o start=YYYY-MM via query)
-const start = searchParams.get("start") || undefined;
-const months = build12Months(start);
-
-// opzionale: filtro per nome (quando l’utente analizza una struttura specifica)
-const nameFilter = (searchParams.get("q") || "").trim() || undefined;
-
-// Se arriva un hotelId singolo → usalo; altrimenti prepara ids da geocode
-hotelIdsForAllMonths = [];
-if (hotelId) {
-  hotelIdsForAllMonths = [hotelId];
-} else if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
-  try {
-    const ids = await listHotelIdsByGeocode(await getAmadeusToken(), {
-      lat: lat!, lng: lng!, radiusKm: 25, limit: 20, q: nameFilter
-    });
-    hotelIdsForAllMonths = ids;
-  } catch (e) {
-    console.error("HotelList prefetch error", e);
-  }
-}
-
-if (!hotelIdsForAllMonths.length && !hotelId) {
-  // non blocchiamo la risposta, ma segnaliamo che non abbiamo hotel
-  if (debug) {
-    console.warn("Nessun hotelId trovato nell’area indicata.");
-  }
-}
-
-for (let i = 0; i < months.length; i++) {
-  const m0 = months[i];
-
-  // date di campionamento nel mese (12 e 22)
-  const d1 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 12));
-  const d2 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 22));
-
-  const a = await fetchDayPrice(token, {
-  checkIn: d1, nights: 1,
-  hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
-  lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
-  lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
-  radiusKm: 35,
-  nameFilter
-});
-
-const b = await fetchDayPrice(token, {
-  checkIn: d2, nights: 1,
-  hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
-  lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
-  lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
-  radiusKm: 35,
-  nameFilter
-});
-
-  const merged = [...a.prices, ...b.prices];
-  monthly[i] = median(merged);
-
-  if (debug) {
-    debugRows.push({
-      monthIndex: i + 1,
-      monthLabel: `${String(m0.getMonth() + 1).padStart(2,"0")}/${m0.getFullYear()}`,
-      sampleDays: [d1, d2],
-      httpStatus: [a.status, b.status],
-      bucketsFound: [a.rawCount, b.rawCount],
-      priceSamples: merged.length,
-      value: monthly[i],
-    });
-  }
-
-  // piccolo throttle per evitare 429
-  await sleep(250);
-}
 
     return NextResponse.json(
-      { ok: true, monthly, debug: debug ? debugRows : undefined },
+      debug ? { ok: true, monthly, debug: debugRows } : { ok: true, monthly },
       { status: 200 }
     );
-
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: String(e?.message || e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
