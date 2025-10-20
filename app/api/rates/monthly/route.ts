@@ -142,7 +142,30 @@ async function fetchDayPrice(
 /** ==============================
  *  ROUTE HANDLER
  *  ============================== */
+// --- helpers per mesi futuri ---
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+function ymdDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Ritorna 12 Date corrispondenti al giorno 1 di ciascun mese,
+ * a partire da "start" (YYYY-MM) oppure dal mese corrente.
+ * Sempre future/rolling.
+ */
+function build12Months(start?: string): Date[] {
+  const base = start ? new Date(`${start}-01T00:00:00`) : new Date();
+  base.setDate(1); // normalizza
+  const out: Date[] = [];
+  for (let i = 0; i < 12; i++) {
+    out.push(new Date(base.getFullYear(), base.getMonth() + i, 1));
+  }
+  return out;
+}
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -166,28 +189,51 @@ export async function GET(req: Request) {
     const monthly: number[] = new Array(12).fill(0);
     const debugRows: any[] = [];
 
-    for (let m = 1; m <= 12; m++) {
-      // due date di campionamento per mese
-      const d1 = `${year}-${pad2(m)}-10`;
-      const d2 = `${year}-${pad2(m)}-20`;
+    // mesi rolling (o start=YYYY-MM via query)
+const start = searchParams.get("start") || undefined;
+const months = build12Months(start);
 
-      const a = await fetchDayPrice(token, { lat: lat ?? undefined, lng: lng ?? undefined, checkIn: d1, nights: 1, hotelId });
-      const b = await fetchDayPrice(token, { lat: lat ?? undefined, lng: lng ?? undefined, checkIn: d2, nights: 1, hotelId });
+for (let i = 0; i < months.length; i++) {
+  const m0 = months[i];
 
-      const merged = [...a.prices, ...b.prices];
-      monthly[m - 1] = median(merged);
+  // date di campionamento nel mese (12 e 22)
+  const d1 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 12));
+  const d2 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 22));
 
-      if (debug) {
-        debugRows.push({
-          month: m,
-          sampleDays: [d1, d2],
-          httpStatus: [a.status, b.status],
-          bucketsFound: [a.rawCount, b.rawCount],
-          priceSamples: merged.length,
-          value: monthly[m - 1],
-        });
-      }
-    }
+  const a = await fetchDayPrice(token, {
+    lat: lat ?? undefined,
+    lng: lng ?? undefined,
+    checkIn: d1,
+    nights: 1,
+    hotelId
+  });
+
+  const b = await fetchDayPrice(token, {
+    lat: lat ?? undefined,
+    lng: lng ?? undefined,
+    checkIn: d2,
+    nights: 1,
+    hotelId
+  });
+
+  const merged = [...a.prices, ...b.prices];
+  monthly[i] = median(merged);
+
+  if (debug) {
+    debugRows.push({
+      monthIndex: i + 1,
+      monthLabel: `${String(m0.getMonth() + 1).padStart(2,"0")}/${m0.getFullYear()}`,
+      sampleDays: [d1, d2],
+      httpStatus: [a.status, b.status],
+      bucketsFound: [a.rawCount, b.rawCount],
+      priceSamples: merged.length,
+      value: monthly[i],
+    });
+  }
+
+  // piccolo throttle per evitare 429
+  await sleep(250);
+}
 
     return NextResponse.json(
       { ok: true, monthly, debug: debug ? debugRows : undefined },
