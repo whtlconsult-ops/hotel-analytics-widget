@@ -320,7 +320,7 @@ const months = build12Months(start);
 const nameFilter = (searchParams.get("q") || "").trim() || undefined;
 
 // Se arriva un hotelId singolo → usalo; altrimenti prepara ids da geocode
-let hotelIdsForAllMonths: string[] = [];
+hotelIdsForAllMonths = [];
 if (hotelId) {
   hotelIdsForAllMonths = [hotelId];
 } else if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
