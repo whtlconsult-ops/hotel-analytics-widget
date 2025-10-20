@@ -16,9 +16,9 @@ const AMA_SECRET = process.env.AMADEUS_SECRET || process.env.AMADEUS_CLIENT_SECR
 // Cache token in memoria (processo)
 let tokenCache: { access_token: string; expires_at: number } | null = null;
 
-/** ==============================
+/** =============================
  *  UTILS
- *  ============================== */
+ *  ============================= */
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
