@@ -79,7 +79,7 @@ async function getAmadeusToken(): Promise<string> {
 async function listHotelIdsByGeocode(
   token: string,
   {
-    lat, lng, radiusKm = 25, limit = 20, q
+    lat, lng, radiusKm = 35, limit = 40, q
   }: { lat: number; lng: number; radiusKm?: number; limit?: number; q?: string }
 ): Promise<string[]> {
   const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-geocode";
@@ -89,6 +89,7 @@ async function listHotelIdsByGeocode(
   u.searchParams.set("radius", String(Math.max(1, Math.min(50, radiusKm))));
   u.searchParams.set("radiusUnit", "KM");
   u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
+  u.searchParams.set("hotelSource", "ALL"); // <- prendi anche indipendenti
 
   const r = await fetch(u.toString(), {
     headers: { Authorization: `Bearer ${token}` },
@@ -96,27 +97,18 @@ async function listHotelIdsByGeocode(
   });
 
   if (!r.ok) {
-    // utile nei logs Vercel per capire eventuali 401/403
     const txt = await r.text().catch(() => "");
-    console.error("Amadeus HotelList error", r.status, txt);
+    console.error("Amadeus HotelList by-geocode error", r.status, txt);
     return [];
   }
 
   const j = await r.json().catch(() => ({}));
-  let out: string[] = Array.isArray(j?.data)
-    ? j.data.map((d: any) => String(d?.hotelId || "")).filter(Boolean)
-    : [];
-
+  let rows: any[] = Array.isArray(j?.data) ? j.data : [];
   if (q) {
     const needle = q.toLowerCase();
-    // se c'è `q`, filtra per nome (se presente) e poi prendi al massimo 10-15 hotel
-    out = (Array.isArray(j?.data) ? j.data : [])
-      .filter((d: any) => String(d?.name || "").toLowerCase().includes(needle))
-      .map((d: any) => String(d?.hotelId || ""))
-      .filter(Boolean);
+    rows = rows.filter(d => String(d?.name || "").toLowerCase().includes(needle));
   }
-
-  return Array.from(new Set(out)).slice(0, limit);
+  return Array.from(new Set(rows.map(d => String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
 }
 // --- sostituisce fetchDayPrice ---
 // Accetta una lista di hotelIds. Se manca, la ricava da lat/lng via Hotel List.
@@ -189,6 +181,51 @@ async function fetchDayPrice(
   return { prices, status: 200, rawCount: data.length, usedHotelIds: ids };
 }
 
+// Ricava cityCode (IATA) da keyword città
+async function findCityCode(token: string, keyword: string): Promise<string | null> {
+  const u = new URL("https://test.api.amadeus.com/v1/reference-data/locations/cities");
+  u.searchParams.set("keyword", keyword);
+  u.searchParams.set("max", "3");
+
+  const r = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store"
+  });
+
+  if (!r.ok) {
+    const t = await r.text().catch(()=> "");
+    console.error("Cities lookup error", r.status, t);
+    return null;
+  }
+  const j = await r.json().catch(()=> ({}));
+  const rows = Array.isArray(j?.data) ? j.data : [];
+  const code = rows.find((x:any)=> x?.iataCode)?.iataCode;
+  return code ? String(code) : null;
+}
+
+// Lista hotelIds per cityCode (fallback quando by-geocode non rende)
+async function listHotelIdsByCity(token: string, cityCode: string, limit = 60): Promise<string[]> {
+  const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city";
+  const u = new URL(base);
+  u.searchParams.set("cityCode", cityCode);
+  u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
+
+  const r = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    console.error("Amadeus HotelList by-city error", r.status, txt);
+    return [];
+  }
+
+  const j = await r.json().catch(() => ({}));
+  const rows = Array.isArray(j?.data) ? j.data : [];
+  return Array.from(new Set(rows.map((d:any)=> String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
+}
+
 /** ==============================
  *  ROUTE HANDLER
  *  ============================== */
@@ -239,6 +276,42 @@ export async function GET(req: Request) {
     const monthly: number[] = new Array(12).fill(0);
     const debugRows: any[] = [];
 
+// opzionale: filtro nome (es. q=marriott)
+const nameFilter = (searchParams.get("q") || "").trim() || undefined;
+// opzionale: nome città esplicito (es. city=London)
+const cityKeyword = (searchParams.get("city") || "").trim() || undefined;
+
+let hotelIdsForAllMonths: string[] = [];
+if (hotelId) {
+  hotelIdsForAllMonths = [hotelId];
+} else {
+  try {
+    const token2 = await getAmadeusToken();
+    // 1) tenta by-geocode
+    if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
+      hotelIdsForAllMonths = await listHotelIdsByGeocode(token2, {
+        lat: lat!, lng: lng!, radiusKm: 35, limit: 40, q: nameFilter
+      });
+    }
+
+    // 2) fallback by-city (se geocode vuoto)
+    if (!hotelIdsForAllMonths.length && (cityKeyword || Number.isFinite(lat as number))) {
+      let code: string | null = null;
+      if (cityKeyword) {
+        code = await findCityCode(token2, cityKeyword);
+      } else {
+        // se non hai passato city=, prova con keyword generica comune (es. "London", "Rome")
+        // Integrazione minima: puoi derivarla lato client e passarla qui.
+        code = await findCityCode(token2, "London"); // <- cambia se vuoi testare rapido
+      }
+      if (code) {
+        hotelIdsForAllMonths = await listHotelIdsByCity(token2, code, 60);
+      }
+    }
+  } catch (e) {
+    console.error("Prefetch hotelIds error", e);
+  }
+}
     // mesi rolling (o start=YYYY-MM via query)
 const start = searchParams.get("start") || undefined;
 const months = build12Months(start);
@@ -280,7 +353,7 @@ for (let i = 0; i < months.length; i++) {
   hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
   lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
   lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
-  radiusKm: 25,
+  radiusKm: 35,
   nameFilter
 });
 
@@ -289,7 +362,7 @@ const b = await fetchDayPrice(token, {
   hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
   lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
   lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
-  radiusKm: 25,
+  radiusKm: 35,
   nameFilter
 });
 
