@@ -72,33 +72,83 @@ async function getAmadeusToken(): Promise<string> {
 
   return tokenCache.access_token;
 }
-
 /**
- * Chiede i prezzi per una data check-in.
- * - Se hotelId è presente → query diretta su 1 hotel
- * - Altrimenti ricerca area con lat/lng (raggio 25km)
+ * Ricava fino a N hotelId vicini a lat/lng usando Hotel List v1
+ * Opzionale: filtra per nome con `q` (case-insensitive).
  */
+async function listHotelIdsByGeocode(
+  token: string,
+  {
+    lat, lng, radiusKm = 25, limit = 20, q
+  }: { lat: number; lng: number; radiusKm?: number; limit?: number; q?: string }
+): Promise<string[]> {
+  const base = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-geocode";
+  const u = new URL(base);
+  u.searchParams.set("latitude", String(lat));
+  u.searchParams.set("longitude", String(lng));
+  u.searchParams.set("radius", String(Math.max(1, Math.min(50, radiusKm))));
+  u.searchParams.set("radiusUnit", "KM");
+  u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
+
+  const r = await fetch(u.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!r.ok) {
+    // utile nei logs Vercel per capire eventuali 401/403
+    const txt = await r.text().catch(() => "");
+    console.error("Amadeus HotelList error", r.status, txt);
+    return [];
+  }
+
+  const j = await r.json().catch(() => ({}));
+  let out: string[] = Array.isArray(j?.data)
+    ? j.data.map((d: any) => String(d?.hotelId || "")).filter(Boolean)
+    : [];
+
+  if (q) {
+    const needle = q.toLowerCase();
+    // se c'è `q`, filtra per nome (se presente) e poi prendi al massimo 10-15 hotel
+    out = (Array.isArray(j?.data) ? j.data : [])
+      .filter((d: any) => String(d?.name || "").toLowerCase().includes(needle))
+      .map((d: any) => String(d?.hotelId || ""))
+      .filter(Boolean);
+  }
+
+  return Array.from(new Set(out)).slice(0, limit);
+}
+// --- sostituisce fetchDayPrice ---
+// Accetta una lista di hotelIds. Se manca, la ricava da lat/lng via Hotel List.
 async function fetchDayPrice(
   token: string,
   {
-    lat, lng, checkIn, nights,
-    hotelId,
+    checkIn, nights,
+    hotelIds,
+    lat, lng, radiusKm = 25, nameFilter,
   }: {
-    lat?: number; lng?: number; checkIn: string; nights: number; hotelId?: string;
+    checkIn: string; nights: number;
+    hotelIds?: string[];
+    lat?: number; lng?: number; radiusKm?: number;
+    nameFilter?: string;
   }
-): Promise<{ prices: number[]; status: number; rawCount: number }> {
+): Promise<{ prices: number[]; status: number; rawCount: number; usedHotelIds: string[] }> {
 
-  const url = new URL(AMA_OFFERS_URL);
+  let ids: string[] = Array.isArray(hotelIds) ? hotelIds.filter(Boolean) : [];
 
-  if (hotelId) {
-    url.searchParams.set("hotelIds", hotelId);
-  } else {
-    url.searchParams.set("latitude", String(lat));
-    url.searchParams.set("longitude", String(lng));
-    url.searchParams.set("radius", "25");       // raggio ampio per aumentare hit-rate
-    url.searchParams.set("radiusUnit", "KM");
+  if (ids.length === 0 && lat != null && lng != null) {
+    ids = await listHotelIdsByGeocode(token, {
+      lat, lng, radiusKm, limit: 20, q: nameFilter
+    });
   }
 
+  if (ids.length === 0) {
+    return { prices: [], status: 204, rawCount: 0, usedHotelIds: [] };
+  }
+
+  // Hotel Offers v3 richiede hotelIds=... (comma-separated)
+  const url = new URL("https://test.api.amadeus.com/v3/shopping/hotel-offers");
+  url.searchParams.set("hotelIds", ids.join(","));
   url.searchParams.set("adults", "2");
   url.searchParams.set("roomQuantity", "1");
   url.searchParams.set("checkInDate", checkIn);
@@ -113,7 +163,9 @@ async function fetchDayPrice(
   });
 
   if (!r.ok) {
-    return { prices: [], status: r.status, rawCount: 0 };
+    const txt = await r.text().catch(() => "");
+    console.error("Amadeus HotelSearch error", r.status, txt);
+    return { prices: [], status: r.status, rawCount: 0, usedHotelIds: ids };
   }
 
   const j = await r.json().catch(() => ({}));
@@ -125,18 +177,16 @@ async function fetchDayPrice(
     for (const ofr of offers) {
       const p = ofr?.price;
       const tot =
-        parseNum(p?.total) ??
-        parseNum(p?.variations?.average?.total) ??
-        parseNum(p?.variations?.changes?.[0]?.total);
-
-      if (tot != null) {
-        const perNight = Math.round(tot / Math.max(1, nights));
-        prices.push(perNight);
+        (p?.total != null ? Number(p.total) : NaN) ||
+        (p?.variations?.average?.total != null ? Number(p.variations.average.total) : NaN) ||
+        (p?.variations?.changes?.[0]?.total != null ? Number(p.variations.changes[0].total) : NaN);
+      if (Number.isFinite(tot)) {
+        prices.push(Math.round(tot / Math.max(1, nights)));
       }
     }
   }
 
-  return { prices, status: 200, rawCount: data.length };
+  return { prices, status: 200, rawCount: data.length, usedHotelIds: ids };
 }
 
 /** ==============================
@@ -193,6 +243,31 @@ export async function GET(req: Request) {
 const start = searchParams.get("start") || undefined;
 const months = build12Months(start);
 
+// opzionale: filtro per nome (quando l’utente analizza una struttura specifica)
+const nameFilter = (searchParams.get("q") || "").trim() || undefined;
+
+// Se arriva un hotelId singolo → usalo; altrimenti prepara ids da geocode
+let hotelIdsForAllMonths: string[] = [];
+if (hotelId) {
+  hotelIdsForAllMonths = [hotelId];
+} else if (Number.isFinite(lat as number) && Number.isFinite(lng as number)) {
+  try {
+    const ids = await listHotelIdsByGeocode(await getAmadeusToken(), {
+      lat: lat!, lng: lng!, radiusKm: 25, limit: 20, q: nameFilter
+    });
+    hotelIdsForAllMonths = ids;
+  } catch (e) {
+    console.error("HotelList prefetch error", e);
+  }
+}
+
+if (!hotelIdsForAllMonths.length && !hotelId) {
+  // non blocchiamo la risposta, ma segnaliamo che non abbiamo hotel
+  if (debug) {
+    console.warn("Nessun hotelId trovato nell’area indicata.");
+  }
+}
+
 for (let i = 0; i < months.length; i++) {
   const m0 = months[i];
 
@@ -201,20 +276,22 @@ for (let i = 0; i < months.length; i++) {
   const d2 = ymdDate(new Date(m0.getFullYear(), m0.getMonth(), 22));
 
   const a = await fetchDayPrice(token, {
-    lat: lat ?? undefined,
-    lng: lng ?? undefined,
-    checkIn: d1,
-    nights: 1,
-    hotelId
-  });
+  checkIn: d1, nights: 1,
+  hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
+  lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
+  lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
+  radiusKm: 25,
+  nameFilter
+});
 
-  const b = await fetchDayPrice(token, {
-    lat: lat ?? undefined,
-    lng: lng ?? undefined,
-    checkIn: d2,
-    nights: 1,
-    hotelId
-  });
+const b = await fetchDayPrice(token, {
+  checkIn: d2, nights: 1,
+  hotelIds: hotelIdsForAllMonths.length ? hotelIdsForAllMonths : undefined,
+  lat: hotelIdsForAllMonths.length ? undefined : (lat ?? undefined),
+  lng: hotelIdsForAllMonths.length ? undefined : (lng ?? undefined),
+  radiusKm: 25,
+  nameFilter
+});
 
   const merged = [...a.prices, ...b.prices];
   monthly[i] = median(merged);
