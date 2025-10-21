@@ -116,7 +116,7 @@ async function findCityCode(token: string, keyword: string): Promise<string | nu
     return null;
   }
   const j = await r.json().catch(() => ({}));
-  const rows = Array.isArray(j?.data) ? j.data : [];
+  const rows: any[] = Array.isArray(j?.data) ? j.data : [];
   const code = rows.find((x: any) => x?.iataCode)?.iataCode;
   return code ? String(code) : null;
 }
@@ -127,17 +127,23 @@ async function listHotelIdsByCity(token: string, cityCode: string, limit = 60): 
   const u = new URL(base);
   u.searchParams.set("cityCode", cityCode);
   u.searchParams.set("page[limit]", String(Math.max(1, Math.min(100, limit))));
+
   const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
     console.error("Amadeus HotelList by-city error", r.status, txt);
     return [];
   }
-  const j = await r.json().catch(() => ({}));
-  const rows = Array.isArray(j?.data) ? j.data : [];
-  return Array.from(new Set(rows.map((d: any) => String(d?.hotelId || "")).filter(Boolean))).slice(0, limit);
-}
 
+  const j: any = await r.json().catch(() => ({} as any));
+  const rows: any[] = Array.isArray(j?.data) ? j.data : [];
+  const ids: string[] = Array.from(
+    new Set<string>(
+      (rows.map((d: any) => String(d?.hotelId ?? "")).filter(Boolean) as string[])
+    )
+  );
+  return ids.slice(0, limit);
+}
 /* =========================================
    Hotel Offers (v3) su lista di hotelIds
    ========================================= */
@@ -198,7 +204,7 @@ async function fetchDayPrice(
     return { prices: [], status: r.status, rawCount: 0, usedHotelIds: ids };
   }
 
-  const j = await r.json().catch(() => ({}));
+  const j: any = await r.json().catch(() => ({} as any));
   const data = Array.isArray(j?.data) ? j.data : [];
   const prices: number[] = [];
 
