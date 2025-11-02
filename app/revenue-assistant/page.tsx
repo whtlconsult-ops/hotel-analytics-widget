@@ -128,19 +128,25 @@ export default function RevenueAssistantPage() {
           </p>
         </div>
 
-        {/* output */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4 min-h-[280px]">
-          <div className="text-sm font-semibold text-slate-700 mb-2">Risposta</div>
-          {answer ? (
-            <div className="prose prose-sm max-w-none text-slate-800 whitespace-pre-wrap">
-              {answer}
-            </div>
-          ) : (
-            <div className="text-sm text-slate-400">
-              Nessuna risposta ancora. Scrivi una domanda e premi “Chiedi a RevenueAssistant”.
-            </div>
-          )}
-        </div>
+      {/* output */}
+<div className="bg-white rounded-2xl border shadow-sm p-4 min-h-[280px]">
+  <div className="text-sm font-semibold text-slate-700 mb-2">Risposta</div>
+
+  {loading ? (
+    <div className="flex items-center gap-2 text-sm text-slate-500">
+      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+      RevenueAssistant sta ragionando…
+    </div>
+  ) : answer ? (
+    <div className="prose prose-sm max-w-none text-slate-800 whitespace-pre-wrap">
+      {answer}
+    </div>
+  ) : (
+    <div className="text-sm text-slate-400">
+      Nessuna risposta ancora. Scrivi una domanda e premi “Chiedi a RevenueAssistant”.
+    </div>
+  )}
+</div>
       </div>
     </div>
   );
