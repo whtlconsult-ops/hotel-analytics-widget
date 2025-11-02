@@ -1,153 +1,173 @@
 "use client";
 
 import React, { useState } from "react";
-import Link from "next/link";
-
-const TOPICS = [
-  { value: "revenue", label: "Revenue / Tariffe" },
-  { value: "marketing", label: "Marketing & OTA" },
-  { value: "operations", label: "Operatività / Personale" },
-  { value: "agriturismo", label: "Agriturismi / Extralberghiero" },
-];
 
 export default function RevenueAssistantPage() {
-  const [message, setMessage] = useState("");
-  const [topic, setTopic] = useState("revenue");
+  const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
-  const [lastPrompt, setLastPrompt] = useState("");
+  const [topic, setTopic] = useState<"revenue" | "marketing" | "operations">("revenue");
+  const [extraContext, setExtraContext] = useState("");
+  // cronologia locale (non persiste al refresh)
+  const [turns, setTurns] = useState<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >([]);
 
-  async function handleAsk() {
-    const trimmed = message.trim();
-    if (!trimmed) return;
-
-    // evita di ripagare la stessa domanda 3 volte
-    if (trimmed === lastPrompt) return;
-
+  const handleAsk = async () => {
+    if (!question.trim()) return;
     setLoading(true);
-    setAnswer("");
+
     try {
-      const r = await fetch("/api/revenue-assistant", {
+      const res = await fetch("/api/revenue-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: trimmed,
+          message: question,
           topic,
-          context: {
-            // qui un domani puoi passare dati veri dal widget
-            source: "revenue-assistant-ui",
-          },
+          context: extraContext,
+          // inviamo anche gli ultimi turni
+          previous: turns.slice(-6),
         }),
       });
-      const j = await r.json();
-      if (j?.ok) {
-        setAnswer(j.answer);
-      } else {
-        setAnswer(j?.error || "Nessuna risposta.");
-      }
-      setLastPrompt(trimmed);
-    } catch (e: any) {
-      setAnswer(String(e?.message || e));
+
+      const j = await res.json();
+      const txt = j?.answer || "Nessuna risposta utile.";
+
+      setAnswer(txt);
+      setTurns((prev) => {
+        const next = [
+          ...prev,
+          { role: "user", content: question },
+          { role: "assistant", content: txt },
+        ];
+        return next.slice(-8);
+      });
+
+      // se vuoi tenerla vuota dopo l'invio
+      setQuestion("");
+    } catch (e) {
+      setAnswer("Errore nella chiamata all'AI.");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* topbar */}
-      <div className="sticky top-0 z-[1100] border-b bg-white/80 backdrop-blur">
-        <div className="mx-auto max-w-6xl px-4 md:px-6 py-4 flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Modulo AI</div>
-            <div className="text-lg font-semibold text-slate-900 flex items-center gap-2">
-              RevenueAssistant
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-[11px] border border-emerald-100">
-                online
-              </span>
+      {/* topbar semplice */}
+      <div className="sticky top-0 z-[1100] border-b bg-white">
+        <div className="mx-auto max-w-5xl px-4 md:px-6 py-4 flex items-center justify-between">
+          <h1 className="text-base font-semibold text-slate-900">
+            RevenueAssistant <span className="text-xs font-normal text-slate-500">beta</span>
+          </h1>
+          <a
+            href="/"
+            className="text-xs rounded-lg border px-3 py-1.5 bg-white hover:bg-slate-50"
+          >
+            Torna al widget
+          </a>
+        </div>
+      </div>
+
+      <main className="mx-auto max-w-5xl px-4 md:px-6 py-6 space-y-6">
+        {/* riga input */}
+        <div className="grid gap-4 md:grid-cols-[1.5fr,0.9fr]">
+          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <label className="text-sm font-semibold text-slate-700">
+              La tua domanda
+            </label>
+            <textarea
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              rows={4}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
+              placeholder="Es. Crea una strategia tariffaria per un hotel 4* a Firenze per il ponte del 25 aprile..."
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleAsk}
+                disabled={loading}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium ${
+                  loading
+                    ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                    : "bg-emerald-600 text-white hover:bg-emerald-500"
+                }`}
+              >
+                {loading ? "In esecuzione…" : "Chiedi a RevenueAssistant"}
+              </button>
+              <select
+                value={topic}
+                onChange={(e) =>
+                  setTopic(e.target.value as "revenue" | "marketing" | "operations")
+                }
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+              >
+                <option value="revenue">Revenue</option>
+                <option value="marketing">Marketing</option>
+                <option value="operations">Operations</option>
+              </select>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              1 clic = 1 chiamata API. Nessuna chiamata automatica.
+          </div>
+
+          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+            <label className="text-sm font-semibold text-slate-700">
+              Contesto (facoltativo)
+            </label>
+            <textarea
+              value={extraContext}
+              onChange={(e) => setExtraContext(e.target.value)}
+              rows={4}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
+              placeholder="Es. 42 camere, ADR medio 165€, occupazione media 68%, canali Booking+direct, target leisure + gruppi weekend…"
+            />
+            <p className="text-xs text-slate-400">
+              Più contesto → risposte più vicine al tuo hotel.
             </p>
           </div>
-          <div className="flex gap-2">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 text-[12px] rounded-lg border px-3 py-2 bg-white hover:bg-slate-50"
-            >
-              ← Torna al widget
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* body */}
-      <div className="mx-auto max-w-6xl px-4 md:px-6 py-6 grid md:grid-cols-2 gap-6">
-        {/* input */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-4">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Ambito</label>
-            <select
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="mt-1 w-full h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm"
-            >
-              {TOPICS.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-slate-700">La tua domanda</label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={6}
-              className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="Es. Ho un 4* a Firenze, novembre è vuoto: che strategia di prezzo e canali mi consigli?"
-            />
-          </div>
-
-          <button
-            onClick={handleAsk}
-            disabled={loading || !message.trim()}
-            className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium ${
-              loading || !message.trim()
-                ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                : "bg-slate-900 text-white hover:bg-slate-800"
-            }`}
-          >
-            {loading ? "Sto ragionando…" : "Chiedi a RevenueAssistant"}
-          </button>
-
-          <p className="text-[11px] text-slate-400">
-            Suggerimento: specifica periodo, segmento (famiglie, business), canale e obiettivo di occupancy.
-          </p>
         </div>
 
-      {/* output */}
-<div className="bg-white rounded-2xl border shadow-sm p-4 min-h-[280px]">
-  <div className="text-sm font-semibold text-slate-700 mb-2">Risposta</div>
+        {/* output */}
+        <div className="bg-white rounded-2xl border shadow-sm p-4 min-h-[280px]">
+          <div className="text-sm font-semibold text-slate-700 mb-2">Risposta</div>
 
-  {loading ? (
-    <div className="flex items-center gap-2 text-sm text-slate-500">
-      <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-      RevenueAssistant sta ragionando…
-    </div>
-  ) : answer ? (
-    <div className="prose prose-sm max-w-none text-slate-800 whitespace-pre-wrap">
-      {answer}
-    </div>
-  ) : (
-    <div className="text-sm text-slate-400">
-      Nessuna risposta ancora. Scrivi una domanda e premi “Chiedi a RevenueAssistant”.
-    </div>
-  )}
-</div>
-      </div>
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              RevenueAssistant sta ragionando…
+            </div>
+          ) : answer ? (
+            <div className="prose prose-sm max-w-none text-slate-800 whitespace-pre-wrap">
+              {answer}
+            </div>
+          ) : (
+            <div className="text-sm text-slate-400">
+              Nessuna risposta ancora. Scrivi una domanda e premi “Chiedi a RevenueAssistant”.
+            </div>
+          )}
+
+          {/* cronologia locale (facoltativa) */}
+          {turns.length > 0 && (
+            <div className="mt-4 border-t pt-3">
+              <div className="text-xs font-semibold text-slate-500 mb-2">
+                Cronologia (solo questa sessione)
+              </div>
+              <div className="space-y-2 max-h-44 overflow-auto text-xs">
+                {turns.map((t, i) => (
+                  <div
+                    key={i}
+                    className={t.role === "user" ? "text-slate-700" : "text-emerald-700"}
+                  >
+                    <span className="font-semibold mr-1">
+                      {t.role === "user" ? "Tu:" : "RA:"}
+                    </span>
+                    {t.content}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
