@@ -14,43 +14,41 @@ export default function RevenueAssistantPage() {
   >([]);
 
   const handleAsk = async () => {
-    if (!question.trim()) return;
-    setLoading(true);
+  if (!question.trim()) return;
+  setLoading(true);
 
-    try {
-      const res = await fetch("/api/revenue-assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: question,
-          topic,
-          context: extraContext,
-          // inviamo anche gli ultimi turni
-          previous: turns.slice(-6),
-        }),
-      });
+  try {
+    const res = await fetch("/api/revenue-assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: question,
+        topic,
+        context: extraContext,
+        previous: turns.slice(-6),
+      }),
+    });
 
-      const j = await res.json();
-      const txt = j?.answer || "Nessuna risposta utile.";
+    const j = await res.json();
+    const txt: string = j?.answer || "Nessuna risposta utile.";
 
-      setAnswer(txt);
-      setTurns((prev) => {
-        const next = [
-          ...prev,
-          { role: "user", content: question },
-          { role: "assistant", content: txt },
-        ];
-        return next.slice(-8);
-      });
+    setAnswer(txt);
+    setTurns((prev): Array<{ role: "user" | "assistant"; content: string }> => {
+      const next: Array<{ role: "user" | "assistant"; content: string }> = [
+        ...prev,
+        { role: "user", content: question },
+        { role: "assistant", content: txt },
+      ];
+      return next.slice(-8);
+    });
 
-      // se vuoi tenerla vuota dopo l'invio
-      setQuestion("");
-    } catch (e) {
-      setAnswer("Errore nella chiamata all'AI.");
-    } finally {
-      setLoading(false);
-    }
-  };
+    setQuestion("");
+  } catch (e) {
+    setAnswer("Errore nella chiamata all'AI.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-slate-50">
