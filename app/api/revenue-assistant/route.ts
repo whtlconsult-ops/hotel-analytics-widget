@@ -3,13 +3,14 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 
-// Ping rapido per verificare che la route risponda anche in GET
+type HistoryItem = { role: "user" | "assistant"; content: string };
+
+// --- Ping GET (diagnostica rapida) ---
 export async function GET() {
   return NextResponse.json({ ok: true, ping: "revenue-assistant: alive" });
 }
 
-type HistoryItem = { role: "user" | "assistant"; content: string };
-
+// --- Helpers ---
 function clampHistory(h: HistoryItem[], maxPairs = 3): HistoryItem[] {
   const filtered = (Array.isArray(h) ? h : []).filter(
     (x) => x && x.role && typeof x.content === "string"
@@ -18,13 +19,11 @@ function clampHistory(h: HistoryItem[], maxPairs = 3): HistoryItem[] {
 }
 
 function originFromReq(req: Request): string {
-  try { return new URL(req.url).origin; } catch { return ""; }
-}
-
-async function getJSON(u: string, init?: RequestInit) {
-  const r = await fetch(u, init);
-  const j = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, data: j };
+  try {
+    return new URL(req.url).origin;
+  } catch {
+    return "";
+  }
 }
 
 async function lookupReputation(origin: string, q: string, loc?: string) {
@@ -43,8 +42,17 @@ async function lookupReputation(origin: string, q: string, loc?: string) {
 // intent leggero: reputazione/posizionamento/concorrenza
 function detectReputationIntent(text: string) {
   const t = (text || "").toLowerCase();
-  const kw = ["reputazione","brand reputation","rating","punteggio","recensioni","posizionamento","concorrenza","competitor"];
-  const hit = kw.some(k => t.includes(k));
+  const kw = [
+    "reputazione",
+    "brand reputation",
+    "rating",
+    "punteggio",
+    "recensioni",
+    "posizionamento",
+    "concorrenza",
+    "competitor",
+  ];
+  const hit = kw.some((k) => t.includes(k));
   if (!hit) return null;
 
   let name = "";
@@ -64,17 +72,29 @@ function detectReputationIntent(text: string) {
   return { name: name || text, loc };
 }
 
-// -------- OpenAI helpers --------
 function firstNonEmpty(...vals: Array<any>) {
   for (const v of vals) if (typeof v === "string" && v.trim()) return v.trim();
   return "";
 }
 
-async function callChat(apiKey: string, model: string, messages: any[]) {
+// ---- OpenAI calls ----
+async function callChat(
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>
+) {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, temperature: 0.2, messages, max_tokens: 1200 })
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 1200,
+      messages,
+    }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error?.message || `chat/completions HTTP ${r.status}`);
@@ -84,54 +104,87 @@ async function callChat(apiKey: string, model: string, messages: any[]) {
   );
 }
 
-async function callResponses(apiKey: string, model: string, messages: any[]) {
+async function callResponses(
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>
+) {
   const r = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: messages, temperature: 0.2, max_output_tokens: 1200 })
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: messages,
+      temperature: 0.2,
+      max_output_tokens: 1200,
+    }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error?.message || `responses HTTP ${r.status}`);
 
-  // estrazioni possibili
   const t1 = typeof j?.output_text === "string" ? j.output_text : "";
   const t2 = Array.isArray(j?.output)
-    ? j.output.map((p: any) => {
-        if (typeof p?.text === "string") return p.text;
-        if (Array.isArray(p?.content)) {
-          return p.content.map((c: any) => (typeof c?.text === "string" ? c.text : "")).join("\n");
-        }
-        return "";
-      }).filter(Boolean).join("\n\n")
+    ? j.output
+        .map((p: any) => {
+          if (typeof p?.text === "string") return p.text;
+          if (Array.isArray(p?.content)) {
+            return p.content
+              .map((c: any) => (typeof c?.text === "string" ? c.text : ""))
+              .join("\n");
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n\n")
     : "";
   return firstNonEmpty(t1, t2);
 }
 
-async function callOpenAIwithFallbacks(apiKey: string, models: string[], messages: any[]) {
+async function callOpenAIwithFallbacks(
+  apiKey: string,
+  models: string[],
+  messages: Array<{ role: string; content: string }>
+) {
   let lastErr = "";
-  // 1) prova chat/completions, poi responses, su ogni modello
   for (const m of models) {
-    try { return await callChat(apiKey, m, messages); }
-    catch (e: any) { lastErr = `chat ${m}: ${e?.message || e}`; }
-    try { return await callResponses(apiKey, m, messages); }
-    catch (e: any) { lastErr = `responses ${m}: ${e?.message || e}`; }
+    try {
+      return await callChat(apiKey, m, messages);
+    } catch (e: any) {
+      lastErr = `chat ${m}: ${e?.message || e}`;
+    }
+    try {
+      return await callResponses(apiKey, m, messages);
+    } catch (e: any) {
+      lastErr = `responses ${m}: ${e?.message || e}`;
+    }
   }
   throw new Error(lastErr || "Nessuna via utile verso OpenAI");
 }
 
+// --- Route principale ---
 export async function POST(req: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY mancante" }, { status: 500 });
+    if (!apiKey) {
+      return NextResponse.json(
+        { ok: true, text: "Modalità demo: manca OPENAI_API_KEY.", used: { modelTried: [] } },
+      );
+    }
 
     const preferred = process.env.OPENAI_MODEL || "gpt-4.1-mini";
     const candidates = [preferred, "gpt-4.1", "gpt-4o-mini", "gpt-4o"];
 
     const body = await req.json().catch(() => ({}));
     const question: string = (body?.question || body?.q || body?.prompt || "").toString();
-    const context: string  = (body?.context || "").toString();
+    const context: string = (body?.context || "").toString();
     const history: HistoryItem[] = Array.isArray(body?.history) ? body.history : [];
-    if (!question) return NextResponse.json({ ok: false, error: "Manca 'question'." }, { status: 400 });
+    if (!question) {
+      const text = "Dimmi cosa vuoi sapere (es. 'Brand reputation di <struttura> a <località>').";
+      return NextResponse.json({ ok: true, text, message: text, answer: text });
+    }
 
     const hist = clampHistory(history, 3);
     const origin = originFromReq(req);
@@ -149,18 +202,39 @@ export async function POST(req: Request) {
       "Se non ci sono dati, fornisci comunque consigli pratici e una checklist breve (no rimandi generici)."
     ].join(" ");
 
-    const evidence = lookup ? `\n\n[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]\n` : "";
+    const evidence = lookup
+      ? `\n\n[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]\n`
+      : "";
 
     const messages = [
       { role: "system", content: system },
       ...hist,
-      { role: "user", content: `${question}${context ? `\n\n[Contesto]\n${context}\n[/Contesto]` : ""}${evidence}` }
+      {
+        role: "user",
+        content: `${question}${context ? `\n\n[Contesto]\n${context}\n[/Contesto]` : ""}${evidence}`,
+      },
     ];
 
-    let text = await callOpenAIwithFallbacks(apiKey, candidates, messages);
-    if (!text || !text.trim()) text = "Non ho ricevuto testo utile dal modello. Prova a ripetere la richiesta.";
+    // OpenAI con fallback multipli
+    let text = "";
+    try {
+      text = await callOpenAIwithFallbacks(apiKey, candidates, messages);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      text = [
+        "Modalità demo: non sono riuscito a contattare il modello in questo momento.",
+        `Dettagli tecnici: ${msg}`,
+        "",
+        "Ecco comunque una risposta operativa breve:",
+        "- Se cerchi la brand reputation di una struttura, indica *nome + località*.",
+        "- Se disponibile userò Google/Hotels; altrimenti ti fornirò uno schema di azione (risposte alle review, UGC, SEO locale, OTA mix)."
+      ].join("\n");
+    }
 
-    // alias per massima compatibilità lato client
+    if (!text || !text.trim()) {
+      text = "Non ho ricevuto testo utile dal modello. Prova a ripetere la richiesta.";
+    }
+
     return NextResponse.json({
       ok: true,
       text,
@@ -169,24 +243,23 @@ export async function POST(req: Request) {
       used: {
         lookupMode: lookup?.meta?.mode || (lookup ? "live" : "none"),
         sources: Object.keys(lookup?.sources || {}),
-        modelTried: candidates
-      }
+        modelTried: candidates,
+      },
     });
-   } catch (e: any) {
+  } catch (e: any) {
     const msg = String(e?.message || e);
     const text = [
-      "Modalità demo: non sono riuscito a contattare il modello in questo momento.",
+      "Modalità demo: errore inatteso nel route.",
       `Dettagli tecnici: ${msg}`,
       "",
-      "Ecco comunque una risposta operativa breve:",
-      "- Se cerchi la brand reputation di una struttura, indica *nome + località*.",
-      "- Se disponibile userò Google/Hotels; altrimenti ti fornirò uno schema di azione (risposte alle review, UGC, SEO locale, OTA mix)."
+      "Prova a ripetere la richiesta o verifica le variabili d'ambiente."
     ].join("\n");
     return NextResponse.json({
       ok: true,
       text,
       message: text,
       answer: text,
-      used: { lookupMode: "none", sources: [], modelTried: [] }
+      used: { lookupMode: "none", sources: [], modelTried: [] },
     });
   }
+}
