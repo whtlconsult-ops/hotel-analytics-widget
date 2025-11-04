@@ -868,32 +868,57 @@ if (partsUsed.length > 0 && partsUsed.join("+") !== "SERP") {
 setSerpTrend(finalTrend);
 
       // --- Related (canali / provenienza / los) ---
-      if (needRelated) {
-        const rel = j.related || { channels: [], provenance: [], los: [] };
+if (needRelated) {
+  let rel = j.related;
 
-        const ch = (Array.isArray(rel.channels) ? rel.channels : []).map((x: any) => ({
-          channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
-          value: Number(x.value) || 0,
-        }));
+  // Se la prima risposta (solo trend) non contiene related, fai una seconda chiamata FAST solo per related
+  if (
+    !rel ||
+    (!Array.isArray(rel?.channels) && !Array.isArray(rel?.provenance) && !Array.isArray(rel?.los))
+  ) {
+    try {
+      const p2 = new URLSearchParams({
+        q: topic,
+        lat: String(aCenter.lat),
+        lng: String(aCenter.lng),
+        date: "today 12-m",
+        cat: "203",
+        parts: "related",
+      });
+      p2.set("fast", "1");
 
-        const or = (Array.isArray(rel.provenance) ? rel.provenance : []).map((x: any) => ({
-          name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
-          value: Number(x.value) || 0,
-        }));
+      const rRel = await http.json<any>(`/api/serp/demand?${p2.toString()}`, {
+        timeoutMs: 8000,
+        retries: 1,
+      });
+      const jRel = rRel.ok ? rRel.data : null;
+      if (jRel?.ok && jRel.related) rel = jRel.related;
+    } catch {
+      // ignora: useremo i fallback più sotto
+    }
+  }
 
-        const lo = (Array.isArray(rel.los) ? rel.los : []).map((x: any) => ({
-          bucket: String(x.label || ""),
-          value: Number(x.value) || 0,
-        }));
+  const ch = (Array.isArray(rel?.channels) ? rel.channels : []).map((x: any) => ({
+    channel: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+    value: Number(x.value) || 0,
+  }));
+  const or = (Array.isArray(rel?.provenance) ? rel.provenance : []).map((x: any) => ({
+    name: String(x.label || "").replace(/^\w/, (m: string) => m.toUpperCase()),
+    value: Number(x.value) || 0,
+  }));
+  const lo = (Array.isArray(rel?.los) ? rel.los : []).map((x: any) => ({
+    bucket: String(x.label || ""),
+    value: Number(x.value) || 0,
+  }));
 
-        setSerpChannels(ch);
-        setSerpOrigins(or);
-        setSerpLOS(lo);
-      } else {
-        setSerpChannels([]);
-        setSerpOrigins([]);
-        setSerpLOS([]);
-      }
+  setSerpChannels(ch);
+  setSerpOrigins(or);
+  setSerpLOS(lo);
+} else {
+  setSerpChannels([]);
+  setSerpOrigins([]);
+  setSerpLOS([]);
+}
 
       // --- Badge quota (best-effort, ignora errori) ---
       try {

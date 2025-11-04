@@ -34,7 +34,12 @@ export const http = {
       } finally {
         clearTimeout(to);
       }
-      if (attempt < retries) await sleep(retryDelayMs * (attempt + 1));
+      if (attempt < retries) {
+  // exponential backoff con un po' di jitter (0–200ms)
+  const backoff = retryDelayMs * Math.pow(2, attempt);
+  const jitter  = Math.floor(Math.random() * 200);
+  await sleep(backoff + jitter);
+}
     }
     return { ok: false, error: String(lastErr?.message || lastErr || "Network error") };
   }
