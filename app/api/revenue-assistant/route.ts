@@ -3,6 +3,11 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 
+// Ping rapido per verificare che la route risponda anche in GET
+export async function GET() {
+  return NextResponse.json({ ok: true, ping: "revenue-assistant: alive" });
+}
+
 type HistoryItem = { role: "user" | "assistant"; content: string };
 
 function clampHistory(h: HistoryItem[], maxPairs = 3): HistoryItem[] {
@@ -69,7 +74,7 @@ async function callChat(apiKey: string, model: string, messages: any[]) {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, temperature: 0.2, messages })
+    body: JSON.stringify({ model, temperature: 0.2, messages, max_tokens: 1200 })
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error?.message || `chat/completions HTTP ${r.status}`);
@@ -83,7 +88,7 @@ async function callResponses(apiKey: string, model: string, messages: any[]) {
   const r = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, input: messages, temperature: 0.2 })
+    body: JSON.stringify({ model, input: messages, temperature: 0.2, max_output_tokens: 1200 })
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j?.error?.message || `responses HTTP ${r.status}`);
@@ -167,9 +172,21 @@ export async function POST(req: Request) {
         modelTried: candidates
       }
     });
-  } catch (e: any) {
-    // In caso di errore esplicita il messaggio: il client lo vedrà e non mostrerà un "vuoto"
+   } catch (e: any) {
     const msg = String(e?.message || e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    const text = [
+      "Modalità demo: non sono riuscito a contattare il modello in questo momento.",
+      `Dettagli tecnici: ${msg}`,
+      "",
+      "Ecco comunque una risposta operativa breve:",
+      "- Se cerchi la brand reputation di una struttura, indica *nome + località*.",
+      "- Se disponibile userò Google/Hotels; altrimenti ti fornirò uno schema di azione (risposte alle review, UGC, SEO locale, OTA mix)."
+    ].join("\n");
+    return NextResponse.json({
+      ok: true,
+      text,
+      message: text,
+      answer: text,
+      used: { lookupMode: "none", sources: [], modelTried: [] }
+    });
   }
-}
