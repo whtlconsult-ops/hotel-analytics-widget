@@ -21,7 +21,7 @@ export default function RevenueAssistantPage() {
     setErrorText("");
 
     // aggiorna cronologia locale con la domanda corrente
-    const nextTurns: Turn[] = [...turns, { role: "user", content: q }].slice(-MAX_HISTORY);
+    const nextTurns: Turn[] = [...turns, { role: "user" as const, content: q }].slice(-MAX_HISTORY);
     setTurns(nextTurns);
 
     // payload atteso dal backend: question, context, history
@@ -29,9 +29,9 @@ export default function RevenueAssistantPage() {
       question: q,
       context: extraContext ?? "",
       history: nextTurns.map((t) => ({
-        role: t.role === "assistant" ? "assistant" : "user",
-        content: String(t.content || ""),
-      })),
+  role: (t.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+  content: String(t.content || ""),
+})),
     };
 
     try {
@@ -58,7 +58,7 @@ export default function RevenueAssistantPage() {
         "Nessuna risposta utile.";
 
       setAnswer(txt);
-      setTurns((prev) => [...prev, { role: "assistant", content: txt }].slice(-MAX_HISTORY));
+      setTurns((prev) => [...prev, { role: "assistant" as const, content: txt }].slice(-MAX_HISTORY));
       setQuestion(""); // pulisci il campo domanda
     } catch (e: any) {
       const msg = String(e?.message || e || "Errore sconosciuto");
