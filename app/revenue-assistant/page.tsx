@@ -58,7 +58,7 @@ export default function RevenueAssistantPage() {
         "Nessuna risposta utile.";
 
       setAnswer(txt);
-      setTurns((prev) => [...prev, { role: "assistant" as const, content: txt }].slice(-MAX_HISTORY));
+      setTurns((prev): Turn[] => [...prev, { role: "assistant" as const, content: txt }].slice(-MAX_HISTORY));
       setQuestion(""); // pulisci il campo domanda
     } catch (e: any) {
       const msg = String(e?.message || e || "Errore sconosciuto");
@@ -67,7 +67,7 @@ export default function RevenueAssistantPage() {
         "Modalità demo: non sono riuscito a contattare il modello in questo momento.\n" +
         "Prova a ripetere la richiesta tra poco.";
       setAnswer(fallback);
-      setTurns((prev) => [...prev, { role: "assistant", content: fallback }].slice(-MAX_HISTORY));
+      setTurns((prev): Turn[] => [...prev, { role: "assistant" as const, content: fallback }].slice(-MAX_HISTORY));
     } finally {
       setLoading(false);
     }
