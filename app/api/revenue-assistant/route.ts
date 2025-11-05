@@ -148,17 +148,18 @@ export async function POST(req: Request) {
     const context: string = pick(body.context, url.searchParams.get("context"));
 
     // history: supporta anche 'previous' (come nel tuo client attuale)
-    const rawHist: any[] = Array.isArray(body?.history) ? body.history
-                        : Array.isArray(body?.previous) ? body.previous
-                        : [];
-    const history: HistoryItem[] = rawHist
-      .map((t: any) => ({
-        role: t?.role === "assistant" ? "assistant" : "user",
+    const rawHist = Array.isArray(body?.history)
+      ? body.history
+      : Array.isArray(body?.previous)
+      ? body.previous
+      : [];
+
+    const history: HistoryItem[] = (rawHist as any[])
+      .map((t: any): HistoryItem => ({
+        role: (t?.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
         content: String(t?.content ?? t?.text ?? t?.message ?? "")
       }))
       .filter((t: HistoryItem) => !!t.content);
-
-    if (!question) {
       const text = "Dimmi cosa vuoi sapere (es. 'Brand reputation di <struttura> a <località>').";
       return NextResponse.json({ ok: true, text, message: text, answer: text });
     }
