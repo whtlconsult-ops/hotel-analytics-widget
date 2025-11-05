@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 
 type Turn = { role: "user" | "assistant"; content: string };
 
@@ -20,18 +20,18 @@ export default function RevenueAssistantPage() {
     setLoading(true);
     setErrorText("");
 
-    // Aggiorna cronologia locale (mostriamo subito la tua domanda)
+    // aggiorna cronologia locale con la domanda corrente
     const nextTurns: Turn[] = [...turns, { role: "user", content: q }].slice(-MAX_HISTORY);
     setTurns(nextTurns);
 
-    // Costruisci un payload compatibile con il route del RA
+    // payload atteso dal backend: question, context, history
     const payload = {
-      question: q,                          // <-- chiave attesa dal server
+      question: q,
       context: extraContext ?? "",
       history: nextTurns.map((t) => ({
         role: t.role === "assistant" ? "assistant" : "user",
-        content: String(t.content || "")
-      }))
+        content: String(t.content || ""),
+      })),
     };
 
     try {
@@ -42,8 +42,13 @@ export default function RevenueAssistantPage() {
       });
 
       let j: any = {};
-      try { j = await res.json(); } catch { j = {}; }
+      try {
+        j = await res.json();
+      } catch {
+        j = {};
+      }
 
+      // accetta qualunque alias di risposta esposto dal server
       const txt: string =
         j?.text ||
         j?.message ||
@@ -85,13 +90,13 @@ export default function RevenueAssistantPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
-      {/* Top row: titolo + stato esecuzione */}
+      {/* header + stato */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold">RevenueAssistant</h1>
         <div className="flex items-center gap-2">
           {loading ? (
             <span className="inline-flex items-center text-sm">
-              <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse mr-2"></span>
+              <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse mr-2" />
               sta ragionando…
             </span>
           ) : (
@@ -100,33 +105,35 @@ export default function RevenueAssistantPage() {
         </div>
       </div>
 
-      {/* Input domanda */}
+      {/* input domanda */}
       <label className="block text-sm font-medium mb-1">La tua domanda</label>
       <input
         className="w-full border rounded-lg px-3 py-2 mb-3 outline-none focus:ring"
-        placeholder="Es. Brand reputation di &quot;Borgo Dolci Colline&quot; a Castiglion Fiorentino"
+        placeholder='Es. Brand reputation di "Borgo Dolci Colline" a Castiglion Fiorentino'
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
         onKeyDown={handleKey}
         disabled={loading}
       />
 
-      {/* Contesto aggiuntivo */}
+      {/* contesto */}
       <label className="block text-sm font-medium mb-1">Contesto (opzionale)</label>
       <textarea
         className="w-full border rounded-lg px-3 py-2 mb-3 outline-none focus:ring min-h-[88px]"
-        placeholder="Note utili (es. periodo di analisi, canali chiave, obiettivi, ecc.)"
+        placeholder="Note utili (periodo, canali, obiettivi, ecc.)"
         value={extraContext}
         onChange={(e) => setExtraContext(e.target.value)}
         disabled={loading}
       />
 
-      {/* Actions */}
+      {/* azioni */}
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={handleSend}
           disabled={loading || !question.trim()}
-          className={`px-4 py-2 rounded-lg text-white ${loading || !question.trim() ? "bg-neutral-400" : "bg-black hover:opacity-90"}`}
+          className={`px-4 py-2 rounded-lg text-white ${
+            loading || !question.trim() ? "bg-neutral-400" : "bg-black hover:opacity-90"
+          }`}
         >
           Invia
         </button>
@@ -139,11 +146,12 @@ export default function RevenueAssistantPage() {
         </button>
       </div>
 
-      {/* Esito/risposta */}
+      {/* errori */}
       {errorText ? (
         <div className="mb-4 text-sm text-red-600 whitespace-pre-wrap">{errorText}</div>
       ) : null}
 
+      {/* ultima risposta */}
       <div className="mb-6">
         <div className="text-sm text-neutral-600 mb-2">Ultima risposta</div>
         <div className="whitespace-pre-wrap border rounded-lg p-3">
@@ -151,7 +159,7 @@ export default function RevenueAssistantPage() {
         </div>
       </div>
 
-      {/* Cronologia breve */}
+      {/* cronologia breve */}
       <div>
         <div className="text-sm text-neutral-600 mb-2">Cronologia (ultime interazioni)</div>
         <div className="space-y-2">
