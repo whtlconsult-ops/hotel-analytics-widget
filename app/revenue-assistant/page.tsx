@@ -1,190 +1,174 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
+
+type Turn = { role: "user" | "assistant"; content: string };
+
+const MAX_HISTORY = 6;
 
 export default function RevenueAssistantPage() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [topic, setTopic] = useState<"revenue" | "marketing" | "operations">("revenue");
-  const [extraContext, setExtraContext] = useState("");
-  // cronologia locale (non persiste al refresh)
-  const [turns, setTurns] = useState<
-    Array<{ role: "user" | "assistant"; content: string }>
-  >([]);
+  const [question, setQuestion] = useState<string>("");
+  const [extraContext, setExtraContext] = useState<string>("");
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [answer, setAnswer] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [errorText, setErrorText] = useState<string>("");
 
-  const handleAsk = async () => {
-  if (!question.trim()) return;
-  setLoading(true);
+  async function handleSend() {
+    const q = (question || "").trim();
+    if (!q) return;
+    setLoading(true);
+    setErrorText("");
 
-  try {
-    // Costruisci un payload compatibile con la route: usa 'question' e 'history'
-const payload: any = {
-  question,                          // <— chiave giusta per il server
-  context: extraContext ?? "",
-  history: Array.isArray(turns)
-    ? turns.slice(-6).map((t: any) => ({
-        role: t?.role === "assistant" ? "assistant" : "user",
-        content: String(t?.content ?? t?.text ?? t?.message ?? "")
+    // Aggiorna cronologia locale (mostriamo subito la tua domanda)
+    const nextTurns: Turn[] = [...turns, { role: "user", content: q }].slice(-MAX_HISTORY);
+    setTurns(nextTurns);
+
+    // Costruisci un payload compatibile con il route del RA
+    const payload = {
+      question: q,                          // <-- chiave attesa dal server
+      context: extraContext ?? "",
+      history: nextTurns.map((t) => ({
+        role: t.role === "assistant" ? "assistant" : "user",
+        content: String(t.content || "")
       }))
-    : []
-};
+    };
 
-// 'topic' non è richiesto lato server, ma lo manteniamo pass-through
-if (typeof topic === "string" && topic.trim()) payload.topic = topic;
+    try {
+      const res = await fetch("/api/revenue-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-const res = await fetch("/api/revenue-assistant", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(payload),
-});
+      let j: any = {};
+      try { j = await res.json(); } catch { j = {}; }
 
-let j: any = {};
-try { j = await res.json(); } catch {}
+      const txt: string =
+        j?.text ||
+        j?.message ||
+        j?.answer ||
+        j?.content ||
+        j?.output_text ||
+        "Nessuna risposta utile.";
 
-// Accetta qualunque alias che il backend espone
-const txt: string =
-  j?.text ||
-  j?.message ||
-  j?.answer ||
-  j?.content ||
-  j?.output_text ||
-  "Nessuna risposta utile.";
-
-    setAnswer(txt);
-    setTurns((prev): Array<{ role: "user" | "assistant"; content: string }> => {
-      const next: Array<{ role: "user" | "assistant"; content: string }> = [
-        ...prev,
-        { role: "user", content: question },
-        { role: "assistant", content: txt },
-      ];
-      return next.slice(-8);
-    });
-
-    setQuestion("");
-  } catch (e) {
-    setAnswer("Errore nella chiamata all'AI.");
-  } finally {
-    setLoading(false);
+      setAnswer(txt);
+      setTurns((prev) => [...prev, { role: "assistant", content: txt }].slice(-MAX_HISTORY));
+      setQuestion(""); // pulisci il campo domanda
+    } catch (e: any) {
+      const msg = String(e?.message || e || "Errore sconosciuto");
+      setErrorText(msg);
+      const fallback =
+        "Modalità demo: non sono riuscito a contattare il modello in questo momento.\n" +
+        "Prova a ripetere la richiesta tra poco.";
+      setAnswer(fallback);
+      setTurns((prev) => [...prev, { role: "assistant", content: fallback }].slice(-MAX_HISTORY));
+    } finally {
+      setLoading(false);
+    }
   }
-};
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!loading) handleSend();
+    }
+  }
+
+  function clearChat() {
+    setTurns([]);
+    setAnswer("");
+    setErrorText("");
+    setQuestion("");
+    setExtraContext("");
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* topbar semplice */}
-      <div className="sticky top-0 z-[1100] border-b bg-white">
-        <div className="mx-auto max-w-5xl px-4 md:px-6 py-4 flex items-center justify-between">
-          <h1 className="text-base font-semibold text-slate-900">
-            RevenueAssistant <span className="text-xs font-normal text-slate-500">beta</span>
-          </h1>
-          <a
-            href="/"
-            className="text-xs rounded-lg border px-3 py-1.5 bg-white hover:bg-slate-50"
-          >
-            Torna al widget
-          </a>
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      {/* Top row: titolo + stato esecuzione */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold">RevenueAssistant</h1>
+        <div className="flex items-center gap-2">
+          {loading ? (
+            <span className="inline-flex items-center text-sm">
+              <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse mr-2"></span>
+              sta ragionando…
+            </span>
+          ) : (
+            <span className="text-sm text-neutral-500">pronto</span>
+          )}
         </div>
       </div>
 
-      <main className="mx-auto max-w-5xl px-4 md:px-6 py-6 space-y-6">
-        {/* riga input */}
-        <div className="grid gap-4 md:grid-cols-[1.5fr,0.9fr]">
-          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <label className="text-sm font-semibold text-slate-700">
-              La tua domanda
-            </label>
-            <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              rows={4}
-              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
-              placeholder="Es. Crea una strategia tariffaria per un hotel 4* a Firenze per il ponte del 25 aprile..."
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={handleAsk}
-                disabled={loading}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium ${
-                  loading
-                    ? "bg-slate-200 text-slate-500 cursor-not-allowed"
-                    : "bg-emerald-600 text-white hover:bg-emerald-500"
-                }`}
-              >
-                {loading ? "In esecuzione…" : "Chiedi a RevenueAssistant"}
-              </button>
-              <select
-                value={topic}
-                onChange={(e) =>
-                  setTopic(e.target.value as "revenue" | "marketing" | "operations")
-                }
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm"
-              >
-                <option value="revenue">Revenue</option>
-                <option value="marketing">Marketing</option>
-                <option value="operations">Operations</option>
-              </select>
-            </div>
-          </div>
+      {/* Input domanda */}
+      <label className="block text-sm font-medium mb-1">La tua domanda</label>
+      <input
+        className="w-full border rounded-lg px-3 py-2 mb-3 outline-none focus:ring"
+        placeholder="Es. Brand reputation di &quot;Borgo Dolci Colline&quot; a Castiglion Fiorentino"
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        onKeyDown={handleKey}
+        disabled={loading}
+      />
 
-          <div className="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-            <label className="text-sm font-semibold text-slate-700">
-              Contesto (facoltativo)
-            </label>
-            <textarea
-              value={extraContext}
-              onChange={(e) => setExtraContext(e.target.value)}
-              rows={4}
-              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 focus:border-emerald-300"
-              placeholder="Es. 42 camere, ADR medio 165€, occupazione media 68%, canali Booking+direct, target leisure + gruppi weekend…"
-            />
-            <p className="text-xs text-slate-400">
-              Più contesto → risposte più vicine al tuo hotel.
-            </p>
-          </div>
+      {/* Contesto aggiuntivo */}
+      <label className="block text-sm font-medium mb-1">Contesto (opzionale)</label>
+      <textarea
+        className="w-full border rounded-lg px-3 py-2 mb-3 outline-none focus:ring min-h-[88px]"
+        placeholder="Note utili (es. periodo di analisi, canali chiave, obiettivi, ecc.)"
+        value={extraContext}
+        onChange={(e) => setExtraContext(e.target.value)}
+        disabled={loading}
+      />
+
+      {/* Actions */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={handleSend}
+          disabled={loading || !question.trim()}
+          className={`px-4 py-2 rounded-lg text-white ${loading || !question.trim() ? "bg-neutral-400" : "bg-black hover:opacity-90"}`}
+        >
+          Invia
+        </button>
+        <button
+          onClick={clearChat}
+          disabled={loading}
+          className="px-3 py-2 rounded-lg border"
+        >
+          Pulisci
+        </button>
+      </div>
+
+      {/* Esito/risposta */}
+      {errorText ? (
+        <div className="mb-4 text-sm text-red-600 whitespace-pre-wrap">{errorText}</div>
+      ) : null}
+
+      <div className="mb-6">
+        <div className="text-sm text-neutral-600 mb-2">Ultima risposta</div>
+        <div className="whitespace-pre-wrap border rounded-lg p-3">
+          {answer || "—"}
         </div>
+      </div>
 
-        {/* output */}
-        <div className="bg-white rounded-2xl border shadow-sm p-4 min-h-[280px]">
-          <div className="text-sm font-semibold text-slate-700 mb-2">Risposta</div>
-
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-slate-500">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              RevenueAssistant sta ragionando…
-            </div>
-          ) : answer ? (
-            <div className="prose prose-sm max-w-none text-slate-800 whitespace-pre-wrap">
-              {answer}
-            </div>
+      {/* Cronologia breve */}
+      <div>
+        <div className="text-sm text-neutral-600 mb-2">Cronologia (ultime interazioni)</div>
+        <div className="space-y-2">
+          {turns.length === 0 ? (
+            <div className="text-sm text-neutral-500">Nessuna interazione.</div>
           ) : (
-            <div className="text-sm text-slate-400">
-              Nessuna risposta ancora. Scrivi una domanda e premi “Chiedi a RevenueAssistant”.
-            </div>
-          )}
-
-          {/* cronologia locale (facoltativa) */}
-          {turns.length > 0 && (
-            <div className="mt-4 border-t pt-3">
-              <div className="text-xs font-semibold text-slate-500 mb-2">
-                Cronologia (solo questa sessione)
+            turns.slice(-MAX_HISTORY).map((t, i) => (
+              <div key={i} className="border rounded-lg p-2">
+                <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
+                  {t.role === "assistant" ? "RA" : "Tu"}
+                </div>
+                <div className="whitespace-pre-wrap text-sm">{t.content}</div>
               </div>
-              <div className="space-y-2 max-h-44 overflow-auto text-xs">
-                {turns.map((t, i) => (
-                  <div
-                    key={i}
-                    className={t.role === "user" ? "text-slate-700" : "text-emerald-700"}
-                  >
-                    <span className="font-semibold mr-1">
-                      {t.role === "user" ? "Tu:" : "RA:"}
-                    </span>
-                    {t.content}
-                  </div>
-                ))}
-              </div>
-            </div>
+            ))
           )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
