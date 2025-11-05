@@ -3,17 +3,18 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 
-type HistoryItem = { role: "user" | "assistant"; content: string };
+type RAUserRole = "user" | "assistant";
+type HistoryItem = { role: RAUserRole; content: string };
 
-// --- Ping diagnostico ---
+// --- Ping diagnostico (GET) ---
 export async function GET() {
   return NextResponse.json({ ok: true, ping: "revenue-assistant: alive" });
 }
 
-// --- Helpers ---
+// ---------- Helpers ----------
 function clampHistory(h: HistoryItem[], maxPairs = 3): HistoryItem[] {
   const filtered = (Array.isArray(h) ? h : []).filter(
-    (x) => x && x.role && typeof x.content === "string"
+    (x) => x && (x.role === "user" || x.role === "assistant") && typeof x.content === "string"
   );
   return filtered.slice(-maxPairs * 2);
 }
@@ -69,12 +70,14 @@ async function lookupReputation(origin: string, q: string, loc?: string) {
   return null;
 }
 
-// ---- OpenAI calls ----
+// ---------- OpenAI ----------
+type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
+
 async function callChat(
   apiKey: string,
   model: string,
-  messages: Array<{ role: string; content: string }>
-) {
+  messages: ChatMsg[]
+): Promise<string> {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -91,8 +94,8 @@ async function callChat(
 async function callResponses(
   apiKey: string,
   model: string,
-  messages: Array<{ role: string; content: string }>
-) {
+  messages: ChatMsg[]
+): Promise<string> {
   const r = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -117,8 +120,8 @@ async function callResponses(
 async function callOpenAIwithFallbacks(
   apiKey: string,
   models: string[],
-  messages: Array<{ role: string; content: string }>
-) {
+  messages: ChatMsg[]
+): Promise<string> {
   let lastErr = "";
   for (const m of models) {
     try { return await callChat(apiKey, m, messages); }
@@ -129,12 +132,12 @@ async function callOpenAIwithFallbacks(
   throw new Error(lastErr || "Nessuna via utile verso OpenAI");
 }
 
-// --- Route principale ---
+// ---------- Route principale ----------
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
     const preferred = process.env.OPENAI_MODEL || "gpt-4.1-mini";
     const candidates = [preferred, "gpt-4.1", "gpt-4o-mini", "gpt-4o"];
+    const apiKey = process.env.OPENAI_API_KEY;
 
     // Body + querystring: accetta molti alias
     const url = new URL(req.url);
@@ -147,7 +150,7 @@ export async function POST(req: Request) {
     );
     const context: string = pick(body.context, url.searchParams.get("context"));
 
-    // history: supporta anche 'previous' (come nel tuo client attuale)
+    // history: supporta anche 'previous' (vecchio client)
     const rawHist = Array.isArray(body?.history)
       ? body.history
       : Array.isArray(body?.previous)
@@ -156,10 +159,12 @@ export async function POST(req: Request) {
 
     const history: HistoryItem[] = (rawHist as any[])
       .map((t: any): HistoryItem => ({
-        role: (t?.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+        role: (t?.role === "assistant" ? "assistant" : "user") as RAUserRole,
         content: String(t?.content ?? t?.text ?? t?.message ?? "")
       }))
-      .filter((t: HistoryItem) => !!t.content);
+      .filter((t) => !!t.content);
+
+    if (!question) {
       const text = "Dimmi cosa vuoi sapere (es. 'Brand reputation di <struttura> a <località>').";
       return NextResponse.json({ ok: true, text, message: text, answer: text });
     }
@@ -172,30 +177,37 @@ export async function POST(req: Request) {
     const intent = detectReputationIntent(question);
     if (intent) lookup = await lookupReputation(origin, intent.name, intent.loc);
 
-    // >>> QUI la costante 'system' <<<
-    const system = [
-      "Se ti fornisco dati strutturati (JSON) su rating/recensioni, usali per rispondere con numeri e cita la fonte.",
-      "Se i dati sono in modalità demo, dichiaralo con [demo] e suggerisci prossimi passi concisi.",
-      "Non chiedere dati già disponibili. Sii operativo e sintetico.",
-      "Apri con un verdetto (Reputation solida/buona/critica) quando hai indice o rating.",
-      "Se non ci sono dati, fornisci comunque consigli pratici e una checklist breve (no rimandi generici)."
-    ].join(" ");
+    // System prompt
+    const systemText =
+      "Se ti fornisco dati strutturati (JSON) su rating/recensioni, usali per rispondere con numeri e cita la fonte. " +
+      "Se i dati sono in modalità demo, dichiaralo con [demo] e suggerisci prossimi passi concisi. " +
+      "Non chiedere dati già disponibili. Sii operativo e sintetico. " +
+      "Apri con un verdetto (Reputation solida/buona/critica) quando hai indice o rating. " +
+      "Se non ci sono dati, fornisci comunque consigli pratici e una checklist breve (no rimandi generici).";
 
     const evidence = lookup ? `\n\n[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]\n` : "";
 
-    const messages = [
-      { role: "system", content: system },
+    const messages: ChatMsg[] = [
+      { role: "system", content: systemText },
       ...hist,
-      { role: "user", content: `${question}${context ? `\n\n[Contesto]\n${context}\n[/Contesto]` : ""}${evidence}` }
+      {
+        role: "user",
+        content: `${question}${context ? `\n\n[Contesto]\n${context}\n[/Contesto]` : ""}${evidence}`,
+      },
     ];
 
     // Se manca l'API key: risposta demo (mai vuota)
     if (!apiKey) {
-      const text = [
-        "Modalità demo: manca OPENAI_API_KEY.",
-        "Inserisci la chiave in .env.local e riavvia. Intanto ti lascio una traccia operativa."
-      ].join("\n");
-      return NextResponse.json({ ok: true, text, message: text, answer: text, used: { modelTried: [] } });
+      const text =
+        "Modalità demo: manca OPENAI_API_KEY. Inserisci la chiave in .env.local e riavvia. " +
+        "Intanto ecco una traccia operativa.";
+      return NextResponse.json({
+        ok: true,
+        text,
+        message: text,
+        answer: text,
+        used: { lookupMode: lookup?.meta?.mode || (lookup ? "live" : "none"), sources: Object.keys(lookup?.sources || {}), modelTried: [] }
+      });
     }
 
     // OpenAI con fallback multipli
@@ -213,7 +225,10 @@ export async function POST(req: Request) {
         "- Se disponibile userò Google/Hotels; altrimenti suggerisco una checklist (review, UGC, SEO locale, OTA mix)."
       ].join("\n");
     }
-    if (!text || !text.trim()) text = "Non ho ricevuto testo utile dal modello. Prova a ripetere la richiesta.";
+
+    if (!text || !text.trim()) {
+      text = "Non ho ricevuto testo utile dal modello. Prova a ripetere la richiesta.";
+    }
 
     return NextResponse.json({
       ok: true,
