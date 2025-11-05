@@ -177,10 +177,28 @@ export async function POST(req: Request) {
     const preferred = process.env.OPENAI_MODEL || "gpt-4.1-mini";
     const candidates = [preferred, "gpt-4.1", "gpt-4o-mini", "gpt-4o"];
 
-    const body = await req.json().catch(() => ({}));
-    const question: string = (body?.question || body?.q || body?.prompt || "").toString();
-    const context: string = (body?.context || "").toString();
+        // --- parse robusto: body + querystring, con alias multipli ---
+    const url = new URL(req.url);
+    let body: any = {};
+    try { body = await req.json(); } catch {}
+
+    const pick = (...vals: any[]) => {
+      for (const v of vals) {
+        if (v === undefined || v === null) continue;
+        const s = String(v).trim();
+        if (s) return s;
+      }
+      return "";
+    };
+
+    const question: string = pick(
+      body.question, body.q, body.prompt, body.text, body.input, body.message,
+      url.searchParams.get("question"), url.searchParams.get("q"), url.searchParams.get("text")
+    );
+
+    const context: string = pick(body.context, url.searchParams.get("context"));
     const history: HistoryItem[] = Array.isArray(body?.history) ? body.history : [];
+
     if (!question) {
       const text = "Dimmi cosa vuoi sapere (es. 'Brand reputation di <struttura> a <località>').";
       return NextResponse.json({ ok: true, text, message: text, answer: text });
@@ -188,24 +206,8 @@ export async function POST(req: Request) {
 
     const hist = clampHistory(history, 3);
     const origin = originFromReq(req);
-
-    // enrichment reputazione quando serve
-    let lookup: any = null;
-    const intent = detectReputationIntent(question);
-    if (intent) lookup = await lookupReputation(origin, intent.name, intent.loc);
-
-    const system = [
-      "Se ti fornisco dati strutturati (JSON) su rating/recensioni, usali per rispondere con numeri e cita la fonte.",
-      "Se i dati sono in modalità demo, dichiaralo con [demo] e suggerisci prossimi passi concisi.",
-      "Non chiedere dati già disponibili. Sii operativo e sintetico.",
-      "Apri con un verdetto (Reputation solida/buona/critica) quando hai indice o rating.",
-      "Se non ci sono dati, fornisci comunque consigli pratici e una checklist breve (no rimandi generici)."
-    ].join(" ");
-
-    const evidence = lookup
-      ? `\n\n[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]\n`
-      : "";
-
+    
+    // (prosegue invariato)
     const messages = [
       { role: "system", content: system },
       ...hist,

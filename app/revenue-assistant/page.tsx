@@ -18,19 +18,38 @@ export default function RevenueAssistantPage() {
   setLoading(true);
 
   try {
-    const res = await fetch("/api/revenue-assistant", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: question,
-        topic,
-        context: extraContext,
-        previous: turns.slice(-6),
-      }),
-    });
+    // Costruisci un payload compatibile con la route: usa 'question' e 'history'
+const payload: any = {
+  question,                          // <— chiave giusta per il server
+  context: extraContext ?? "",
+  history: Array.isArray(turns)
+    ? turns.slice(-6).map((t: any) => ({
+        role: t?.role === "assistant" ? "assistant" : "user",
+        content: String(t?.content ?? t?.text ?? t?.message ?? "")
+      }))
+    : []
+};
 
-    const j = await res.json();
-    const txt: string = j?.answer || "Nessuna risposta utile.";
+// 'topic' non è richiesto lato server, ma lo manteniamo pass-through
+if (typeof topic === "string" && topic.trim()) payload.topic = topic;
+
+const res = await fetch("/api/revenue-assistant", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload),
+});
+
+let j: any = {};
+try { j = await res.json(); } catch {}
+
+// Accetta qualunque alias che il backend espone
+const txt: string =
+  j?.text ||
+  j?.message ||
+  j?.answer ||
+  j?.content ||
+  j?.output_text ||
+  "Nessuna risposta utile.";
 
     setAnswer(txt);
     setTurns((prev): Array<{ role: "user" | "assistant"; content: string }> => {
