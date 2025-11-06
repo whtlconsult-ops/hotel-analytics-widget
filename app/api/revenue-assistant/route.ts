@@ -56,6 +56,41 @@ function detectReputationIntent(text: string) {
   return { name: name || text, loc };
 }
 
+// Intent "indagine concorrenza"
+function detectCompetitorsIntent(text: string) {
+  const t = (text || "").toLowerCase();
+
+  const hasComp =
+    t.includes("concorrenza") ||
+    t.includes("competitor") ||
+    t.includes("indagine") ||
+    t.includes("marketing") ||
+    t.includes("raggio") ||
+    t.includes("prezzi") ||
+    t.includes("servizi");
+
+  if (!hasComp) return null;
+
+  // categoria
+  let category = "agriturismo";
+  if (t.includes("hotel")) category = "hotel";
+  if (t.includes("agritur")) category = "agriturismo";
+  if (t.includes("residence")) category = "residence";
+  if (t.includes("b&b") || t.includes("bb")) category = "bed and breakfast";
+
+  // raggio
+  let radius_km = 30;
+  const mR = t.match(/(\d{1,2})\s*km/);
+  if (mR) radius_km = Math.min(60, Math.max(1, parseInt(mR[1],10)));
+
+  // place/località (grezzo ma efficace: dopo 'a ' o 'di ' prendiamo una frase significativa)
+  let place = "";
+  const mP = t.match(/\b(?:a|di|in|zona)\s+([a-zàèéìòù'\-\s]{3,})(?:\.|,|$)/i);
+  if (mP) place = mP[1].trim();
+
+  return { category, radius_km, place };
+}
+
 // Lookup reputazione (API interna) con URL assoluto
 async function lookupReputation(origin: string, q: string, loc?: string) {
   if (!origin) return null;
@@ -177,15 +212,31 @@ export async function POST(req: Request) {
     const intent = detectReputationIntent(question);
     if (intent) lookup = await lookupReputation(origin, intent.name, intent.loc);
 
-    // System prompt
-    const systemText =
-      "Se ti fornisco dati strutturati (JSON) su rating/recensioni, usali per rispondere con numeri e cita la fonte. " +
-      "Se i dati sono in modalità demo, dichiaralo con [demo] e suggerisci prossimi passi concisi. " +
-      "Non chiedere dati già disponibili. Sii operativo e sintetico. " +
-      "Apri con un verdetto (Reputation solida/buona/critica) quando hai indice o rating. " +
-      "Se non ci sono dati, fornisci comunque consigli pratici e una checklist breve (no rimandi generici).";
+    // Enrichment competitors (indagine marketing)
+    let competitors: any = null;
+    const comp = detectCompetitorsIntent(question);
+    if (comp) {
+      const u = new URL("/api/competitors/nearby", origin);
+      if (comp.place) u.searchParams.set("place", comp.place);
+      u.searchParams.set("category", comp.category);
+      u.searchParams.set("radius_km", String(comp.radius_km));
+      const rComp = await fetch(u.toString(), { cache: "no-store" });
+      try { const j = await rComp.json(); if (j?.ok) competitors = j; } catch {}
+    }
 
-    const evidence = lookup ? `\n\n[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]\n` : "";
+        // System prompt (tono consulenziale, più “umano”)
+    const systemText =
+      "Tono: consulente alberghiero empatico e concreto. Evita burocratese; scrivi come parleresti a un cliente. " +
+      "Se ricevi JSON con dati (reputation o competitors), sintetizza in apertura una fotografia chiara (1-2 righe). " +
+      "Poi fornisci una tabella leggibile e, sotto, insight pratici (massimo 5 bullet). " +
+      "Se i dati sono [demo] dichiaralo tra parentesi quadre. " +
+      "Quando fornisci numeri, non chiedere ulteriori dati se non indispensabili. " +
+      "Chiudi sempre con una mini-to-do list concreta.";
+
+    const blocks: string[] = [];
+    if (lookup) blocks.push(`[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]`);
+    if (competitors) blocks.push(`[DatiCompetitors]\n${JSON.stringify(competitors)}\n[/DatiCompetitors]`);
+    const evidence = blocks.length ? ("\n\n" + blocks.join("\n\n") + "\n") : "";
 
     const messages: ChatMsg[] = [
       { role: "system", content: systemText },
