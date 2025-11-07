@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 
 type Turn = { role: "user" | "assistant"; content: string };
 
@@ -91,19 +92,25 @@ export default function RevenueAssistantPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* header + stato */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold">RevenueAssistant</h1>
-        <div className="flex items-center gap-2">
-          {loading ? (
-            <span className="inline-flex items-center text-sm">
-              <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse mr-2" />
-              sta ragionando…
-            </span>
-          ) : (
-            <span className="text-sm text-neutral-500">pronto</span>
-          )}
-        </div>
-      </div>
+     <div className="flex items-center justify-between mb-4">
+  <div className="flex items-center gap-3">
+    <Link href="/" className="text-sm hover:underline flex items-center gap-1">
+      <span>←</span> <span>Torna alla Home</span>
+    </Link>
+    <h1 className="text-xl font-semibold">Revy — RevenueAssistant</h1>
+    <span className="text-xs text-neutral-500 hidden sm:inline">puoi chiamarmi <strong>Revy</strong></span>
+  </div>
+  <div className="flex items-center gap-2">
+    {loading ? (
+      <span className="inline-flex items-center text-sm">
+        <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse mr-2" />
+        sta ragionando…
+      </span>
+    ) : (
+      <span className="text-sm text-neutral-500">pronto</span>
+    )}
+  </div>
+</div>
 
       {/* input domanda */}
       <label className="block text-sm font-medium mb-1">La tua domanda</label>
@@ -125,6 +132,26 @@ export default function RevenueAssistantPage() {
         onChange={(e) => setExtraContext(e.target.value)}
         disabled={loading}
       />
+
+{/* Suggerimenti rapidi */}
+<div className="mb-4 flex flex-wrap items-center gap-2">
+  {[
+    `Brand reputation di Hotel Esempio a Roma`,
+    `Indagine concorrenza agriturismi a Firenze (raggio 30 km)`,
+    `Schema prezzi alta/media/bassa per agriturismo vista mare in Maremma`,
+  ].map((s, i) => (
+    <button
+      key={i}
+      type="button"
+      onClick={() => setQuestion(s)}
+      disabled={loading}
+      className="text-xs border rounded-full px-3 py-1 hover:bg-neutral-50"
+      title="Clicca per usare questo suggerimento"
+    >
+      {s}
+    </button>
+  ))}
+</div>
 
       {/* azioni */}
       <div className="flex items-center gap-3 mb-6">
@@ -158,6 +185,28 @@ export default function RevenueAssistantPage() {
           {answer || "—"}
         </div>
       </div>
+
+<div className="mb-6">
+  <div className="flex items-center justify-between mb-2">
+    <div className="text-sm text-neutral-600">Ultima risposta</div>
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(answer || "");
+        } catch {}
+      }}
+      className="text-xs border rounded px-2 py-1 hover:bg-neutral-50"
+      disabled={!answer}
+      title="Copia negli appunti"
+    >
+      Copia
+    </button>
+  </div>
+  <div className="whitespace-pre-wrap border rounded-lg p-3">
+    {answer || "—"}
+  </div>
+</div>
 
       {/* cronologia breve */}
       <div>

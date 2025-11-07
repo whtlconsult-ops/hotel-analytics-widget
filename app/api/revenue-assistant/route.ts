@@ -224,16 +224,16 @@ export async function POST(req: Request) {
       try { const j = await rComp.json(); if (j?.ok) competitors = j; } catch {}
     }
 
-        // System prompt (tono consulenziale, più “umano”)
-    const systemText =
-      "Tono: consulente alberghiero empatico e concreto. Evita burocratese; scrivi come parleresti a un cliente. " +
-      "Se ricevi JSON con dati (reputation o competitors), sintetizza in apertura una fotografia chiara (1-2 righe). " +
-      "Poi fornisci una tabella leggibile e, sotto, insight pratici (massimo 5 bullet). " +
-      "Se i dati sono [demo] dichiaralo tra parentesi quadre. " +
-      "Quando fornisci numeri, non chiedere ulteriori dati se non indispensabili. " +
-      "Chiudi sempre con una mini-to-do list concreta.";
-
-    const blocks: string[] = [];
+   // System prompt — persona “Revy”
+const systemText =
+  "Ti chiami Revy. Sei un consulente alberghiero empatico e concreto. " +
+  "Dai risposte chiare, pratiche e amichevoli, come parleresti a un cliente. " +
+  "Se ricevi JSON con dati (reputation o competitors), apri con una fotografia della situazione (1-2 righe), " +
+  "poi fornisci una tabella leggibile e, sotto, 3-5 insight pratici. " +
+  "Se i dati sono [demo], dichiaralo sempre. " +
+  "Quando fornisci numeri, non chiedere altri dati se non indispensabili. " +
+  "Chiudi con una breve to-do list. " +
+  "Evita frasi generiche tipo 'vai a cercare'; proponi micro-azioni operative.";
     if (lookup) blocks.push(`[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]`);
     if (competitors) blocks.push(`[DatiCompetitors]\n${JSON.stringify(competitors)}\n[/DatiCompetitors]`);
     const evidence = blocks.length ? ("\n\n" + blocks.join("\n\n") + "\n") : "";
