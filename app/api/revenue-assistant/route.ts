@@ -234,6 +234,8 @@ const systemText =
   "Quando fornisci numeri, non chiedere altri dati se non indispensabili. " +
   "Chiudi con una breve to-do list. " +
   "Evita frasi generiche tipo 'vai a cercare'; proponi micro-azioni operative.";
+
+const blocks: string[] = [];
     if (lookup) blocks.push(`[DatiReputation]\n${JSON.stringify(lookup)}\n[/DatiReputation]`);
     if (competitors) blocks.push(`[DatiCompetitors]\n${JSON.stringify(competitors)}\n[/DatiCompetitors]`);
     const evidence = blocks.length ? ("\n\n" + blocks.join("\n\n") + "\n") : "";
