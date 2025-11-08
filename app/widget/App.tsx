@@ -3,13 +3,32 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarDays, MapPin, Route, RefreshCw, ChevronDown, Check, TrendingUp } from "lucide-react";
 import { eachDayOfInterval, format, getDay, startOfMonth, endOfMonth, parseISO, addMonths } from "date-fns";
 import { http } from "../../lib/http";
 import { cityFromTopic, seasonalityItaly12, normalizeTo100, blend3 } from "../../lib/baseline";
 import { it } from "date-fns/locale";
+
+// --- Helpers semaforo fonti ---
+type SourceStatus = "ok" | "partial" | "poor" | "off";
+type SourceSummary = { google: SourceStatus; amadeus: SourceStatus; ai: SourceStatus };
+
+function statusDotClass(s: SourceStatus) {
+  return s === "ok" ? "bg-emerald-500"
+    : s === "partial" ? "bg-amber-500"
+    : s === "poor" ? "bg-rose-500"
+    : "bg-slate-300"; // off
+}
+
+function SourcePill({ label, status }: { label: string; status: SourceStatus }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border bg-white">
+      <span className={`inline-block h-2 w-2 rounded-full ${statusDotClass(status)}`} />
+      <span>{label}</span>
+    </span>
+  );
+}
 
 // 12 etichette mensili a partire dal mese scelto in UI (aMonthISO)
 function labelsFromMonthISO(monthISO?: string) {
@@ -369,6 +388,69 @@ function CustomTooltip({ active, payload, label }: any) {
   );
 }
 
+// --- Helpers demand ibrido (Google → AI fallback) ---
+function clamp01(x: number) { return Math.max(0, Math.min(1, x)); }
+function variance(xs: number[]) {
+  if (!xs?.length) return 0;
+  const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+  return xs.reduce((s, x) => s + (x - m) * (x - m), 0) / xs.length;
+}
+function serpIsScarce(trend: any) {
+  const pts = Array.isArray(trend?.points) ? trend.points : [];
+  if (pts.length < 6) return true;
+  const vals = pts.map((p: any) => Number(p?.value) || 0);
+  return variance(vals) < 1e-4;
+}
+function normalizeSerpToDays(serp: any): Array<{ date: string; demand: number; adr?: number; source?: string }> {
+  const pts = Array.isArray(serp?.trend?.points) ? serp.trend.points : [];
+  if (!pts.length) return [];
+  const vals = pts.map((p: any) => Number(p?.value) || 0);
+  const max = Math.max(1, ...vals);
+  return pts.map((p: any) => ({
+    date: String(p?.date || p?.day || p?.d || ""),
+    demand: Math.round(100 * clamp01((Number(p?.value) || 0) / max)),
+    source: "google"
+  }));
+}
+async function fetchDemandHybrid(args: {
+  place: string; lat: number; lng: number; radiusKm: number; monthISO: string;
+}): Promise<Array<{ date: string; demand: number; adr?: number; source?: string }>> {
+  const q = new URLSearchParams({
+    q: args.place, lat: String(args.lat), lng: String(args.lng),
+    date: "today 12-m", cat: "203", parts: "trend", fast: "1"
+  });
+  // 1) Prova SERP
+  let serp: any = null;
+  try {
+    const r = await fetch(`/api/serp/demand?${q.toString()}`, { cache: "no-store" });
+    serp = await r.json();
+  } catch {}
+  let days = normalizeSerpToDays(serp);
+  // 2) Se SERP è scarsa → AI
+  if (serpIsScarce(serp?.trend)) {
+    try {
+      const aiQ = new URLSearchParams({
+        place: args.place,
+        radius_km: String(args.radiusKm),
+        month: args.monthISO,
+        lat: String(args.lat),
+        lng: String(args.lng)
+      });
+      const r2 = await fetch(`/api/demand/ai?${aiQ.toString()}`, { cache: "no-store" });
+      const ai = await r2.json();
+      if (ai?.ok && Array.isArray(ai?.days) && ai.days.length) {
+        days = ai.days.map((d: any) => ({
+          date: String(d.date),
+          demand: Math.round(Number(d.pressure) || 0),
+          adr: Number(d.adr) || undefined,
+          source: `ai:${ai?.mode || "partial"}`
+        }));
+      }
+    } catch {}
+  }
+  return days;
+}
+
 export default function App(){
   const router = useRouter();
   const search = useSearchParams();
@@ -462,6 +544,9 @@ const isApplied = useMemo(() => {
 
   // Contatore SerpAPI + polling
   const [serpUsage, setSerpUsage] = useState<{ used?: number; total?: number; left?: number } | null>(null);
+
+// Stato “semaforo” delle fonti (default: tutto off/grigio)
+const [sources, setSources] = useState<SourceSummary>({ google: "off", amadeus: "off", ai: "off" });
   useEffect(() => {
     let alive = true;
     const pull = async () => {
@@ -738,9 +823,6 @@ const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => 
     if (!needTrend && !needRelated) return;
 
     try {
-      const parts: string[] = [];
-      if (needTrend) parts.push("trend");
-      if (needRelated) parts.push("related");
 
       // Topic pulito → "hotel <città>"
 const raw = (aQuery || "").trim();
@@ -759,34 +841,71 @@ const params = new URLSearchParams({
 });
 params.set("fast", "1");
 
-      const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
-      const j = r1.ok ? r1.data : null;
+    const r1 = await http.json<any>(`/api/serp/demand?${params.toString()}`, { timeoutMs: 8000, retries: 2 });
+const j = r1.ok ? r1.data : null;
 
-     if (!j || j.ok !== true) {
-  // Avviso
-  setNotices(prev =>
-    Array.from(new Set([
-      ...prev,
-      (j && (j as any).error) ? String((j as any).error) : "Nessun dato SERP per la query/periodo: uso curva di stagionalità."
-    ]))
-  );
+if (!j || j.ok !== true) {
+  // PRO fallback: prova AI (mese corrente) → se non disponibile, stagionalità
+  try {
+    const aiQ = new URLSearchParams({
+      place: aQuery || city || `${aCenter.lat},${aCenter.lng}`,
+      radius_km: String(aRadius),
+      month: (aMonthISO || "").slice(0, 7),
+      lat: String(aCenter.lat),
+      lng: String(aCenter.lng)
+    });
+    const rAI = await fetch(`/api/demand/ai?${aiQ.toString()}`, { cache: "no-store" });
+    const aij = await rAI.json().catch(() => null);
+
+    if (aij?.ok && Array.isArray(aij.days) && aij.days.length) {
+      // Abbiamo solo il mese richiesto: riempiamo il grafico con stagionalità
+      // ma sostituiamo il primo mese (corrente in UI) con la media AI.
+      const labels = labelsFromMonthISO(aMonthISO);
+      const seas   = normalizeTo100(seasonalityItaly12());
+
+      const avgAI = Math.round(
+        aij.days.reduce((s: number, d: any) => s + (Number(d.pressure) || 0), 0) / aij.days.length
+      );
+
+      const values = labels.map((_, i) => (i === 0 ? avgAI : (seas[i] || 0)));
+      setSerpTrend(labels.map((lbl, i) => ({ dateLabel: lbl, value: values[i] })));
+
+      // Related non disponibili in questo fallback
+      setSerpChannels([]);
+      setSerpOrigins([]);
+      setSerpLOS([]);
+
+      // Nota soft
+      setNotices(prev =>
+        Array.from(new Set([...prev, "Trend mese corrente da AI; altri mesi su stagionalità."]))
+      );
+
+// Semaforo: AI attivo (live → verde, partial/demo → giallo) e Google scarso → rosso
+const aiStatus = aij?.mode === "live" ? "ok" : (aij?.mode === "partial" ? "partial" : "partial");
+setSources(prev => ({ ...prev, google: "poor", ai: aiStatus }));
+
+return;
+    }
+  } catch {
+    // ignora
+  }
+
+// Semaforo: Google “scarso”
+setSources(prev => ({ ...prev, google: "poor" }));
 
   // Fallback: stagionalità Italia su 12 mesi (sempre visibile)
   const labels = labelsFromMonthISO(aMonthISO);
-  const seas   = normalizeTo100(seasonalityItaly12()); // array di 12 valori
+  const seas   = normalizeTo100(seasonalityItaly12());
   setSerpTrend(labels.map((lbl, i) => ({ dateLabel: lbl, value: seas[i] || 0 })));
 
   // Related non disponibili
   setSerpChannels([]);
   setSerpOrigins([]);
   setSerpLOS([]);
-
-  // NON interrompere tutta la funzione se vuoi far proseguire ad altre routine;
-  // qui però va bene chiudere perché non abbiamo altri step necessari.
   return;
 }
 
-      // --- Trend (ultimi 12 mesi): BLEND SERP + WIKIPEDIA + STAGIONALITÀ ---
+// --- Trend (ultimi 12 mesi): BLEND SERP + WIKIPEDIA + STAGIONALITÀ ---
 let finalTrend: Array<{ dateLabel: string; value: number }> = [];
 const monthLabels = labelsFromMonthISO(aMonthISO); // 12 etichette a partire dal mese selezionato
 
@@ -867,6 +986,9 @@ if (partsUsed.length > 0 && partsUsed.join("+") !== "SERP") {
 }
 setSerpTrend(finalTrend);
 
+// Semaforo: Google “ok” se il peso SERP è > 0, altrimenti “partial”
+setSources(prev => ({ ...prev, google: (wSerp > 0 ? "ok" : "partial") }));
+
       // --- Related (canali / provenienza / los) ---
 if (needRelated) {
   let rel = j.related;
@@ -940,7 +1062,7 @@ if (needRelated) {
         Array.from(new Set([...prev, "Errore richiesta SERP: uso dati dimostrativi."]))
       );
     }
-  }, [aQuery, aCenter, aMonthISO, askTrend, askChannels, askProvenance, askLOS]);
+  }, [aQuery, aCenter, aMonthISO, aRadius, askTrend, askChannels, askProvenance, askLOS]);
 
   useEffect(() => { fetchSerp(); }, [fetchSerp]);
 // Link per la pagina "Grafica": se tutti i toggle sono OFF, forziamo ch/prov/los a ON
@@ -1178,6 +1300,16 @@ useEffect(() => {
   </div>
   <div className="text-xs text-slate-600">
     Se fornito, i giorni con evento mostrano un puntino viola (hover per il titolo).
+  </div>
+</section>
+
+{/* Fonti Dati (stato) */}
+<section className="bg-white rounded-2xl border shadow-sm p-4 space-y-2">
+  <div className="text-sm font-semibold">Fonti Dati (stato)</div>
+  <div className="flex flex-wrap items-center gap-2">
+    <SourcePill label="Google"  status={sources.google} />
+    <SourcePill label="Amadeus" status={sources.amadeus} />
+    <SourcePill label="AI"      status={sources.ai} />
   </div>
 </section>
 
