@@ -1,83 +1,112 @@
-// app/api/external/weather/route.ts
-import { NextRequest, NextResponse } from "next/server";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export const revalidate = 60 * 60; // cache 1h
+import { NextResponse } from "next/server";
 
-function toISO(d: Date) {
-  return d.toISOString().slice(0, 10);
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
-function clampForecastWindow(monthISO: string) {
-  const month = new Date(monthISO); // yyyy-mm-01
-  if (Number.isNaN(month.getTime())) return null;
-
-  const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
-  const endOfMonth   = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-
-  const today = new Date();
-  // ATTENZIONE: molti endpoint accettano solo +15 giorni (inclusivo)
-  const plus15 = new Date(today);
-  plus15.setDate(today.getDate() + 15);
-
-  // Finestra effettiva richiedibile: [max(today, startOfMonth) , min(endOfMonth, plus15)]
-  const start = today > startOfMonth ? today : startOfMonth;
-  const end   = plus15 < endOfMonth ? plus15 : endOfMonth;
-
-  if (end < start) return { start: null, end: null };
-
-  // normalizza a mezzanotte per evitare off-by-one UTC
-  start.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
-
-  return { start, end };
-}
-
-export async function GET(req: NextRequest) {
+export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const lat = Number(searchParams.get("lat"));
-    const lng = Number(searchParams.get("lng"));
-    const monthISO = String(searchParams.get("monthISO") || "");
+    const url = new URL(req.url);
+    const lat = Number(url.searchParams.get("lat"));
+    const lng = Number(url.searchParams.get("lng"));
+    const provider = (url.searchParams.get("provider") || "open-meteo").toLowerCase();
+    // giorni da restituire: oggi + (days-1). Default 8 => oggi + 7
+    const days = clamp(Number(url.searchParams.get("days") || 8), 1, 16);
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !monthISO) {
-      return NextResponse.json({ ok: false, error: "Missing lat/lng/monthISO" }, { status: 400 });
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return NextResponse.json({ ok: false, error: "lat/lng mancanti" }, { status: 400 });
     }
 
-    const window = clampForecastWindow(monthISO);
-    if (!window) {
-      return NextResponse.json({ ok: false, error: "Bad monthISO" }, { status: 400 });
+    // Solo provider supportati esplicitamente
+    if (!["open-meteo", "openweather", "ilmeteo"].includes(provider)) {
+      return NextResponse.json({ ok: false, error: "provider non supportato" }, { status: 400 });
     }
 
-    // Mese fuori dalla finestra forecast: rispondi ok ma senza dati (UI gestisce graceful)
-    if (!window.start || !window.end) {
+    // --- Open-Meteo: forecast + current_weather “oggi” ---
+    if (provider === "open-meteo") {
+      // NB: Open-Meteo non richiede API key
+      const u = new URL("https://api.open-meteo.com/v1/forecast");
+      u.searchParams.set("latitude", String(lat));
+      u.searchParams.set("longitude", String(lng));
+      u.searchParams.set("timezone", "auto");
+      u.searchParams.set("current_weather", "true");
+      // per daily usiamo mean/max/min + precipitazioni e weathercode
+      u.searchParams.set(
+        "daily",
+        "temperature_2m_mean,temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode"
+      );
+      // per oggi più accurato potresti anche usare hourly, ma qui bastano i daily + current override
+      // opzionale: limitiamo l’intervallo
+      const now = new Date();
+      const startISO = now.toISOString().slice(0, 10);
+      const end = new Date(now);
+      end.setDate(end.getDate() + (days - 1));
+      const endISO = end.toISOString().slice(0, 10);
+      u.searchParams.set("start_date", startISO);
+      u.searchParams.set("end_date", endISO);
+
+      const r = await fetch(u.toString(), { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+
+      const daily = j?.daily;
+      if (!daily?.time || !Array.isArray(daily.time)) {
+        return NextResponse.json({ ok: true, weather: { daily: {} }, meta: { mode: "open-meteo" } });
+      }
+
+      // Override temperatura “oggi” con current_weather.temperature (più veritiera del mean)
+      const todayISO = startISO;
+      const idxToday = daily.time.indexOf(todayISO);
+      if (idxToday >= 0 && j?.current_weather?.temperature != null) {
+        const t = Number(j.current_weather.temperature);
+        if (!Number.isNaN(t)) {
+          // clona l’array prima di mutarlo
+          const temps = Array.isArray(daily.temperature_2m_mean)
+            ? [...daily.temperature_2m_mean]
+            : new Array(daily.time.length).fill(null);
+          temps[idxToday] = t;
+          daily.temperature_2m_mean = temps;
+        }
+      }
+
       return NextResponse.json({
         ok: true,
-        weather: { daily: { time: [], temperature_2m_mean: [], precipitation_sum: [], weathercode: [] } }
+        weather: { daily },
+        meta: {
+          mode: "open-meteo",
+          ts: new Date().toISOString(),
+          source: "open-meteo.com",
+        },
       });
     }
 
-    const start_date = toISO(window.start);
-    const end_date   = toISO(window.end);
-
-    const url = new URL("https://api.open-meteo.com/v1/forecast");
-    url.searchParams.set("latitude", String(lat));
-    url.searchParams.set("longitude", String(lng));
-    url.searchParams.set("daily", "temperature_2m_mean,precipitation_sum,weathercode");
-    url.searchParams.set("timezone", "auto");
-    url.searchParams.set("start_date", start_date);
-    url.searchParams.set("end_date", end_date);
-
-    const r = await fetch(url.toString(), { next: { revalidate } });
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      return NextResponse.json(
-        { ok: false, error: `Upstream ${r.status}: ${txt || "forecast error"}` },
-        { status: 502 }
-      );
+    // --- OpenWeather (placeholder) ---
+    // Integra qui se/quando aggiungi l’API key:
+    //  - chiama One Call 3.0 (current + daily)
+    //  - mappa current.temp su “oggi” e daily.temp per i successivi
+    if (provider === "openweather") {
+      return NextResponse.json({
+        ok: true,
+        weather: { daily: {} },
+        meta: { mode: "openweather-placeholder", note: "Integrare API key per dati live." },
+      });
     }
-    const json = await r.json();
 
-    return NextResponse.json({ ok: true, weather: { daily: json?.daily ?? {} } });
+    // --- IlMeteo (placeholder) ---
+    // IlMeteo espone API commerciali (apigateway.ilmeteo.it / XML). Quando avrai le credenziali:
+    //  - effettua la richiesta qui
+    //  - mappa i campi su daily.{temperature_2m_mean,max,min,precipitation_sum,weathercode}
+    if (provider === "ilmeteo") {
+      return NextResponse.json({
+        ok: false,
+        error: "IlMeteo non configurato. Aggiungere credenziali e mapping nel route.",
+      }, { status: 501 });
+    }
+
+    // fallback di sicurezza
+    return NextResponse.json({ ok: false, error: "provider non gestito" }, { status: 400 });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }

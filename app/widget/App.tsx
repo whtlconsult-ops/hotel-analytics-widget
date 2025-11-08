@@ -884,6 +884,9 @@ if (!j || j.ok !== true) {
 // Semaforo: AI attivo (live → verde, partial/demo → giallo) e Google scarso → rosso
 const aiStatus = aij?.mode === "live" ? "ok" : (aij?.mode === "partial" ? "partial" : "partial");
 setSources(prev => ({ ...prev, google: "poor", ai: aiStatus }));
+const aiStatus = aij?.mode === "live" ? "ok" : (aij?.mode === "partial" ? "partial" : "partial");
+const amaStatus = (aij?.meta?.amadeus?.coverage_ratio ?? 0) > 0.2 ? "ok" : ((aij?.meta?.amadeus?.coverage_ratio ?? 0) > 0 ? "partial" : "off");
+setSources(prev => ({ ...prev, google: "poor", ai: aiStatus, amadeus: amaStatus }));
 
 return;
     }

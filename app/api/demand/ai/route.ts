@@ -36,6 +36,60 @@ async function serpWebSnippets(q:string){
   return { ok:true, items: parsed, mode:"live" };
 }
 
+// --- Google Hotels sampler (9 date nel mese) ---
+function sampleMonthDates(monthISO: string) {
+  const [y, m] = monthISO && /^\d{4}-\d{2}$/.test(monthISO) ? monthISO.split("-").map(Number) : (() => {
+    const now = new Date(); return [now.getFullYear(), now.getMonth()+1];
+  })();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const picks = [2,5,8,11,14,17,20,23,26].filter(d => d <= daysInMonth);
+  return picks.map(d => `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`);
+}
+
+async function fetchGoogleHotelsSample(place: string, monthISO: string) {
+  const key = process.env.SERPAPI_KEY || process.env.SERP_API_KEY;
+  if (!key) return { ok:false, mode:"demo", samples:[] as Array<{date:string, p50?:number}>, reason:"SERPAPI_KEY missing" };
+
+  const dates = sampleMonthDates(monthISO);
+  const out: Array<{date:string, p50?:number}> = [];
+
+  for (const ci of dates) {
+    const co = (() => {
+      const d = new Date(ci); d.setDate(d.getDate()+1);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    })();
+
+    const u = new URL("https://serpapi.com/search");
+    u.searchParams.set("engine", "google_hotels");
+    u.searchParams.set("q", place);
+    u.searchParams.set("check_in_date", ci);
+    u.searchParams.set("check_out_date", co);
+    u.searchParams.set("gl", "it");
+    u.searchParams.set("hl", "it");
+    u.searchParams.set("api_key", key);
+
+    const r = await fetch(u.toString(), { cache:"no-store" });
+    const j = await r.json().catch(()=> ({}));
+
+    const props = Array.isArray(j?.properties) ? j.properties : [];
+    const prices:number[] = [];
+    for (const p of props) {
+      const lowA = Number(p?.total_rate?.lowest) || Number(p?.total_rate?.rate_per_night?.lowest);
+      if (Number.isFinite(lowA)) prices.push(lowA);
+      const arr = Array.isArray(p?.prices) ? p.prices : [];
+      for (const pr of arr) {
+        const lowB = Number(pr?.rate_per_night?.lowest) || Number(pr?.lowest);
+        if (Number.isFinite(lowB)) prices.push(lowB);
+      }
+    }
+    prices.sort((a,b)=>a-b);
+    const p50 = prices.length ? (prices.length%2 ? prices[(prices.length-1)/2] : (prices[prices.length/2-1]+prices[prices.length/2])/2) : undefined;
+    out.push({ date: ci, p50 });
+  }
+
+  return { ok:true, mode:"live", samples: out };
+}
+
 // --- Google demand (riusa la tua route esistente) ---
 async function fetchGoogleDemand(origin:string, loc:string, lat:string, lng:string){
   const p = new URLSearchParams({ q: loc, lat, lng, date:"today 12-m", cat:"203", parts:"trend" });
@@ -121,23 +175,27 @@ export async function GET(req: Request){
       fetchAmadeusSummary(/* TODO lat,lng,month */)
     ]);
 
+// 1.b) Google Hotels sample (P50 price per date)
+const hotels = await fetchGoogleHotelsSample(place || `${lat},${lng}`, month);
+
     // 2) ai-web snippets (no scraping)
     const q = `site:booking.com OR site:expedia.it OR site:airbnb.it ${place} prezzo camera notte`;
     const snippets = await serpWebSnippets(q);
 
     // 3) payload per AI synth
     const payload = {
-      month,
-      place,
-      radius_km: radius,
-      google: { values: serp.values, raw_points: serp.raw?.slice?.(0,60) ?? [] },
-      competitors: { items: comps.items },
-      amadeus: ama,
-      web_snippets: snippets,
-      notes: "Genera days[] per tutte le date del mese richiesto; se alcuni segnali mancano, stima ma marca confidence più bassa."
-    };
+  month,
+  place,
+  radius_km: radius,
+  google: { values: serp.values, raw_points: serp.raw?.slice?.(0,60) ?? [] },
+  hotels_sample: hotels,                 // <— NUOVO: P50 Google Hotels per date
+  competitors: { items: comps.items },
+  amadeus: ama,
+  web_snippets: snippets,
+  notes: "Usa hotels_sample (P50) come baseline ADR; armonizza con Amadeus e snippets; restituisci only JSON."
+};
 
-    const ai = await synthesizeWithAI(payload);
+const ai = await synthesizeWithAI(payload);
 
     // 4) fallback se AI non torna dati days
     let days: DayRow[] = Array.isArray(ai?.days) ? ai.days : [];
@@ -166,6 +224,17 @@ export async function GET(req: Request){
       source_weights: ai?.source_weights || { google:0.3, amadeus:0.4, ai_web:0.3 },
       meta: { ts: new Date().toISOString() }
     });
+
+const amaCoverage = Array.isArray(ama?.days) && ama.days.length ? 1 : 0;
+
+return NextResponse.json({
+  ok:true,
+  mode: ai?.mode || snippets.mode || "partial",
+  days,
+  top_competitors: ai?.top_competitors || [],
+  source_weights: ai?.source_weights || { google:0.3, amadeus:0.4, ai_web:0.3 },
+  meta: { ts: new Date().toISOString(), amadeus: { coverage_ratio: amaCoverage } }
+});
   } catch(e:any){
     return NextResponse.json({ ok:false, error:String(e?.message||e) }, { status:500 });
   }
